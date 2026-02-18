@@ -1,0 +1,56 @@
+{
+    "environment": 
+    {
+        "dev_drive_label": "DEV_DEGORAS_SLR",
+        "dev_drive_letter": "X",
+        "dev_env_name": "DegorasSLR",
+        "vhd_root": "H:/DevDrives",
+        "vhd_size_gb": 50,
+        "use_dev_drive": true
+    },
+    "vcpkg": 
+    {
+        "repositoryUrl": "https://github.com/microsoft/vcpkg.git",
+        "commitsApiUrl": "https://api.github.com/repos/microsoft/vcpkg/commits/master",
+        "baselineCommit": "446682c6c338d68ed986972ffc3529f7d63c1555"
+    },
+    "tools": 
+    {
+        "msys2": 
+        {
+            "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe",
+            "sha256": ""
+        },
+        "ninja": 
+        {
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ninja-1.12.1-1-any.pkg.tar.zst",
+            "sha256": ""
+        },
+        "gdb": 
+        {
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gdb-16.2-1-any.pkg.tar.zst",
+            "sha256": ""
+        },
+        "gcc": 
+        {
+            "version": "15.2.0",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-15.2.0-8-any.pkg.tar.zst",
+            "sha256": ""
+        },
+        "gccLibs": 
+        {
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-libs-15.2.0-8-any.pkg.tar.zst",
+            "sha256": ""
+        },
+        "make": 
+        {
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-make-4.4.1-2-any.pkg.tar.zst",
+            "sha256": ""
+        },
+        "cmake": 
+        {
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-cmake-4.1.2-1-any.pkg.tar.zst",
+            "sha256": ""
+        }
+    }
+}

@@ -1,0 +1,62 @@
+# Folders.
+*build*/
+*product*/
+*todo*/
+*install*/
+*deploy*/
+
+# Logs
+*.log
+
+# Temporal
+*.TMP
+*.tmp
+*.autosave
+
+# Python
+*.idea
+
+# Docs.
+*Docs*/
+*docs*/
+
+# User config
+CMakeLists.txt.user
+.vscode/*
+.qtcreator/*
+
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Orig
+*.orig

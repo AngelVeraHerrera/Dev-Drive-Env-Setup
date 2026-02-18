@@ -1,0 +1,49 @@
+From a231110137065b9f02e51dd62388242810cd5002 Mon Sep 17 00:00:00 2001
+From: Angel Vera <angelvh.engr@gmail.com>
+Date: Thu, 12 Feb 2026 21:39:21 +0100
+Subject: [PATCH] Fix gstfilesink.c for GCC 15.2.0 Rev11
+
+---
+ .../gstreamer/plugins/elements/gstfilesink.c  | 21 ++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/subprojects/gstreamer/plugins/elements/gstfilesink.c b/subprojects/gstreamer/plugins/elements/gstfilesink.c
+index 0491080a72..79109059e6 100644
+--- a/subprojects/gstreamer/plugins/elements/gstfilesink.c
++++ b/subprojects/gstreamer/plugins/elements/gstfilesink.c
+@@ -54,12 +54,31 @@
+ 
+ #ifdef G_OS_WIN32
+ #include <io.h>                 /* lseek, open, close, read */
++#include <limits.h>             /* LONG_MAX / LLONG_MAX */
+ #undef lseek
+ #define lseek _lseeki64
+ #undef off_t
+ #define off_t guint64
+ #undef ftruncate
+-#define ftruncate _chsize
++static inline int
++gst_win32_ftruncate64 (int fd, guint64 size)
++{
++  /* Defensive: avoid truncation/UB on weird sizes */
++  if (size > (guint64) LLONG_MAX)
++    return -1;
++
++#if defined(_chsize_s)
++  /* 64-bit safe */
++  return _chsize_s (fd, (long long) size);
++#else
++  /* Legacy fallback: only if it fits in long */
++  if (size > (guint64) LONG_MAX)
++    return -1;
++  return _chsize (fd, (long) size);
++#endif
++}
++#define ftruncate gst_win32_ftruncate64
++
+ #undef fsync
+ #define fsync _commit
+ #ifdef _MSC_VER                 /* Check if we are using MSVC, fileno is deprecated in favour */
+-- 
+2.53.0
+

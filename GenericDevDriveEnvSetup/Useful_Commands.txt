@@ -1,0 +1,50 @@
+# =====================================================================
+# DEV DRIVE MANAGEMENT EXAMPLE COMMANDS
+# =====================================================================
+
+--- ALLOW POWERSHELL SCRIPT EXECUTION ---
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+Unblock-File .\1-Generic_DevDrive_Setup.ps1
+
+--- DISMOUNT EXISTING DEV DRIVE ---
+-- Close all applications using the drive before dismounting
+Dismount-DiskImage -ImagePath "C:\DevDrives\DEV_GENERIC.vhdx"
+Dismount-DiskImage -ImagePath "H:\DevDrives\DEV_DEGORAS_SLR.vhdx"
+
+--- DELETE VIRTUAL DISK FILE (IF RECREATING IT) ---
+Remove-Item -Path "C:\DevDrives\DEV_GENERIC.vhdx"
+Remove-Item -Path "H:\DevDrives\DEV_DEGORAS_SLR.vhdx"
+
+--- MANUALLY MOUNT AN EXISTING DEV DRIVE ---
+Mount-DiskImage -ImagePath "C:\DevDrives\DEGORAS_DEV.vhdx"
+
+--- RESIZE THE VIRTUAL DISK ---
+Resize-VHD -Path "C:\DevDrives\DEGORAS_DEV.vhdx" -SizeBytes 40GB
+
+--- CHECK CURRENT DISK SIZE ---
+Get-VHD -Path "C:\DevDrives\DEGORAS_DEV.vhdx" | Select Path, FileSize, Size
+
+
+# =====================================================================
+# DEGORAS PROJECT - INSTALL QT / QT CREATOR IN MSYS2 COMMANDS
+# =====================================================================
+
+In the environment:
+
+pacman -S --needed --noconfirm \
+  mingw-w64-ucrt-x86_64-qt-creator \
+  mingw-w64-ucrt-x86_64-clang \
+  mingw-w64-ucrt-x86_64-clang-tools-extra
+
+pacman -S --needed --noconfirm \
+  mingw-w64-ucrt-x86_64-qt6-base \
+  mingw-w64-ucrt-x86_64-qt6-5compat \
+  mingw-w64-ucrt-x86_64-qt6-declarative \
+  mingw-w64-ucrt-x86_64-qt6-svg \
+  mingw-w64-ucrt-x86_64-qt6-tools \
+  mingw-w64-ucrt-x86_64-qt6-multimedia \
+  mingw-w64-ucrt-x86_64-qt6-shadertools \
+  mingw-w64-ucrt-x86_64-qt6-networkauth \
+  pacman -S mingw-w64-ucrt-x86_64-qt6-doc
+
+
