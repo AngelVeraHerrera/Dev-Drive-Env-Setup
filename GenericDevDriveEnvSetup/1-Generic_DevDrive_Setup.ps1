@@ -6,12 +6,8 @@
 # Updated: 18/02/2026
 # Version: 1.0.0
 # --------------------------------------------------------------------
+# License: MIT
 # ====================================================================
-
-# PARAMETERS
-# WARNINGS: - Set the letter in all scripts.
-#           - Minimum size is 40GB but 50GB recommended.
-# --------------------------------------------------------------------
 
 # FUNCTIONS
 # --------------------------------------------------------------------
@@ -150,7 +146,9 @@ $devEnvName  = [string]$Cfg.environment.dev_env_name
 $vhdPath     = [string]$Cfg.environment.vhd_root
 $sizeGB      = [int]   $Cfg.environment.vhd_size_gb
 $useDevDriveConfig = [bool]$Cfg.environment.use_dev_drive
-    
+$forceDiskpart = [bool]$Cfg.environment.force_diskpart
+$vhdIsFixed = [bool]$Cfg.environment.vhd_is_fixed
+
 if ([string]::IsNullOrWhiteSpace($driveLabel))  {Write-Error "Missing environment.dev_drive_label"; Abort-WithError}
 if ([string]::IsNullOrWhiteSpace($driveLetter)) {Write-Error "Missing environment.dev_drive_letter"; Abort-WithError}
 if ([string]::IsNullOrWhiteSpace($devEnvName))  {Write-Error "Missing environment.dev_env_name"; Abort-WithError}
@@ -196,36 +194,45 @@ Write-NoFormat "  Version: 1.0.0"
 Write-NoFormat "================================================================="
 Write-NoFormat "Parameters:"
 Write-NoFormat "-----------------------------------------------------------------"
-Write-NoFormat "Drive Label        = $driveLabel"
-Write-NoFormat "Drive Letter       = $driveLetter"
-Write-NoFormat "Size (GB)          = $sizeGB"
-Write-NoFormat "Dev Env Name       = $devEnvName"
-Write-NoFormat "VHDX Root          = $vhdRoot"
-Write-NoFormat "VHDX Path          = $vhdPath"
-Write-NoFormat "VHDX Filepath      = $vhdFilePath"
-Write-NoFormat "Current Path       = $scriptDir"
-Write-NoFormat "Setup Scripts Path = $setupScriptsDir"
+Write-NoFormat "Drive Label    = $driveLabel"
+Write-NoFormat "Drive Letter   = $driveLetter"
+Write-NoFormat "Size (GB)      = $sizeGB"
+Write-NoFormat "Dev Env Name   = $devEnvName"
+Write-NoFormat "VHDX Root      = $vhdRoot"
+Write-NoFormat "VHDX Path      = $vhdPath"
+Write-NoFormat "VHDX Filepath  = $vhdFilePath"
+Write-NoFormat "Current Path   = $scriptDir"
+Write-NoFormat "Use Dev Drive  = $useDevDriveConfig"
+Write-NoFormat "Force Diskpart = $forceDiskpart"
+Write-NoFormat "VHD Fixed      = $vhdIsFixed"
 Write-NoFormat "================================================================="
 
-# STEP 1: INITIAL CHECKS
+# STEP 1: Initial checks.
 # --------------------------------------------------------------------
 
 Write-Info "STEP 1: Initial checks and preparations."
 
-Write-Info "Checking Hyper-V PowerShell module (New-VHD)..."
-try {
-    $hvCmd = Get-Command New-VHD -ErrorAction SilentlyContinue
-    if (-not $hvCmd) {
-        Write-Error "Hyper-V PowerShell module not found. Cmdlets like New-VHD/Mount-VHD are unavailable."
-        Write-Error "Please enable Hyper-V Management Tools:"
-        Write-Error "  Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-Management-PowerShell -All"
+if (-not $forceDiskpart)
+{
+    Write-Info "Checking Hyper-V PowerShell module (New-VHD)..."
+    try {
+        $hvCmd = Get-Command New-VHD -ErrorAction SilentlyContinue
+        if (-not $hvCmd) {
+            Write-Error "Hyper-V PowerShell module not found. Cmdlets like New-VHD/Mount-VHD are unavailable."
+            Write-Error "Please enable Hyper-V Management Tools:"
+            Write-Error "  Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-Management-PowerShell -All"
+            Abort-WithError
+        }
+        Write-Info "Hyper-V PowerShell module available."
+    }
+    catch {
+        Write-Error "Error checking Hyper-V module."
         Abort-WithError
     }
-    Write-Info "Hyper-V PowerShell module available."
 }
-catch {
-    Write-Error "Error checking Hyper-V module."
-    Abort-WithError
+else
+{
+    Write-Info "Using Diskpart. Skipping Hyper-V module check."
 }
 
 Write-Info "Checking OS compatibility..."
@@ -322,60 +329,126 @@ Write-Info "STEP 2: OK"
 
 Write-Info "STEP 3: Create and Attach the VHD."
 
+$useHyperV = $false
+
+if (-not $forceDiskpart)
+{
+    try {
+        $hvCmd = Get-Command New-VHD -ErrorAction SilentlyContinue
+        if ($hvCmd) {
+            $useHyperV = $true
+            Write-Info "Using Hyper-V VHDX creation method."
+        } else {
+            Write-Info "Hyper-V cmdlets not available. Falling back to DiskPart."
+            $useHyperV = $false
+        }
+    }
+    catch {
+        Write-Error ("Error checking Hyper-V cmdlets: {0}" -f $_.Exception.Message)
+        Abort-WithError
+    }
+}
+else
+{
+    Write-Info "force_diskpart=true → Using DiskPart method."
+    $useHyperV = $false
+}
+
 Disable-HWDetection
 
-try {
-    Write-Info "Creating dynamic VHDX at $vhdFilePath (Size = ${sizeGB}GB)..."
-    New-VHD -Path $vhdFilePath -SizeBytes ($sizeGB * 1GB) -Dynamic | Out-Null
-}
-catch 
+try
 {
-    Write-Error "New-VHD failed: $_"
-    Enable-HWDetection
-    Abort-WithError
+    # Capture disk list BEFORE attaching the VHD (for reliable identification)
+    $before = @(Get-Disk | Select-Object -ExpandProperty Number)
+
+    if ($useHyperV)
+    {
+        try {
+            $vhdTypeMsg = if ($vhdIsFixed) { "Fixed" } else { "Dynamic" }
+            Write-Info "Creating $vhdTypeMsg VHDX (Hyper-V) at $vhdFilePath (Size = ${sizeGB}GB)..."
+            if ($vhdIsFixed) 
+            {
+                New-VHD -Path $vhdFilePath -SizeBytes ($sizeGB * 1GB) -Fixed   -ErrorAction Stop | Out-Null
+            } 
+            else 
+            {
+                New-VHD -Path $vhdFilePath -SizeBytes ($sizeGB * 1GB) -Dynamic -ErrorAction Stop | Out-Null
+            }
+        }
+        catch {
+            Write-Error ("New-VHD failed: {0}" -f $_.Exception.Message)
+            Abort-WithError
+        }
+
+        Start-Sleep -Milliseconds 1500
+
+        try {
+            Write-Info "Mounting VHDX (Hyper-V)..."
+            Mount-VHD -Path $vhdFilePath -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Write-Error ("Mount-VHD failed: {0}" -f $_.Exception.Message)
+            Abort-WithError
+        }
+    }
+    else
+    {
+        try 
+        {
+            $maxMB = [int]($sizeGB * 1024)
+            $dpType = if ($vhdIsFixed) { "fixed" } else { "expandable" }
+
+            Write-Info "Creating VHDX (DiskPart) type=$dpType at $vhdFilePath (Size = ${sizeGB}GB)..."
+
+            $diskpartScript = @"
+create vdisk file="$vhdFilePath" maximum=$maxMB type=$dpType
+select vdisk file="$vhdFilePath"
+attach vdisk
+"@
+
+            $dpOut = ($diskpartScript | diskpart 2>&1) -join "`n"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error ("DiskPart failed (exit {0}): {1}" -f $LASTEXITCODE, $dpOut)
+                Abort-WithError
+            }
+        }
+        catch {
+            Write-Error ("DiskPart VHD creation/attach failed: {0}" -f $_.Exception.Message)
+            Abort-WithError
+        }
+    }
+
+    Start-Sleep -Milliseconds 1000
+
+    # Identify newly attached disk number by diff
+    $after = @(Get-Disk | Select-Object -ExpandProperty Number)
+
+    $newDiskNumber = (Compare-Object $before $after |
+                      Where-Object SideIndicator -eq "=>" |
+                      Select-Object -First 1 -ExpandProperty InputObject)
+
+    if (-not $newDiskNumber)
+    {
+        Write-Error "Could not determine newly attached disk number after attach."
+        Abort-WithError
+    }
+
+    try {
+        $disk = Get-Disk -Number $newDiskNumber -ErrorAction Stop
+    }
+    catch {
+        Write-Error ("Get-Disk failed for Disk Number {0}: {1}" -f $newDiskNumber, $_.Exception.Message)
+        Abort-WithError
+    }
+
+    Write-Info "Using Disk Number: $($disk.Number) for initialization."
+    Write-Info "STEP 3: OK"
 }
-
-$before = @(Get-Disk | Select-Object -ExpandProperty Number)
-
-Start-Sleep -Milliseconds 1500
-
-try {
-    Write-Info "Mounting VHDX..."
-    Mount-VHD -Path $vhdFilePath -ErrorAction Stop | Out-Null
-}
-catch 
+finally
 {
-    Write-Error "Mount-VHD failed: $_"
+    # Always restore ShellHWDetection even if something fails
     Enable-HWDetection
-    Abort-WithError
 }
-
-Start-Sleep -Milliseconds 1000
-
-$after = @(Get-Disk | Select-Object -ExpandProperty Number)
-
-$newDiskNumber = (Compare-Object $before $after |
-                  Where-Object SideIndicator -eq "=>" |
-                  Select-Object -First 1 -ExpandProperty InputObject)
-
-if (-not $newDiskNumber)
-{
-    Write-Error "Could not determine newly attached disk number after Mount-VHD."
-    Enable-HWDetection
-    Abort-WithError
-}
-
-try {
-    $disk = Get-Disk -Number $newDiskNumber -ErrorAction Stop
-}
-catch {
-    Write-Error ("Get-Disk failed for Disk Number {0}: {1}" -f $newDiskNumber, $_.Exception.Message)
-    Enable-HWDetection
-    Abort-WithError
-}
-
-Write-Info "Using Disk Number: $($disk.Number) for initialization."
-Write-Info "STEP 3: OK"
 
 # STEP 4: Initialize disk, partition and format
 # --------------------------------------------------------------------
@@ -558,21 +631,21 @@ $deploysDir    = "${driveRootUnix}deploys"
 $workspaceDir  = "${driveRootUnix}workspace"
 $buildtreesDir = "${driveRootUnix}buildtrees"
 
-Write-Info "DEV_DRIVE_NAME       = $driveLabel"
-Write-Info "DEV_DRIVE_LETTER     = $driveRootWin"
-Write-Info "DEV_SYSTEM_NAME      = $devEnvName"
-Write-Info "DEV_SYSTEM_DEPLOYS   = $deploysDir"
-Write-Info "DEV_SYSTEM_WORKSPACE = $workspaceDir"
-Write-Info "DEV_SYSTEM_BUILDTREES= $buildtreesDir"
+Write-Info "DEVDRIVE_NAME       = $driveLabel"
+Write-Info "DEVDRIVE_LETTER     = $driveRootWin"
+Write-Info "DEVSYSTEM_NAME      = $devEnvName"
+Write-Info "DEVSYSTEM_DEPLOYS   = $deploysDir"
+Write-Info "DEVSYSTEM_WORKSPACE = $workspaceDir"
+Write-Info "DEVSYSTEM_BUILDTREES= $buildtreesDir"
 
 # Ensure file exists (and overwrite to avoid duplicates)
 $envLines = @(
-    "DEV_DRIVE_NAME=$driveLabel",
-    "DEV_DRIVE_LETTER=$driveRootWin",
-    "DEV_SYSTEM_NAME=$devEnvName",
-    "DEV_SYSTEM_DEPLOYS=$deploysDir",
-    "DEV_SYSTEM_WORKSPACE=$workspaceDir",
-    "DEV_SYSTEM_BUILDTREES=$buildtreesDir"
+    "DEVDRIVE_NAME=$driveLabel",
+    "DEVDRIVE_LETTER=$driveRootWin",
+    "DEVSYSTEM_NAME=$devEnvName",
+    "DEVSYSTEM_DEPLOYS=$deploysDir",
+    "DEVSYSTEM_WORKSPACE=$workspaceDir",
+    "DEVSYSTEM_BUILDTREES=$buildtreesDir"
 )
 
 Write-Info "Writing environment variables to $envFilePath"

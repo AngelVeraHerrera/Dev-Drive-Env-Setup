@@ -12,6 +12,7 @@
 *.TMP
 *.tmp
 *.autosave
+*.zst
 
 # Python
 *.idea
