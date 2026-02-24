@@ -2,28 +2,92 @@
 # DEV DRIVE MANAGEMENT EXAMPLE COMMANDS
 # =====================================================================
 
+
 --- ALLOW POWERSHELL SCRIPT EXECUTION ---
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
 Unblock-File .\1-Generic_DevDrive_Setup.ps1
 
+
 --- DISMOUNT EXISTING DEV DRIVE ---
--- Close all applications using the drive before dismounting
+# Close all applications using the drive before dismounting
 Dismount-DiskImage -ImagePath "C:\DevDrives\DEV_GENERIC.vhdx"
 Dismount-DiskImage -ImagePath "H:\DevDrives\DEV_DEGORAS_SLR.vhdx"
+
 
 --- DELETE VIRTUAL DISK FILE (IF RECREATING IT) ---
 Remove-Item -Path "C:\DevDrives\DEV_GENERIC.vhdx"
 Remove-Item -Path "H:\DevDrives\DEV_DEGORAS_SLR.vhdx"
 
+
 --- MANUALLY MOUNT AN EXISTING DEV DRIVE ---
 Mount-DiskImage -ImagePath "C:\DevDrives\DEGORAS_DEV.vhdx"
+Mount-DiskImage -ImagePath "H:\DevDrives\DEV_DEGORAS_SLR.vhdx"
+
 
 --- RESIZE THE VIRTUAL DISK ---
+# Note: For Dynamic VHDX, FileSize grows only when data is written inside the volume.
 Resize-VHD -Path "C:\DevDrives\DEGORAS_DEV.vhdx" -SizeBytes 40GB
+Resize-VHD -Path "H:\DevDrives\DEV_DEGORAS_SLR.vhdx" -SizeBytes 10GB
+
 
 --- CHECK CURRENT DISK SIZE ---
 Get-VHD -Path "C:\DevDrives\DEGORAS_DEV.vhdx" | Select Path, FileSize, Size
+Get-VHD -Path "H:\DevDrives\DEV_DEGORAS_SLR.vhdx" | Select Path, FileSize, Size
 
+
+--- LIST MOUNTED DISKIMAGES / FIND THE VHD DISK NUMBER ---
+# Shows which VHD/VHDX images are attached
+Get-DiskImage | Select ImagePath, Attached
+
+# Mount and auto-assign disk number if needed
+Mount-DiskImage -ImagePath "H:\DevDrives\DEV_DEGORAS_SLR.vhdx"
+
+# Identify the disk number by size (example: 10GB) or by friendly name
+Get-Disk | Format-Table Number, FriendlyName, Size, PartitionStyle
+
+# If you know the exact VHD size, filter by it (10GB = 10737418240 bytes)
+Get-Disk | Where-Object { $_.Size -eq 10737418240 } | Format-Table Number, FriendlyName, Size
+
+
+--- CHECK PARTITIONS INSIDE THE VHD (DISKNUMBER REQUIRED) ---
+Get-Partition -DiskNumber 4 | Format-Table PartitionNumber, DriveLetter, Offset, Size, Type
+
+
+--- EXPAND THE PARTITION / VOLUME AFTER Resize-VHD (CRITICAL STEP) ---
+# DO NOT use (Get-Disk N).Size directly: it can fail with "Not enough available capacity".
+# Instead, query the supported max size and resize to SizeMax.
+
+$diskNumber = 4
+$partitionNumber = 2
+
+Get-PartitionSupportedSize -DiskNumber $diskNumber -PartitionNumber $partitionNumber
+
+$max = (Get-PartitionSupportedSize -DiskNumber $diskNumber -PartitionNumber $partitionNumber).SizeMax
+Resize-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -Size $max
+
+
+--- VERIFY DRIVE LETTER / VOLUME SIZE AFTER RESIZE ---
+Get-Volume -DriveLetter X | Select DriveLetter, FileSystem, Size, SizeRemaining
+
+
+--- NOTE: WHY FileSize DOES NOT GROW (DYNAMIC VHDX) ---
+# Dynamic VHDX FileSize grows only when you write new data into the volume.
+# Quick test (creates a 5GB file inside X: to force VHD growth):
+fsutil file createnew X:\_vhd_growth_test.bin 5368709120
+
+
+--- OPTIONAL: COMPACT A DYNAMIC VHDX (SHRINK FILESIZE AFTER DELETING DATA) ---
+# 1) Inside X:, delete large files and optionally run:
+#    Optimize-Volume -DriveLetter X -ReTrim -Verbose   (SSD/trim aware)
+# 2) Then compact the VHDX file:
+Optimize-VHD -Path "H:\DevDrives\DEV_DEGORAS_SLR.vhdx" -Mode Full
+
+
+--- OPTIONAL: CONVERT DYNAMIC -> FIXED (FORCE FILESIZE = SIZE) ---
+# Requires enough free space on the host drive to create the fixed copy.
+Convert-VHD -Path "H:\DevDrives\DEV_DEGORAS_SLR.vhdx" `
+            -DestinationPath "H:\DevDrives\DEV_DEGORAS_SLR_fixed.vhdx" `
+            -VHDType Fixed
 
 # =====================================================================
 # DEGORAS PROJECT - INSTALL QT / QT CREATOR IN MSYS2 COMMANDS

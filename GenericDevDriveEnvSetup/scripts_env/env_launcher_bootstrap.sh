@@ -59,10 +59,10 @@ log_i "Bootstrap dir: ${SCRIPT_DIR}"
 # Auto-detect <prefix>-env-variables.env
 # ---------------------------------------------------------------
 shopt -s nullglob
-env_files=("${SCRIPT_DIR}"/*-env-variables.env)
+env_files=("${SCRIPT_DIR}"/*_env_variables.env)
 
 if (( ${#env_files[@]} == 0 )); then
-  die "No *-env-variables.env found in: ${SCRIPT_DIR}"
+  die "No *_env_variables.env found in: ${SCRIPT_DIR}"
 elif (( ${#env_files[@]} > 1 )); then
   log_e "Multiple *-env-variables.env found in: ${SCRIPT_DIR}"
   for f in "${env_files[@]}"; do log_e "  - $(basename "$f")"; done
@@ -70,7 +70,7 @@ elif (( ${#env_files[@]} > 1 )); then
 fi
 
 ENV_FILE="${env_files[0]}"
-PREFIX="$(basename "$ENV_FILE" "-env-variables.env")"
+PREFIX="$(basename "$ENV_FILE" "_env_variables.env")"
 log_i "Detected prefix: ${PREFIX}"
 log_i "Env file       : ${ENV_FILE}"
 
@@ -159,21 +159,6 @@ log_i "Loaded env file: ${ENV_FILE}"
 # ---------------------------------------------------------------
 if ! command -v shell >/dev/null 2>&1; then
   die "'shell' helper not found. Are you running inside MSYS2 bash?"
-fi
-
-# ---------------------------------------------------------------
-# Verify MSYS2 environment 
-# ---------------------------------------------------------------
-wanted="$(printf '%s' "${MSYS2_ENV:-ucrt64}" | tr '[:lower:]' '[:upper:]')"   # UCRT64
-current="${MSYSTEM:-}"
-
-if [[ -z "$current" ]]; then
-  log_w "MSYSTEM is empty. Continuing."
-  pause_if_interactive
-elif [[ "$current" != "$wanted" ]]; then
-  die "Wrong MSYS2 environment: MSYSTEM=$current, expected $wanted. Launch the correct bash (e.g., ucrt64)."
-else
-  log_i "MSYS2 environment OK: MSYSTEM=$current"
 fi
 
 # ---------------------------------------------------------------

@@ -5,9 +5,9 @@
         "dev_drive_letter": "X",
         "dev_env_name": "DegorasSLR",
         "vhd_root": "H:/DevDrives",
-        "vhd_size_gb": 2,
-        "use_dev_drive": false,
-        "force_diskpart": true,
+        "vhd_size_gb": 50,
+        "use_dev_drive": true,
+        "force_diskpart": false,
         "vhd_fixed": true,
         "proxy_url": ""
     },
@@ -38,7 +38,8 @@
             { "name": "doxygen",   "mode": "latest" },
             { "name": "7zip",      "mode": "latest" },
             { "name": "ntldd",     "mode": "latest" },
-            { "name": "cmake",     "mode": "latest" }
+            { "name": "cmake",     "mode": "latest" },
+            { "name": "qt-creator",     "mode": "latest" }
         ]
     },
     "vcpkg": 

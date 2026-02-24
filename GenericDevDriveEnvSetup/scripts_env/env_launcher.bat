@@ -22,12 +22,12 @@ set "ENV_FILE="
 set "BOOTSTRAP_SCRIPT="
 set "PREFIX="
 
-for %%F in ("%SCRIPT_DIR%\*-env-variables.env") do (
+for %%F in ("%SCRIPT_DIR%\*_env_variables.env") do (
     if exist "%%~fF" (
         set "CAND_ENV=%%~fF"
         set "CAND_PREFIX=%%~nF"
         set "CAND_PREFIX=!CAND_PREFIX:-env-variables=!"
-        set "CAND_BOOT=%SCRIPT_DIR%\!CAND_PREFIX!-env-launcher-bootstrap.sh"
+        set "CAND_BOOT=%SCRIPT_DIR%\!CAND_PREFIX!_env_launcher_bootstrap.sh"
 
         if exist "!CAND_BOOT!" (
             set /a COUNT+=1

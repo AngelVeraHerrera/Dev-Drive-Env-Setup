@@ -560,6 +560,7 @@ $folders =
     "${driveLetter}:\buildtrees",
     "${driveLetter}:\deploys",
     "${driveLetter}:\logs\env",
+    "${driveLetter}:\env",
     "${driveLetter}:\workspace"
 )
 
@@ -572,13 +573,16 @@ foreach ($f in $folders) {
 
 Write-Info "Copying bash scripts..."
 
-$targetDir   = "${driveLetter}:"
+$targetDir   = "${driveLetter}:/env"
+$prefix = $devEnvName.ToLowerInvariant()
 $scriptFiles = Get-ChildItem -Path $setupScriptsDir -Filter "*.sh" -File
 foreach ($script in $scriptFiles) {
-    try {
-        $destPath = Join-Path $targetDir $script.Name
+    try 
+    {
+        $newName  = "{0}_{1}" -f $prefix, $script.Name
+        $destPath = Join-Path $targetDir $newName
         Copy-Item -Path $script.FullName -Destination $destPath -Force
-        Write-Info "Copied: $($script.Name)"
+        Write-Info "Copied: $newName"
     }
     catch {
         Write-Error "Failed to copy $($script.Name): $_"
@@ -591,10 +595,12 @@ Write-Info "Copying bat scripts..."
 $scriptFiles = Get-ChildItem -Path $setupScriptsDir -Filter "*.bat" -File
 foreach ($script in $scriptFiles) 
 {
-    try {
-        $destPath = Join-Path $targetDir $script.Name
+    try 
+    {
+        $newName  = "{0}_{1}" -f $prefix, $script.Name
+        $destPath = Join-Path $targetDir $newName
         Copy-Item -Path $script.FullName -Destination $destPath -Force
-        Write-Info "Copied: $($script.Name)"
+        Write-Info "Copied: $newName"
     }
     catch {
         Write-Error "Failed to copy $($script.Name): $_"
@@ -619,7 +625,7 @@ Write-Info "STEP 7: OK"
 Write-Info "STEP 8: Setup environment variables and shortcut."
 
 # Env file (lowercase)
-$envFilePath = Join-Path "$driveLetter`:" (("{0}-env-variables.env" -f $devEnvName).ToLower())
+$envFilePath = Join-Path "$driveLetter`:" (("env/{0}_env_variables.env" -f $devEnvName).ToLower())
 
 # Normalized drive letter forms
 $driveLetterNorm = $driveLetter.Trim().TrimEnd(':')
