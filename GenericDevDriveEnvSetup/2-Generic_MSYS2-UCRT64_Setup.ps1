@@ -560,7 +560,12 @@ foreach ($p in $msysPackages)
         Abort-WithError
     }
 
-    $pinnedFiles += (Convert-ToMSYSPath $filePath)
+    #Non compatible with spaces in file paths, and pacman -U doesn't support quoting well, so we skip it for now and rely on the user to keep the local package folder clean of unrelated files.
+    #$pinnedFiles += (Convert-ToMSYSPath $filePath)
+
+
+    $msysPath = Convert-ToMSYSPath $filePath
+    $pinnedFiles += "'$msysPath'"
 }
 
 if ($pinnedFiles.Count -gt 0)
@@ -708,6 +713,23 @@ $volumeLabel = if ($volume -and $volume.FileSystemLabel) { $volume.FileSystemLab
 $shortcutPath = [System.IO.Path]::Combine([Environment]::GetFolderPath("Desktop"), "${devEnvName} Environment.lnk")
 $targetPath = Join-Path "$devDrive" (("env/{0}_env_launcher.bat" -f $devEnvName).ToLower())
 
+
+
+#=========================================CHECK===========================
+$batLines = @(
+    "@echo off"
+    "title $devEnvName Environment"
+    "set CHERE_INVOKING=1"
+    "set MSYSTEM=$($msysEnv.ToUpperInvariant())"
+    "start `"`" `"$msys2BashPath`" -l -i"
+)
+#=========================================CHECK===========================
+
+
+Write-Info "Generating .bat launcher on $targetPath"
+[System.IO.File]::WriteAllLines($targetPath, $batLines, $utf8NoBom)
+
+
 if (Test-Path $shortcutPath) 
 {
     Remove-Item $shortcutPath -Force
@@ -736,6 +758,8 @@ $shortcut.Save()
 Write-Info "Shortcut created on dev drive."
 
 Write-Info "STEP 7: OK"
+
+
 
 # FINALIZATION
 # --------------------------------------------------------------------

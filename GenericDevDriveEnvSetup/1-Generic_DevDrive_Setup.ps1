@@ -165,6 +165,18 @@ if ($useDevDriveConfig -and $sizeGB -lt 50)
 $driveLetter = $driveLetter.Trim().TrimEnd(':')         
 $vhdPath     = $vhdPath -replace '/', '\'            
 
+# Prevent saving VHDX to the same drive letter that will be used for the Dev Drive
+if (($vhdPath -split ':')[0] -eq $driveLetter) {
+    Write-Error "Error: You cannot save the VHDX to the same drive you are creating (${driveLetter}:)."
+    Abort-WithError
+}
+
+#Verify that the physical destination disk actually exists
+if (-not (Test-Path "$(($vhdPath -split ':')[0]):\" -ErrorAction SilentlyContinue)) {
+    Write-Error "Error: The physical disk for vhd_root does not exist."
+    Abort-WithError
+}
+
 # INITIAL PREPARATION
 # --------------------------------------------------------------------
 

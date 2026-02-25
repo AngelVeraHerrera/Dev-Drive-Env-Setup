@@ -19,7 +19,10 @@ param
 # ====================================================================
 # CONFIGURATION LOADER 
 # ====================================================================
-$ConfigPath = Join-Path $PSScriptRoot "devsystem-config.json"
+
+#$ConfigPath = Join-Path $PSScriptRoot "devsystem-config.json"  #Wrong .json file
+$ConfigPath = Join-Path $PSScriptRoot "generic_dev_drive_env-cfg.json"
+
 
 if (-not (Test-Path $ConfigPath)) {
     Write-Error "CRITICAL: Configuration file missing: $ConfigPath"
@@ -38,7 +41,8 @@ try {
 # ====================================================================
 
 # 1. Environment Variables 
-$devDrive       = $Cfg.environment.driveLetter
+#$devDrive       = $Cfg.environment.driveLetter #old
+$devDrive       = $Cfg.environment.dev_drive_letter
 $msysDirName    = $Cfg.environment.msysDir
 
 # 2. VCPKG
