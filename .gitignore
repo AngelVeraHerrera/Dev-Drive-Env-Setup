@@ -5,6 +5,9 @@
 *install*/
 *deploy*/
 
+# Cfg files
+generic_dev_drive_env-cfg.json
+
 # Logs
 *.log
 

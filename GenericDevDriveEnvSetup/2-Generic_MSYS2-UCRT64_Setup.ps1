@@ -711,23 +711,7 @@ $stream.Close()
 $volume = Get-Volume -DriveLetter $driveLetterOnly -ErrorAction SilentlyContinue
 $volumeLabel = if ($volume -and $volume.FileSystemLabel) { $volume.FileSystemLabel } else { $driveLetterOnly }
 $shortcutPath = [System.IO.Path]::Combine([Environment]::GetFolderPath("Desktop"), "${devEnvName} Environment.lnk")
-$targetPath = Join-Path "$devDrive" (("env/{0}_env_launcher.bat" -f $devEnvName).ToLower())
-
-
-
-#=========================================CHECK===========================
-$batLines = @(
-    "@echo off"
-    "title $devEnvName Environment"
-    "set CHERE_INVOKING=1"
-    "set MSYSTEM=$($msysEnv.ToUpperInvariant())"
-    "start `"`" `"$msys2BashPath`" -l -i"
-)
-#=========================================CHECK===========================
-
-
-Write-Info "Generating .bat launcher on $targetPath"
-[System.IO.File]::WriteAllLines($targetPath, $batLines, $utf8NoBom)
+$targetPath = Join-Path "$devDrive" (("env/launcher/{0}_env_launcher.bat" -f $devEnvName).ToLower())
 
 
 if (Test-Path $shortcutPath) 

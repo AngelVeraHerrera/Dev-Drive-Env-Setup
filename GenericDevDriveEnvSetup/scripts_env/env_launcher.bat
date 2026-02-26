@@ -6,7 +6,7 @@ REM ===================================================================
 REM ENVIRONMENT STARTER FOR MSYS2
 REM Launcher only: calls bootstrap .sh (auto-detected)
 REM Author: Ángel Vera Herrera
-REM Version: 251026
+REM Version: 260224
 REM ===================================================================
 
 REM Detect script directory
@@ -26,7 +26,7 @@ for %%F in ("%SCRIPT_DIR%\*_env_variables.env") do (
     if exist "%%~fF" (
         set "CAND_ENV=%%~fF"
         set "CAND_PREFIX=%%~nF"
-        set "CAND_PREFIX=!CAND_PREFIX:-env-variables=!"
+        set "CAND_PREFIX=!CAND_PREFIX:_env_variables=!"
         set "CAND_BOOT=%SCRIPT_DIR%\!CAND_PREFIX!_env_launcher_bootstrap.sh"
 
         if exist "!CAND_BOOT!" (
@@ -41,8 +41,8 @@ for %%F in ("%SCRIPT_DIR%\*_env_variables.env") do (
 if "%COUNT%"=="0" (
     echo [ERROR] No valid environment pair found in: "%SCRIPT_DIR%"
     echo         Expected:
-    echo           ^<prefix^-env-variables.env
-    echo           ^<prefix^-env-launcher-bootstrap.sh
+    echo           ^<prefix^_env_variables.env
+    echo           ^<prefix^_env_launcher_bootstrap.sh
     exit /b 1
 )
 

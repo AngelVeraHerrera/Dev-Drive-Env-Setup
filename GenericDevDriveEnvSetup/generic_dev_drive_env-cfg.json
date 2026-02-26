@@ -4,7 +4,7 @@
         "dev_drive_label": "DEV_DEGORAS_SLR",
         "dev_drive_letter": "X",
         "dev_env_name": "DegorasSLR",
-        "vhd_root": "C:/DevDrives",
+        "vhd_root": "H:/DevDrives",
         "vhd_size_gb": 50,
         "use_dev_drive": true,
         "force_diskpart": false,
@@ -26,26 +26,29 @@
         },
         "packages": 
         [
-            { "name": "ninja",     "mode": "pinned", "version": "1.13.2-1" },
-            { "name": "gdb",       "mode": "pinned", "version": "17.1-3" },
-            { "name": "gcc",       "mode": "pinned", "version": "15.2.0-11" },
-            { "name": "gcc-libs",  "mode": "pinned", "version": "15.2.0-11" },
-            { "name": "make",      "mode": "latest", "version": "4.4.1-4" },
-            { "name": "diffutils", "mode": "latest" },
-            { "name": "lld",       "mode": "latest" },
-            { "name": "ripgrep",   "mode": "latest" },
-            { "name": "curl",      "mode": "latest" },
-            { "name": "doxygen",   "mode": "latest" },
-            { "name": "7zip",      "mode": "latest" },
-            { "name": "ntldd",     "mode": "latest" },
-            { "name": "cmake",     "mode": "latest" },
-            { "name": "qt-creator",     "mode": "latest" }
+            { "name": "ninja",      "mode": "pinned", "version": "1.13.2-1" },
+            { "name": "gdb",        "mode": "pinned", "version": "17.1-3" },
+            { "name": "gcc",        "mode": "pinned", "version": "15.2.0-11" },
+            { "name": "gcc-libs",   "mode": "pinned", "version": "15.2.0-11" },
+            { "name": "make",       "mode": "latest", "version": "4.4.1-4" },
+            { "name": "diffutils",  "mode": "latest" },
+            { "name": "lld",        "mode": "latest" },
+            { "name": "ripgrep",    "mode": "latest" },
+            { "name": "curl",       "mode": "latest" },
+            { "name": "doxygen",    "mode": "latest" },
+            { "name": "7zip",       "mode": "latest" },
+            { "name": "ntldd",      "mode": "latest" },
+            { "name": "cmake",      "mode": "latest" },
+            { "name": "qt-creator", "mode": "latest" }
         ]
     },
     "vcpkg": 
     {
-        "repositoryUrl": "https://github.com/microsoft/vcpkg.git",
-        "commitsApiUrl": "https://api.github.com/repos/microsoft/vcpkg/commits/master",
-        "baselineCommit": "446682c6c338d68ed986972ffc3529f7d63c1555"
+        "source":
+        {
+            "repository_url": "https://github.com/microsoft/vcpkg.git",
+            "commits_api_url": "https://api.github.com/repos/microsoft/vcpkg/commits/master",
+            "baseline_commit": "446682c6c338d68ed986972ffc3529f7d63c1555"
+        }
     }
 }

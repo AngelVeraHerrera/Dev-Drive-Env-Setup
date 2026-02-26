@@ -212,7 +212,6 @@ Write-NoFormat "Size (GB)      = $sizeGB"
 Write-NoFormat "Dev Env Name   = $devEnvName"
 Write-NoFormat "VHDX Root      = $vhdRoot"
 Write-NoFormat "VHDX Path      = $vhdPath"
-Write-NoFormat "VHDX Filepath  = $vhdFilePath"
 Write-NoFormat "Current Path   = $scriptDir"
 Write-NoFormat "Use Dev Drive  = $useDevDriveConfig"
 Write-NoFormat "Force Diskpart = $forceDiskpart"
@@ -569,11 +568,12 @@ Write-Info "Creating workspace folder tree inside drive $driveLetter..."
 
 $folders = 
 @(
-    "${driveLetter}:\buildtrees",
-    "${driveLetter}:\deploys",
-    "${driveLetter}:\logs\env",
-    "${driveLetter}:\env",
-    "${driveLetter}:\workspace"
+    "${driveLetter}:/buildtrees",
+    "${driveLetter}:/deploys",
+    "${driveLetter}:/logs/env",
+    "${driveLetter}:/env/launcher",
+    "${driveLetter}:/env/settings",
+    "${driveLetter}:/workspace"
 )
 
 foreach ($f in $folders) {
@@ -585,7 +585,7 @@ foreach ($f in $folders) {
 
 Write-Info "Copying bash scripts..."
 
-$targetDir   = "${driveLetter}:/env"
+$targetDir   = "${driveLetter}:/env/launcher"
 $prefix = $devEnvName.ToLowerInvariant()
 $scriptFiles = Get-ChildItem -Path $setupScriptsDir -Filter "*.sh" -File
 foreach ($script in $scriptFiles) {
