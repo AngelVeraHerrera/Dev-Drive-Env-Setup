@@ -1,5 +1,5 @@
 # ====================================================================
-# GENERIC WINDOWS DEV DRIVE SETUP SCRIPT
+# SETUP WINDOWS DEV DRIVE SCRIPT
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
 #          David Abuín Sánchez
@@ -194,10 +194,10 @@ $globalLogFileUnix = $globalLogFile -replace '\\', '/' -replace '^([A-Za-z]):', 
 
 Clear-Host
 $originalTitle = $host.UI.RawUI.WindowTitle
-$host.UI.RawUI.WindowTitle = "GENERIC WINDOWS DEV DRIVE SETUP SCRIPT"
+$host.UI.RawUI.WindowTitle = "SETUP WINDOWS DEV DRIVE SCRIPT"
 
 Write-NoFormat "==========================================================="
-Write-NoFormat "  GENERIC WINDOWS DEV DRIVE SETUP SCRIPT"
+Write-NoFormat "  SETUP WINDOWS DEV DRIVE SCRIPT"
 Write-NoFormat "-----------------------------------------------------------------"
 Write-NoFormat "  Authors: Ángel Vera Herrera"
 Write-NoFormat "           David Abuín Sánchez"

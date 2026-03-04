@@ -59,7 +59,7 @@ log_i "Bootstrap dir: ${SCRIPT_DIR}"
 # Auto-detect <prefix>-env-variables.env
 # ---------------------------------------------------------------
 shopt -s nullglob
-env_files=("${SCRIPT_DIR}"/*_env_variables.env)
+env_files=("${SCRIPT_DIR}"/../*_env_variables.env)
 
 if (( ${#env_files[@]} == 0 )); then
   die "No *_env_variables.env found in: ${SCRIPT_DIR}"

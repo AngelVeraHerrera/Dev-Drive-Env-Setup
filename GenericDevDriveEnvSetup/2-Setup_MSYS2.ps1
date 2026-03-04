@@ -1,5 +1,5 @@
 # ====================================================================
-# GENERIC MSYS2-UCRT64 SETUP SCRIPT
+# MSYS2 SETUP SCRIPT
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
 #          David Abuín Sánchez
@@ -282,7 +282,7 @@ $globalLogFileUnix = $globalLogFile -replace '\\', '/' -replace '^([A-Za-z]):', 
 
 #Clear-Host
 $originalTitle = $host.UI.RawUI.WindowTitle
-$host.UI.RawUI.WindowTitle = "GENERIC MSYS2-UCRT64 SETUP SCRIPT"
+$host.UI.RawUI.WindowTitle = "GENERIC MSYS2 SETUP SCRIPT"
 
 $pinnedList = @()
 $latestList = @()
@@ -299,7 +299,7 @@ $pinnedStr = if ($pinnedList.Count -gt 0) { $pinnedList -join ", " } else { "(no
 $latestStr = if ($latestList.Count -gt 0) { $latestList -join ", " } else { "(none)" }
 
 Write-NoFormat "================================================================="
-Write-NoFormat "  GENERIC MSYS2-$($msysEnv.ToUpperInvariant()) SETUP SCRIPT"
+Write-NoFormat "  MSYS2 SETUP SCRIPT"
 Write-NoFormat "-----------------------------------------------------------------"
 Write-NoFormat "  Authors: Ángel Vera Herrera"
 Write-NoFormat "           David Abuín Sánchez"
@@ -672,16 +672,15 @@ Write-Info "STEP 6: OK"
 Write-Info "STEP 7: Setup environment variables and shortcout."
 
 $envFilePath = Join-Path "$driveLetter`:" (("env/{0}_env_variables.env" -f $devEnvName).ToLower())
-$msys2Path = $msys2Path -replace '\\', '/'
-$mingw64Path   = "$msys2Path/ucrt64"
-$msys2BashPath = "$msys2Path/usr/bin/bash.exe"
-$msys2RootPath = "$msys2Path"
+$msys2PathNorm = $msys2Path -replace '\\', '/'
+$mingwRootPath = "$msys2PathNorm/$msysEnv"     
+$msys2BashPath = "$msys2PathNorm/usr/bin/bash.exe"
 
-Write-Info "UCRT64_ROOT=${mingw64Path}"
-Write-Info "MINGW_ROOT=${mingw64Path}"
-Write-Info "MSYS2_ROOT=${msys2Path}"
+Write-Info "MINGW_ROOT=${mingwRootPath}"
+Write-Info "MSYS2_ROOT=${msys2PathNorm}"
 Write-Info "MSYS2_BASH=${msys2BashPath}"
-Write-Info 'BASE_PATH=/ucrt64/bin:/usr/local/bin:/usr/bin:/bin'
+Write-Info "MSYS2_ENV=${msysEnv}"
+Write-Info ("BASE_PATH=/{0}/bin:/usr/local/bin:/usr/bin:/bin" -f $msysEnv)
 Write-Info 'PATH=${BASE_PATH}'
 
 # Prepare environment variable export file
@@ -692,12 +691,11 @@ if (-not (Test-Path $envFilePath))
 
 # Write all environment variables to a file for later use
 $envLines = @(
-    "UCRT64_ROOT=$mingw64Path"
-    "MINGW_ROOT=$mingw64Path"
-    "MSYS2_ROOT=$msys2Path"
+    "MINGW_ROOT=$mingwRootPath"
+    "MSYS2_ROOT=$msys2PathNorm"
     "MSYS2_BASH=$msys2BashPath"
-    "MSYS2_ENV=ucrt64"
-    'BASE_PATH=/ucrt64/bin:/usr/local/bin:/usr/bin:/bin'
+    "MSYS2_ENV=$msysEnv"
+    ("BASE_PATH=/{0}/bin:/usr/local/bin:/usr/bin:/bin" -f $msysEnv)
     'PATH=${BASE_PATH}'
 )
 

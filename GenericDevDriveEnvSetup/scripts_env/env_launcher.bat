@@ -6,23 +6,24 @@ REM ===================================================================
 REM ENVIRONMENT STARTER FOR MSYS2
 REM Launcher only: calls bootstrap .sh (auto-detected)
 REM Author: Ángel Vera Herrera
-REM Version: 260224
+REM Version: 260304
 REM ===================================================================
 
 REM Detect script directory
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+set "ENV_DIR=%SCRIPT_DIR%\.."
 
 REM ---------------------------------------------------------------
 REM Find exactly one pair: <prefix>-env-variables.env + <prefix>-env-launcher-bootstrap.sh
 REM ---------------------------------------------------------------
 
-set "COUNT=0"
+set /a COUNT=0
 set "ENV_FILE="
 set "BOOTSTRAP_SCRIPT="
 set "PREFIX="
 
-for %%F in ("%SCRIPT_DIR%\*_env_variables.env") do (
+for %%F in ("%ENV_DIR%\*_env_variables.env") do (
     if exist "%%~fF" (
         set "CAND_ENV=%%~fF"
         set "CAND_PREFIX=%%~nF"
@@ -39,18 +40,22 @@ for %%F in ("%SCRIPT_DIR%\*_env_variables.env") do (
 )
 
 if "%COUNT%"=="0" (
-    echo [ERROR] No valid environment pair found in: "%SCRIPT_DIR%"
+    echo [ERROR] No valid environment pair found.
+    echo         Launcher dir : "%SCRIPT_DIR%"
+    echo         Env dir      : "%ENV_DIR%"
     echo         Expected:
-    echo           ^<prefix^_env_variables.env
-    echo           ^<prefix^_env_launcher_bootstrap.sh
+    echo           "%ENV_DIR%\^<prefix^>_env_variables.env"
+    echo           "%SCRIPT_DIR%\^<prefix^>_env_launcher_bootstrap.sh"
     exit /b 1
 )
 
 if not "%COUNT%"=="1" (
-    echo [ERROR] Multiple valid environment pairs found in: "%SCRIPT_DIR%"
-    echo         Ensure only one prefix is present.
+    echo [ERROR] Multiple valid environment pairs found.
+    echo         Ensure only one prefix is present in:
+    echo           "%ENV_DIR%" and "%SCRIPT_DIR%"
     exit /b 1
 )
+
 
 REM ---------------------------------------------------------------
 REM Read MSYS2_ROOT and MSYS2_ENV from env file
@@ -64,12 +69,14 @@ for /f "usebackq tokens=1,* delims==" %%A in ("%ENV_FILE%") do (
 
 if not defined MSYS2_ROOT (
     echo [ERROR] MSYS2_ROOT not defined in env file:
-    echo         %ENV_FILE%
+    echo         "%ENV_FILE%"
     exit /b 1
 )
 
 if not defined MSYS2_ENV (
-    set "MSYS2_ENV=ucrt64"
+    echo [ERROR] MSYS2_ENV not defined in env file:
+    echo         "%ENV_FILE%"
+    exit /b 1
 )
 
 REM Normalize MSYS2_ROOT to Windows slashes
@@ -78,7 +85,7 @@ set "MSYS2_ROOT=%MSYS2_ROOT:/=\%"
 set "MSYS2_SHELL=%MSYS2_ROOT%\msys2_shell.cmd"
 if not exist "%MSYS2_SHELL%" (
     echo [ERROR] msys2_shell.cmd not found at:
-    echo         %MSYS2_SHELL%
+    echo         "%MSYS2_SHELL%"
     exit /b 1
 )
 
@@ -93,6 +100,7 @@ set "BOOTSTRAP_POSIX=/%DRIVE%%BOOTSTRAP_WIN:~2%"
 echo [INFO] Launching MSYS2 environment...
 echo [INFO] MSYS2_ROOT:       %MSYS2_ROOT%
 echo [INFO] MSYS2_ENV:        %MSYS2_ENV%
+echo [INFO] Env file:         %ENV_FILE%
 echo [INFO] Bootstrap script: %BOOTSTRAP_SCRIPT%
 echo [INFO] POSIX bootstrap:  %BOOTSTRAP_POSIX%
 echo.
