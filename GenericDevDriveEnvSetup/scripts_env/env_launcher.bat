@@ -25,10 +25,18 @@ set "PREFIX="
 
 for %%F in ("%ENV_DIR%\*_env_variables.env") do (
     if exist "%%~fF" (
+
         set "CAND_ENV=%%~fF"
         set "CAND_PREFIX=%%~nF"
+
+        rem remove suffix "_env_variables"
         set "CAND_PREFIX=!CAND_PREFIX:_env_variables=!"
+
         set "CAND_BOOT=%SCRIPT_DIR%\!CAND_PREFIX!_env_launcher_bootstrap.sh"
+
+        echo [DEBUG] ENV  : "!CAND_ENV!"
+        echo [DEBUG] PREF : "!CAND_PREFIX!"
+        echo [DEBUG] BOOT : "!CAND_BOOT!"
 
         if exist "!CAND_BOOT!" (
             set /a COUNT+=1
