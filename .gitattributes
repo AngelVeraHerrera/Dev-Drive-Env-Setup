@@ -1,0 +1,12 @@
+# Patch and diff files must reach the working tree byte-for-byte as committed.
+#
+# This repository is used with core.autocrlf=true, which rewrites text files to CRLF on checkout. vcpkg applies
+# overlay-port patches with `git apply`, and `git apply` REFUSES a CRLF patch against an LF source -- while plain
+# `patch` tolerates it, so the difference is easy to miss. The result is a patch that is silently not applied: the
+# port builds against unpatched sources and fails somewhere unrelated, or worse, succeeds subtly wrong.
+#
+# That is not hypothetical here. vcpkg_overlays/ports/gstreamer/gstfilesink_fix_gcc15-2-Rev11.patch was CRLF and
+# `git apply --check` rejected it on the 1.28.6 tree; `patch --dry-run` accepted the same file. Marking these paths
+# -text takes them out of the conversion machinery entirely, in both directions.
+*.patch -text
+*.diff  -text
