@@ -48,8 +48,12 @@ echo "[INFO] QtCreator settings : ${QT_SETTINGS_PATH}"
 # Ensure toolchain binaries are first in PATH
 # -------------------------------------------------------------------
 
-BASE_PATH_FALLBACK="/usr/local/bin:/usr/bin:/bin"
-export PATH="${MINGW_ROOT}/bin:${BASE_PATH:-$BASE_PATH_FALLBACK}"
+# PATH comes from the .env, which already begins with the toolchain and carries VCPKG_BIN, VCPKG_ROOT and every
+# custom entry. Overwriting it here stripped all of that and left QtCreator running builds that could not find
+# their own DLLs. Only fall back if the .env supplied nothing at all.
+if [[ -z "${PATH:-}" ]]; then
+  export PATH="${MINGW_ROOT}/bin:/usr/local/bin:/usr/bin:/bin"
+fi
 echo "[INFO] PATH configured"
 
 # -------------------------------------------------------------------

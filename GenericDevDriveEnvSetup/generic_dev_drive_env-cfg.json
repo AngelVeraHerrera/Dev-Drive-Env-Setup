@@ -4,12 +4,21 @@
         "dev_drive_label": "DEV_DEGORAS_SLR",
         "dev_drive_letter": "X",
         "dev_env_name": "DegorasSLR",
-        "vhd_root": "H:/DevDrives",
+        "vhd_root": "C:/DevDrives",
         "vhd_size_gb": 50,
-        "use_dev_drive": true,
-        "force_diskpart": false,
+        "use_dev_drive": false,
+        "force_diskpart": true,
         "vhd_fixed": true,
-        "proxy_url": ""
+        "//custom_variables": "Extra KEY=VALUE lines written into the generated .env, in the order given. For tools that want a variable and nothing else -- CMake locating CUDA, a vendor SDK root. Being on PATH is NOT implied; use custom_path_entries for that.",
+        "custom_variables":
+        {
+            "CUDA_PATH": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin"
+        },
+        "//custom_path_entries": "Extra PATH components, prepended in the order given, ahead of BASE_PATH. Each may be a literal path or a ${REFERENCE} to a custom_variables entry or to a generated one. Step 3 REFUSES a reference nothing defines: it would expand to an empty PATH component, which execvp and bash both read as the current directory.",
+        "custom_path_entries": [ "${CUDA_PATH}" ],
+        "//append_windows_system_path": "Append the Windows system directories (System32 and friends) to the tail of BASE_PATH. Default true when the key is absent. Native tools reach cmd.exe through popen(), so without them windres fails with \"can't popen ... Bad file descriptor\" and gcc cannot create its temporary files. They go at the TAIL so nothing there can shadow the toolchain.",
+        "append_windows_system_path": true,
+        "proxy_url": "http://192.168.1.68:8080"
     },
     "msys2":
     {
@@ -26,20 +35,22 @@
         },
         "packages": 
         [
-            { "name": "ninja",      "mode": "pinned", "version": "1.13.2-1" },
-            { "name": "gdb",        "mode": "pinned", "version": "17.1-3" },
-            { "name": "gcc",        "mode": "pinned", "version": "15.2.0-11" },
-            { "name": "gcc-libs",   "mode": "pinned", "version": "15.2.0-11" },
-            { "name": "make",       "mode": "latest", "version": "4.4.1-4" },
-            { "name": "diffutils",  "mode": "latest" },
-            { "name": "lld",        "mode": "latest" },
-            { "name": "ripgrep",    "mode": "latest" },
-            { "name": "curl",       "mode": "latest" },
-            { "name": "doxygen",    "mode": "latest" },
-            { "name": "7zip",       "mode": "latest" },
-            { "name": "ntldd",      "mode": "latest" },
-            { "name": "cmake",      "mode": "latest" },
-            { "name": "qt-creator", "mode": "latest" }
+			{ "name": "ninja",       "mode": "pinned", "version": "1.13.2-1" },
+			{ "name": "gdb",         "mode": "pinned", "version": "17.2-1" },
+			{ "name": "gcc",         "mode": "pinned", "version": "16.2.0-3" },
+			{ "name": "gcc-libs",    "mode": "pinned", "version": "16.2.0-3" },
+			{ "name": "gcc-objc",    "mode": "pinned", "version": "16.2.0-3" },
+			{ "name": "make",        "mode": "pinned", "version": "4.4.1-5" },
+			{ "name": "make",        "mode": "pinned", "version": "4.4.1-3", "repo": "msys" },
+			{ "name": "diffutils",   "mode": "pinned", "version": "3.12-1" },
+			{ "name": "lld",         "mode": "pinned", "version": "22.1.8-2" },
+			{ "name": "ripgrep",     "mode": "pinned", "version": "15.2.0-1" },
+			{ "name": "curl",        "mode": "pinned", "version": "8.21.0-2" },
+			{ "name": "doxygen",     "mode": "pinned", "version": "1.18.0-1" },
+			{ "name": "7zip",        "mode": "pinned", "version": "26.02-1" },
+			{ "name": "ntldd",       "mode": "pinned", "version": "r19.7fb9365-4" },
+			{ "name": "cmake",       "mode": "pinned", "version": "4.4.2-2" },
+			{ "name": "qt-creator",  "mode": "pinned", "version": "20.0.0-1" }
         ]
     },
     "vcpkg": 
@@ -47,8 +58,119 @@
         "source":
         {
             "repository_url": "https://github.com/microsoft/vcpkg.git",
-            "commits_api_url": "https://api.github.com/repos/microsoft/vcpkg/commits/master",
-            "baseline_commit": "446682c6c338d68ed986972ffc3529f7d63c1555"
-        }
+            "baseline_mode": "fixed",
+            "baseline_commit": "06d00ffa491e4668627728f14b891d22c6fea146"
+        },
+        "target":
+        {
+            "triplet": "x64-mingw-ucrt-dynamic-release"
+        },
+        "packages":
+		[
+			{ "name": "fmt" },
+			{ "name": "pkgconf" },
+			{ "name": "nlohmann-json" },
+			{ "name": "openssl" },
+			{ "name": "zlib" },
+			{ "name": "curl", "features":
+				[
+				"openssl",
+				"ssh",
+				"ssl",
+				"tool",
+				"brotli",
+				"c-ares",
+				"zstd"
+				]
+			},
+			{ "name": "spdlog" },
+			{ "name": "libbson" },
+			{ "name": "mongo-c-driver", "features": ["openssl"] },
+			{ "name": "mongo-cxx-driver" },
+			{ "name": "xerces-c" },
+			{ "name": "zeromq", "features": ["curve", "draft", "sodium"] },
+			{ "name": "cppzmq" },
+			{ "name": "glib" },
+			{ "name": "pango" },
+			{ "name": "graphene" },
+			{ "name": "protobuf" },
+			{ "name": "flatbuffers" },
+			{ "name": "grpc", "features": ["codegen"] },
+			{ "name": "ffmpeg", "features": 
+				[
+				"avcodec",
+				"avformat",
+				"swscale",
+				"swresample",
+				"all-gpl",
+				"ffmpeg",
+				"ffplay",
+				"ffprobe"
+				]
+			},
+			{ "name": "gstreamer", "features":
+                [
+				"nvcodec",
+				"plugins-base",
+				"plugins-good",
+				"plugins-bad",
+				"plugins-ugly",
+				"gpl",
+				"openh264",
+				"x264",
+				"x265",
+				"libde265",
+				"opus-base",
+				"opus-bad",
+				"vorbis",
+				"flac",
+				"srt",
+				"hls",
+				"jpeg",
+				"png",
+				"webp",
+				"openjpeg",
+				"libav"
+                ]
+			},
+			{ "name": "gst-rtsp-server" },
+			{ "name": "qtbase", "features":
+				[
+				"gui",
+				"thread",
+				"widgets",
+				"network",
+				"opengl",
+				"testlib",
+				"openssl",
+				"freetype",
+				"harfbuzz",
+				"png",
+				"jpeg",
+				"zstd",
+				"concurrent",
+				"windeployqt"
+				]
+			},
+			{ "name": "qtdeclarative" },
+            { "name": "opencv4", "features":
+                [
+				"tbb",
+				"qt",
+				"gstreamer",
+				"opengl",
+				"contrib",
+				"openjpeg",
+				"jpeg",
+				"png",
+				"tiff",
+				"webp"
+                ]
+            },
+			{ "name": "qtmultimedia", "features": ["ffmpeg","widgets","qml"] },
+            { "name": "qtcharts" },
+            { "name": "qtimageformats" },
+			{ "name": "qt-advanced-docking-system" }
+		]
     }
 }

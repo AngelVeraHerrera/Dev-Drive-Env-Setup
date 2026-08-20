@@ -12,7 +12,10 @@ set -Eeuo pipefail
 log_i(){ printf '[INFO] %s\n' "$*"; }
 log_w(){ printf '[WARN] %s\n' "$*"; }
 log_e(){ printf '[ERROR] %s\n' "$*"; }
-pause_if_interactive() { [[ -t 0 && -t 1 ]] && { echo; read -r -p "[PAUSE] Press Enter to continue..." _; }; }
+# The trailing `|| true` is load-bearing. Under `set -e` a function returns the status of its last command, and
+# with no tty the [[ ]] test is false -> return 1 -> the sourcing shell aborts silently, before `exec bash`. That
+# made the bootstrap unusable from any script or CI, with no diagnostic whatsoever.
+pause_if_interactive() { [[ -t 0 && -t 1 ]] && { echo; read -r -p "[PAUSE] Press Enter to continue..." _; }; return 0; }
 die() { log_e "$*"; pause_if_interactive; exit 1; }
 
 expand_env_vars_once() {

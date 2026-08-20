@@ -116,7 +116,19 @@ echo.
 REM ---------------------------------------------------------------
 REM Launch MSYS2 
 REM ---------------------------------------------------------------
+REM The bootstrap path travels in an ENVIRONMENT VARIABLE, not inside the nested quotes.
+REM
+REM It used to be interpolated as '...''%BOOTSTRAP_POSIX%''...' inside a single-quoted bash string. Doubling a quote
+REM does NOT escape it in bash: it ends the string, concatenates, and starts a new one -- so the path arrived
+REM UNQUOTED and bash sourced only its first word. Any space in the path (a repo checked out under a directory with
+REM one, since the on-drive path is space-free by construction) silently broke the launcher.
+REM
+REM There is no reliable way to nest a double quote three layers deep through cmd -> msys2_shell -> bash -lc, so the
+REM value is exported instead. Inside bash, `set -f` and an empty IFS stop the unquoted expansion from being split
+REM or globbed, and both are undone before the interactive shell starts.
+set "DP_BOOTSTRAP=%BOOTSTRAP_POSIX%"
+
 start "Loading env..." cmd /c ^
 ""%MSYS2_SHELL%" -%MSYS2_ENV% -defterm -here -no-start ^
--c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; . ''%BOOTSTRAP_POSIX%''; exec bash'"
+-c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; set -f; IFS=; . $DP_BOOTSTRAP; unset IFS DP_BOOTSTRAP; set +f; exec bash'"
 exit /b 0

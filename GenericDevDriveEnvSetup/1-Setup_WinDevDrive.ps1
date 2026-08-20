@@ -12,6 +12,20 @@
 # FUNCTIONS
 # --------------------------------------------------------------------
 
+param
+(
+    # @brief Path to the JSON configuration driving this run.
+    #
+    # A bare file name or a relative path resolves against THIS SCRIPT'S directory, so the common case -- a config
+    # sitting beside the scripts -- needs no path at all. An absolute path is taken as given, which is what lets a
+    # config live outside the repository. Omit it entirely for the generic configuration.
+    #
+    # All four scripts take the same switch and must be given the SAME file: they hand state to each other through
+    # the generated .env on the dev drive, and mixing configs between steps produces an environment that matches
+    # neither.
+    [string]$ConfigFile = "generic_dev_drive_env-cfg.json"
+)
+
 function Write-NoFormat
 {
     param ($msg)
@@ -43,10 +57,17 @@ function Abort-WithError
     $line = "[$ts][ERROR][Setup failed!]"
     Write-Host $line
     if ($globalLogFile){Add-Content -Path $globalLogFile -Value $line}
-    Write-Host ""
-    Write-Host "Press any key to exit..."
-    [void][System.Console]::ReadKey($true)
-    $host.UI.RawUI.WindowTitle = $originalTitle
+    # UserInteractive alone is NOT enough. It reports True for any process in a normal user session, including one
+    # launched from another script with its input redirected -- and there ReadKey THROWS instead of waiting, so the
+    # lines below never run: the window title is left changed and the deliberate `exit 1` becomes an unhandled
+    # PowerShell error. Verified on this machine: UserInteractive=True with stdin redirected, ReadKey throws.
+    if ([Environment]::UserInteractive -and -not [System.Console]::IsInputRedirected) {
+        Write-Host ""
+        Write-Host "Press any key to exit..."
+        [void][System.Console]::ReadKey($true)
+    }
+
+    if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
     exit 1
 }
 
@@ -93,9 +114,13 @@ function Enable-HWDetection
 
 if (-not (Test-IsAdministrator))
 {
+    # -ConfigFile MUST be forwarded. Without it the elevated child falls back to the default configuration and
+    # provisions a DIFFERENT drive than the one asked for, silently, in a separate window -- while the parent exits 0
+    # as though all was well. Forwarded verbatim rather than resolved: the child has the same script directory, so a
+    # relative name resolves identically, and an absolute one is already unambiguous.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "powershell.exe"
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ConfigFile `"$ConfigFile`""
     $psi.Verb      = "runas"   # triggers UAC
     $psi.UseShellExecute = $true
 
@@ -115,7 +140,17 @@ if (-not (Test-IsAdministrator))
 # CONFIGURATION
 # --------------------------------------------------------------------
 
-$ConfigPath = Join-Path $PSScriptRoot "generic_dev_drive_env-cfg.json"
+# A relative -ConfigFile is relative to the script, not to the caller's working directory: these scripts are
+# routinely launched by double-click and from elsewhere, and resolving against the cwd would silently pick a
+# different config depending on where the shell happened to be.
+$ConfigPath = if ([System.IO.Path]::IsPathRooted($ConfigFile))
+{
+    $ConfigFile
+}
+else
+{
+    Join-Path $PSScriptRoot $ConfigFile
+}
 
 if (-not (Test-Path $ConfigPath)) 
 {
@@ -128,7 +163,7 @@ try
     $Cfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
 } catch 
 {
-    Write-Error "Invalid JSON in $ConfigPath"
+    Write-Error "Invalid JSON in ${ConfigPath}: $($_.Exception.Message)"
     Abort-WithError 
 }
 
@@ -147,7 +182,7 @@ $vhdPath     = [string]$Cfg.environment.vhd_root
 $sizeGB      = [int]   $Cfg.environment.vhd_size_gb
 $useDevDriveConfig = [bool]$Cfg.environment.use_dev_drive
 $forceDiskpart = [bool]$Cfg.environment.force_diskpart
-$vhdIsFixed = [bool]$Cfg.environment.vhd_is_fixed
+$vhdIsFixed = [bool]$Cfg.environment.vhd_fixed   # key is vhd_fixed; the old vhd_is_fixed always read $null
 
 if ([string]::IsNullOrWhiteSpace($driveLabel))  {Write-Error "Missing environment.dev_drive_label"; Abort-WithError}
 if ([string]::IsNullOrWhiteSpace($driveLetter)) {Write-Error "Missing environment.dev_drive_letter"; Abort-WithError}
@@ -481,10 +516,20 @@ if ($useDevDrive)
     Start-Sleep -Milliseconds 500
 
     Write-Info "Trusting volume as Dev Drive..."
-    fsutil devdrv trust "$driveLetter`:" *> $null
+    $trustOut = & fsutil devdrv trust "$driveLetter`:" 2>&1
+    if ($LASTEXITCODE -ne 0)
+    {
+        Write-Error "fsutil devdrv trust failed (exit $LASTEXITCODE): $trustOut"
+        Abort-WithError
+    }
 
     Write-Info "Disabling antivirus for Dev Drive..."
-    fsutil devdrv enable /disallowAv *> $null
+    $avOut = & fsutil devdrv enable /disallowAv 2>&1
+    if ($LASTEXITCODE -ne 0)
+    {
+        # Not fatal: the volume is already trusted and usable, only the antivirus exclusion did not take.
+        Write-Info "fsutil devdrv enable /disallowAv reported exit ${LASTEXITCODE}: $avOut"
+    }
 }
 else {
     Write-Info "STEP 4: Initialize disk and format as NTFS (Windows 10 / non-DevDrive)."

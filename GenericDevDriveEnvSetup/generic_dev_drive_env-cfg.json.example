@@ -9,6 +9,8 @@
         "use_dev_drive": true,
         "force_diskpart": false,
         "vhd_fixed": true,
+        "//append_windows_system_path": "Append the Windows system directories (System32 and friends) to the tail of BASE_PATH. Default true when the key is absent. Native tools reach cmd.exe through popen(), so without them windres fails with \"can't popen ... Bad file descriptor\" and gcc cannot create its temporary files. They go at the TAIL so nothing there can shadow the toolchain.",
+        "append_windows_system_path": true,
         "proxy_url": ""
     },
     "msys2":
@@ -24,6 +26,10 @@
             "arch": "x86_64",
             "base_url": "https://repo.msys2.org"
         },
+        "//packages": "MSYS2 packages installed by 2-Setup_MSYS2.ps1. mode is 'latest' (pacman -S) or 'pinned' (download the exact version, then pacman -U).",
+        "//packages.repo": "Which MSYS2 repository the package comes from. 'mingw' (the default when absent) builds the name as mingw-w64-<profile>-<arch>-<name> and installs a NATIVE Windows binary under /<profile>64/bin. 'msys' takes the name verbatim and installs a POSIX-runtime build under /usr/bin.",
+        "//packages.repo.why": "The choice is not cosmetic. Tools that read POSIX paths out of generated files -- make above all -- only work as the msys build; the native one cannot resolve /x/foo. Do NOT alias a native tool into the mingw prefix to make a bare name available: an alias next to gcc shadows the correct tool for vcpkg, whose ports prepend the compiler directory to PATH. Request the msys package instead.",
+        "//packages.file_arch": "Pinned mode only, and rarely needed: the architecture tag in the published file name. Defaults to 'any' for mingw and to target.arch for msys. Set it for the few msys packages published as 'any', such as the automake wrappers.",
         "packages": 
         [
             { "name": "ninja",     "mode": "pinned", "version": "1.13.2-1" },
@@ -31,6 +37,7 @@
             { "name": "gcc",       "mode": "pinned", "version": "15.2.0-11" },
             { "name": "gcc-libs",  "mode": "pinned", "version": "15.2.0-11" },
             { "name": "make",      "mode": "latest", "version": "4.4.1-4" },
+            { "name": "make",      "mode": "latest", "repo": "msys" },
             { "name": "diffutils", "mode": "latest" },
             { "name": "lld",       "mode": "latest" },
             { "name": "ripgrep",   "mode": "latest" },
@@ -44,8 +51,30 @@
     },
     "vcpkg": 
     {
-        "repositoryUrl": "https://github.com/microsoft/vcpkg.git",
-        "commitsApiUrl": "https://api.github.com/repos/microsoft/vcpkg/commits/master",
-        "baselineCommit": "446682c6c338d68ed986972ffc3529f7d63c1555"
+        "source":
+        {
+            "//repository_url": "Git URL of the vcpkg repository (or an internal mirror).",
+            "repository_url": "https://github.com/microsoft/vcpkg.git",
+
+            "//baseline_mode": "'fixed' pins the clone to 'baseline_commit'. 'latest' resolves the remote HEAD via 'git ls-remote' at run time.",
+            "baseline_mode": "fixed",
+
+            "//baseline_commit": "Required when baseline_mode is 'fixed'. Ignored (may be empty) when baseline_mode is 'latest'.",
+            "baseline_commit": "446682c6c338d68ed986972ffc3529f7d63c1555"
+        },
+        "target":
+        {
+            "//triplet": "Overlay triplet name. A matching 'vcpkg_overlays/triplets/<triplet>.cmake' (and its .sha256) must be shipped with this setup.",
+            "triplet": "x64-mingw-ucrt-dynamic-release"
+        },
+        "//packages": "Ports installed by 4-Deps_VCPKG.ps1, in order. 'features' is optional and maps to the vcpkg 'port[feature,...]' syntax.",
+        "packages":
+        [
+            { "name": "fmt" },
+            { "name": "pkgconf" },
+            { "name": "nlohmann-json" },
+            { "name": "spdlog" },
+            { "name": "mongo-c-driver", "features": [ "openssl" ] }
+        ]
     }
 }

@@ -12,6 +12,20 @@
 # FUNCTIONS
 # --------------------------------------------------------------------
 
+param
+(
+    # @brief Path to the JSON configuration driving this run.
+    #
+    # A bare file name or a relative path resolves against THIS SCRIPT'S directory, so the common case -- a config
+    # sitting beside the scripts -- needs no path at all. An absolute path is taken as given, which is what lets a
+    # config live outside the repository. Omit it entirely for the generic configuration.
+    #
+    # All four scripts take the same switch and must be given the SAME file: they hand state to each other through
+    # the generated .env on the dev drive, and mixing configs between steps produces an environment that matches
+    # neither.
+    [string]$ConfigFile = "generic_dev_drive_env-cfg.json"
+)
+
 function Write-NoFormat
 {
     param ($msg)
@@ -44,8 +58,11 @@ function Abort-WithError
     Write-Host $line
     if ($globalLogFile){Add-Content -Path $globalLogFile -Value $line}
     
-    # Mejora: Solo pausar si hay un usuario interactivo
-    if ([Environment]::UserInteractive) {
+    # UserInteractive alone is NOT enough. It reports True for any process in a normal user session, including one
+    # launched from another script with its input redirected -- and there ReadKey THROWS instead of waiting, so the
+    # lines below never run: the window title is left changed and the deliberate `exit 1` is replaced by an unhandled
+    # PowerShell error. Verified on this machine: UserInteractive=True with stdin redirected, ReadKey throws.
+    if ([Environment]::UserInteractive -and -not [System.Console]::IsInputRedirected) {
         Write-Host ""
         Write-Host "Press any key to exit..."
         [void][System.Console]::ReadKey($true)
@@ -72,9 +89,79 @@ function Get-FileNameFromUrl($url)
     return [System.IO.Path]::GetFileName($url)
 }
 
-function Convert-ToMSYSPath($winPath) 
+function Convert-ToMSYSPath($winPath)
 {
     return $winPath -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
+}
+
+# Resolves one JSON package entry into the three things pacman and the downloader need: the real package name, the
+# repository sub-path, and the architecture tag its file name carries.
+#
+# MSYS2 ships TWO kinds of package and they are not interchangeable:
+#
+#   mingw  (default) -> mingw-w64-<profile>-<arch>-<name>, native Windows binaries, land in /<profile>64/bin.
+#   msys             -> <name> verbatim, built against the MSYS2 POSIX runtime, land in /usr/bin.
+#
+# The distinction matters beyond naming. A tool that has to understand POSIX paths -- notably `make`, which reads
+# them out of a configure-generated Makefile -- only works as the MSYS build. The native one treats /x/foo as a
+# nonexistent relative path. Requesting a package by the wrong repo yields a tool that is subtly wrong rather than
+# missing, which is far harder to diagnose.
+#
+# Absent "repo" means "mingw", so every existing configuration keeps its exact behaviour.
+function Resolve-Msys2Package($pkg, $profile, $arch)
+{
+    $repo = ([string]$pkg.repo).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($repo)) { $repo = "mingw" }
+
+    $name = [string]$pkg.name
+
+    switch ($repo)
+    {
+        "msys"
+        {
+            # msys packages are arch-specific, except the handful of scripted ones published as "any". The file_arch
+            # field covers those without needing a table of exceptions here.
+            $fileArch = ([string]$pkg.file_arch).Trim()
+            if ([string]::IsNullOrWhiteSpace($fileArch)) { $fileArch = $arch }
+
+            return @{
+                Repo     = "msys"
+                PkgName  = $name
+                RepoPath = "msys/{0}" -f $arch
+                FileArch = $fileArch
+            }
+        }
+        "mingw"
+        {
+            $fileArch = ([string]$pkg.file_arch).Trim()
+            if ([string]::IsNullOrWhiteSpace($fileArch)) { $fileArch = "any" }
+
+            return @{
+                Repo     = "mingw"
+                PkgName  = "mingw-w64-{0}-{1}-{2}" -f $profile, $arch, $name
+                RepoPath = "mingw/{0}64" -f $profile
+                FileArch = $fileArch
+            }
+        }
+        default
+        {
+            Write-Error "Package '$name' has unknown repo '$repo'. Use 'mingw' (default) or 'msys'."
+            Abort-WithError
+        }
+    }
+}
+
+function Invoke-Msys2Bash
+{
+    # @brief Run a command in the generated MSYS2 login shell, mirroring its output into the log. Returns the exit code.
+    param
+    (
+        [string]$BashPath,
+        [string]$Command
+    )
+
+    & $BashPath -l -c $Command 2>&1 | ForEach-Object { Write-NoFormat ("    | " + $_) }
+    return $LASTEXITCODE
 }
 
 function Configure-MSYS2Proxy
@@ -133,7 +220,17 @@ function Configure-MSYS2Proxy
 # CONFIGURATION
 # --------------------------------------------------------------------
 
-$ConfigPath = Join-Path $PSScriptRoot "generic_dev_drive_env-cfg.json"
+# A relative -ConfigFile is relative to the script, not to the caller's working directory: these scripts are
+# routinely launched by double-click and from elsewhere, and resolving against the cwd would silently pick a
+# different config depending on where the shell happened to be.
+$ConfigPath = if ([System.IO.Path]::IsPathRooted($ConfigFile))
+{
+    $ConfigFile
+}
+else
+{
+    Join-Path $PSScriptRoot $ConfigFile
+}
 
 if (-not (Test-Path $ConfigPath)) 
 {
@@ -355,12 +452,12 @@ Write-Info "STEP 2: Download MSYS2 installer and pinned packages if not present.
 $msys2Installer = Join-Path $localPkgDir (Get-FileNameFromUrl $msys2Url)
 
 # Build pinned download list from JSON
-# URL pattern:
-#   {base_url}/mingw/{profile}64/mingw-w64-{profile}-{arch}-{name}-{version}.pkg.tar.zst
+# URL pattern, per package, depending on its "repo" (see Resolve-Msys2Package):
+#   mingw -> {base_url}/mingw/{profile}64/mingw-w64-{profile}-{arch}-{name}-{version}-any.pkg.tar.zst
+#   msys  -> {base_url}/msys/{arch}/{name}-{version}-{arch}.pkg.tar.zst
 $baseUrl   = [string]$Cfg.msys2.target.base_url
-$profile   = [string]$Cfg.msys2.target.profile    
-$arch      = [string]$Cfg.msys2.target.arch        
-$repoPath  = "mingw/{0}64" -f $profile            
+$profile   = [string]$Cfg.msys2.target.profile
+$arch      = [string]$Cfg.msys2.target.arch
 
 if ([string]::IsNullOrWhiteSpace($baseUrl)) 
 {
@@ -380,10 +477,10 @@ foreach ($p in $msysPackages)
     $name    = [string]$p.name
     $version = [string]$p.version
 
-    $msysPkgName = "mingw-w64-{0}-{1}-{2}" -f $profile, $arch, $name
-    $fileName    = "{0}-{1}-any.pkg.tar.zst" -f $msysPkgName, $version
-    $url         = "{0}/{1}/{2}" -f $baseUrl.TrimEnd('/'), $repoPath, $fileName
-    $path        = Join-Path $localPkgDir $fileName
+    $res      = Resolve-Msys2Package $p $profile $arch
+    $fileName = "{0}-{1}-{2}.pkg.tar.zst" -f $res.PkgName, $version, $res.FileArch
+    $url      = "{0}/{1}/{2}" -f $baseUrl.TrimEnd('/'), $res.RepoPath, $fileName
+    $path     = Join-Path $localPkgDir $fileName
 
     $downloads += @{ Url = $url; Path = $path; Name = $name }
 }
@@ -414,6 +511,8 @@ foreach ($item in $downloads)
         }
         catch
         {
+            # Remove the partial file before aborting, or the next run treats it as a completed download.
+            Remove-Item -LiteralPath $item.Path -Force -ErrorAction SilentlyContinue
             Write-Error ("Failed to download: {0}. Error: {1}" -f $item.Url, $_.Exception.Message)
             Abort-WithError
         }
@@ -422,6 +521,28 @@ foreach ($item in $downloads)
     {
         Write-Info "Package already exists: $($item.Path)"
     }
+}
+
+# The installer is a self-extracting executable that STEP 3 runs, so verify it when the configuration says how.
+# msys2.source.sha256 was previously read into a variable and never used again -- a documented integrity control that
+# did nothing. Placed after the loop so a cached file is checked too, not only a fresh download.
+if (-not [string]::IsNullOrWhiteSpace($msys2Sha256))
+{
+    $expected = $msys2Sha256.Trim().ToUpperInvariant()
+    $actual   = (Get-FileHash -Path $msys2Installer -Algorithm SHA256).Hash.ToUpperInvariant()
+    if ($actual -ne $expected)
+    {
+        Write-Error "MSYS2 installer SHA256 mismatch."
+        Write-Error "  expected: $expected"
+        Write-Error "  actual:   $actual"
+        Write-Error "  file:     $msys2Installer"
+        Abort-WithError
+    }
+    Write-Info "MSYS2 installer SHA256 verified."
+}
+else
+{
+    Write-Info "msys2.source.sha256 is empty: installer integrity NOT verified."
 }
 
 Write-Info "STEP 2: OK"
@@ -434,9 +555,23 @@ Write-Info "STEP 3: Extract MSYS2 and perform initial run."
 Write-Info "Extracting MSYS2 to: $devDrive"
 try
 {
-    $args = "-y -o$devDrive"
-    Start-Process -FilePath $msys2Installer -ArgumentList $args -Wait
-    Write-Info "Extraction complete."
+    if (Test-Path -LiteralPath $bashPath)
+    {
+        Write-Info "MSYS2 already present at $msys2Path; skipping extraction."
+    }
+    else
+    {
+        # Renamed off $args: that is an automatic variable, and shadowing it at script scope is a trap for anyone
+        # who later adds a function here.
+        $sfxArgs = "-y -o$devDrive"
+        $proc = Start-Process -FilePath $msys2Installer -ArgumentList $sfxArgs -Wait -PassThru
+        if ($proc.ExitCode -ne 0)
+        {
+            Write-Error "MSYS2 extraction failed (exit code $($proc.ExitCode))."
+            Abort-WithError
+        }
+        Write-Info "Extraction complete."
+    }
 }
 catch
 {
@@ -514,13 +649,11 @@ $coreScriptUnix = $coreUpdateScript -replace '\\', '/' -replace '^([A-Za-z]):', 
 for ($i = 1; $i -le 3; $i++) 
 {
     Write-Info "Running core system upgrade pass $i..."
-    $proc = Start-Process -FilePath $bashPath `
-                          -ArgumentList "-l", "-c", "`"$coreScriptUnix`"" `
-                          -Wait -PassThru
-    if (($i -eq 1 -and $proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1) -or
-        ($i -gt 1 -and $proc.ExitCode -ne 0)) 
+    $code = Invoke-Msys2Bash -BashPath $bashPath -Command ("sh '{0}'" -f $coreScriptUnix)
+    if (($i -eq 1 -and $code -ne 0 -and $code -ne 1) -or
+        ($i -gt 1 -and $code -ne 0)) 
     {
-        Write-Error "Core upgrade failed on pass $i (exit code $($proc.ExitCode))."
+        Write-Error "Core upgrade failed on pass $i (exit code $code)."
         Abort-WithError
     }
 }
@@ -537,7 +670,12 @@ Write-Info "STEP 5: Install toolchain and utilities (JSON-driven)."
 # Always install git (needed for vcpkg, common workflows)
 $gitPkgName = "mingw-w64-{0}-{1}-git" -f $msysProfile, $msysArch
 Write-Info "Installing git (latest): $gitPkgName"
-Start-Process -FilePath $bashPath -ArgumentList "-l", "-c", "`"pacman -S --noconfirm --needed $gitPkgName`"" -Wait
+$code = Invoke-Msys2Bash -BashPath $bashPath -Command "pacman -S --noconfirm --needed $gitPkgName"
+if ($code -ne 0)
+{
+    Write-Error "git installation failed (exit code $code): $gitPkgName"
+    Abort-WithError
+}
 
 # Install PINNED packages from downloaded .pkg.tar.zst files (pacman -U)
 $pinnedFiles = @()
@@ -549,10 +687,10 @@ foreach ($p in $msysPackages)
     $name    = [string]$p.name
     $version = [string]$p.version
 
-    $msysPkgName = "mingw-w64-{0}-{1}-{2}" -f $msysProfile, $msysArch, $name
-
-    # NOTE: MSYS2 mingw repo packages typically end with "-any"
-    $fileName = "{0}-{1}-any.pkg.tar.zst" -f $msysPkgName, $version
+    # Must name the file exactly as the download step above did, or the pinned install looks for something that was
+    # never fetched: mingw packages are published as "-any", msys ones per architecture.
+    $res      = Resolve-Msys2Package $p $msysProfile $msysArch
+    $fileName = "{0}-{1}-{2}.pkg.tar.zst" -f $res.PkgName, $version, $res.FileArch
     $filePath = Join-Path $localPkgDir $fileName
 
     if (-not (Test-Path $filePath)) {
@@ -572,9 +710,9 @@ if ($pinnedFiles.Count -gt 0)
 {
     Write-Info "Installing pinned packages via pacman -U..."
     $installPinnedCmd = "pacman -U --noconfirm " + ($pinnedFiles -join " ")
-    $proc = Start-Process -FilePath $bashPath -ArgumentList "-l","-c","`"$installPinnedCmd`"" -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        Write-Error "Pinned package installation failed (exit code $($proc.ExitCode))."
+    $code = Invoke-Msys2Bash -BashPath $bashPath -Command $installPinnedCmd
+    if ($code -ne 0) {
+        Write-Error "Pinned package installation failed (exit code $code)."
         Abort-WithError
     }
 }
@@ -590,17 +728,17 @@ foreach ($p in $msysPackages)
     $mode = ([string]$p.mode).Trim().ToLowerInvariant()
     if ($mode -ne "latest") { continue }
 
-    $name = [string]$p.name
-    $latestPkgs += ("mingw-w64-{0}-{1}-{2}" -f $msysProfile, $msysArch, $name)
+    $res = Resolve-Msys2Package $p $msysProfile $msysArch
+    $latestPkgs += $res.PkgName
 }
 
 if ($latestPkgs.Count -gt 0)
 {
     Write-Info "Installing latest packages via pacman -S..."
     $installLatestCmd = "pacman -S --noconfirm --needed --disable-download-timeout " + ($latestPkgs -join " ")
-    $proc = Start-Process -FilePath $bashPath -ArgumentList "-l","-c","`"$installLatestCmd`"" -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        Write-Error "Latest package installation failed (exit code $($proc.ExitCode))."
+    $code = Invoke-Msys2Bash -BashPath $bashPath -Command $installLatestCmd
+    if ($code -ne 0) {
+        Write-Error "Latest package installation failed (exit code $code)."
         Abort-WithError
     }
 }
@@ -609,15 +747,21 @@ else
     Write-Info "No latest packages configured."
 }
 
-# Optional: Create make.exe symlink if needed (some environments expose mingw32-make only)
-$makeExe       = Join-Path $msys2Path ("{0}\bin\make.exe" -f $msysEnv)
-$mingw32MakeEx = Join-Path $msys2Path ("{0}\bin\mingw32-make.exe" -f $msysEnv)
-
-if (-not (Test-Path $makeExe) -and (Test-Path $mingw32MakeEx))
-{
-    Write-Info "Creating make.exe symlink (make.exe -> mingw32-make.exe)..."
-    cmd /c mklink "$makeExe" "$mingw32MakeEx" | Out-Null
-}
+# A make.exe -> mingw32-make.exe symlink used to be created here, so that plain `make` existed in the mingw prefix.
+# It is DELIBERATELY GONE. Ask for { "name": "make", "repo": "msys" } in the configuration instead.
+#
+# The alias broke vcpkg. mingw32-make is a native Windows build, so it cannot resolve the POSIX paths that a
+# configure script writes into its own Makefile. vcpkg's ffmpeg port prepends the compiler's directory to PATH ahead
+# of the MSYS2 it downloads for the job, so an alias sitting next to gcc shadowed the correct make and the build died
+# on its first line:
+#
+#   Makefile:1: /x/vcpkg/buildtrees/ffmpeg/src/.../Makefile: No such file or directory
+#
+# Diagnosed on the DegorasSLR drive: the same Makefile fails with this make and builds with the MSYS one. The msys
+# package puts make in /usr/bin, where it satisfies the original intent -- plain `make` on PATH -- without displacing
+# anything, and it understands both /x/... and X:/... paths.
+#
+# mingw32-make.exe itself stays: it comes from the mingw make package and nothing here removes it.
 
 Write-Info "STEP 5: OK"
 
@@ -630,8 +774,11 @@ $envNameLower = $devEnvName.ToLowerInvariant()
 $msysEnvUpper = $msysEnv.ToUpperInvariant()
 $baseFileName = "{0}_{1}_packages" -f $envNameLower, $msysEnv
 
-# Output paths
+# Output paths. The plain name is the CURRENT snapshot; the stamped one is history, because a fixed name meant each
+# run erased the only record of what the previous environment contained.
+$runStamp    = Get-Date -Format "yyyyMMdd-HHmmss"
 $outTxtLocal = Join-Path $logsDir ("{0}.txt" -f $baseFileName)
+$outTxtStamp = Join-Path $logsDir ("{0}_{1}.txt" -f $baseFileName, $runStamp)
 
 $envDirOnDrive = Join-Path $devDrive "env"
 if (-not (Test-Path $envDirOnDrive)) { New-Item -ItemType Directory -Path $envDirOnDrive | Out-Null }
@@ -659,10 +806,12 @@ $reportLines += $pacmanOutput
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllLines($outTxtLocal, $reportLines, $utf8NoBom)
 [System.IO.File]::WriteAllLines($outTxtDrive, $reportLines, $utf8NoBom)
+[System.IO.File]::WriteAllLines($outTxtStamp, $reportLines, $utf8NoBom)
 
 Write-Info "Packages exported:"
 Write-Info "  Local: $outTxtLocal"
 Write-Info "  Drive: $outTxtDrive"
+Write-Info "  Stamp: $outTxtStamp"
 
 Write-Info "STEP 6: OK"
 
@@ -680,8 +829,39 @@ Write-Info "MINGW_ROOT=${mingwRootPath}"
 Write-Info "MSYS2_ROOT=${msys2PathNorm}"
 Write-Info "MSYS2_BASH=${msys2BashPath}"
 Write-Info "MSYS2_ENV=${msysEnv}"
-Write-Info ("BASE_PATH=/{0}/bin:/usr/local/bin:/usr/bin:/bin" -f $msysEnv)
-Write-Info 'PATH=${BASE_PATH}'
+# BASE_PATH, with the Windows system directories optionally appended.
+#
+# Default ON, because leaving them out breaks more than it looks. Native tools reach cmd.exe through popen(), so
+# without System32 on PATH windres fails with "can't popen ... Bad file descriptor" and gcc falls back to C:\Windows
+# for temporary files and is denied. Measured in this environment: cmd.exe, powershell.exe, where.exe and reg.exe are
+# all unreachable from the generated shell.
+#
+# They go at the TAIL so nothing in System32 can ever shadow the toolchain -- which is the failure this whole
+# environment has already been bitten by once, with make.exe.
+$basePath = "/{0}/bin:/usr/local/bin:/usr/bin:/bin" -f $msysEnv
+
+$appendWindowsPath = $true
+if ($Cfg.environment.PSObject.Properties.Name -contains "append_windows_system_path")
+{
+    $appendWindowsPath = [bool]$Cfg.environment.append_windows_system_path
+}
+
+if ($appendWindowsPath)
+{
+    # Lower-cased drive letter to match cygpath's canonical form and the rest of this file. MSYS2 resolves /C/ and
+    # /c/ alike -- verified -- so this is consistency, not correctness.
+    $sysRootPosix = (Convert-ToMSYSPath ([string]$env:SystemRoot)) -replace '/$', ''
+    $sysRootPosix = [regex]::Replace($sysRootPosix, '^/([A-Za-z])/', { param($m) "/" + $m.Groups[1].Value.ToLowerInvariant() + "/" })
+    if ([string]::IsNullOrWhiteSpace($sysRootPosix)) { $sysRootPosix = "/c/Windows" }
+    $basePath = "{0}:{1}/System32:{1}:{1}/System32/Wbem:{1}/System32/WindowsPowerShell/v1.0" -f $basePath, $sysRootPosix
+    Write-Info "Windows system directories appended to BASE_PATH (environment.append_windows_system_path)."
+}
+else
+{
+    Write-Info "Windows system directories NOT appended (environment.append_windows_system_path = false)."
+}
+
+Write-Info ("BASE_PATH={0}" -f $basePath)
 
 # Prepare environment variable export file
 if (-not (Test-Path $envFilePath)) 
@@ -695,8 +875,10 @@ $envLines = @(
     "MSYS2_ROOT=$msys2PathNorm"
     "MSYS2_BASH=$msys2BashPath"
     "MSYS2_ENV=$msysEnv"
-    ("BASE_PATH=/{0}/bin:/usr/local/bin:/usr/bin:/bin" -f $msysEnv)
-    'PATH=${BASE_PATH}'
+    ("BASE_PATH={0}" -f $basePath)
+    # NOTE: PATH is deliberately NOT written here. Step 3 composes it from BASE_PATH, the vcpkg directories and
+    # the configuration's custom entries, and it must be the LAST assignment in the file: the launcher bootstrap
+    # expands ${...} line by line, so a PATH written before the variables it references would resolve to empty.
 )
 
 Write-Info "Appending environment variables to $envFilePath"
