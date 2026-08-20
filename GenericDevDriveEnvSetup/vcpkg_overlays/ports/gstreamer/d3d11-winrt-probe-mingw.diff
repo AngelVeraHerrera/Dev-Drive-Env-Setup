@@ -1,0 +1,30 @@
+Subject: [PATCH] d3d11: make the WinRT probe test the header its sources need
+
+The winapi_app branch compiles gstd3d11window_corewindow.cpp and
+gstd3d11window_swapchainpanel.cpp, both of which include
+<windows.ui.xaml.media.dxinterop.h>. The feature probe that enables that branch
+does not, so on a toolchain that ships the WinRT headers but not that one the
+probe succeeds and the build then fails:
+
+  gstd3d11window_corewindow.cpp:32:10: fatal error:
+      windows.ui.xaml.media.dxinterop.h: No such file or directory
+
+mingw-w64 is exactly that toolchain: it has windows.ui.xaml.h,
+windows.ui.xaml.interop.h and the rest, but not the dxinterop one. And
+WINAPI_PARTITION_APP is true for desktop targets, so nothing else in the probe
+rejects it. MSVC is unaffected, which is why upstream CI does not see this.
+
+Adding the header to the probe makes it fail where the sources would fail,
+leaving d3d11 desktop support (screen capture, win32 window) fully enabled and
+skipping only the two UWP window backends.
+---
+--- a/subprojects/gst-plugins-bad/gst-libs/gst/d3d11/meson.build
++++ b/subprojects/gst-plugins-bad/gst-libs/gst/d3d11/meson.build
+@@ -90,6 +90,7 @@
+       #include <wrl/wrappers/corewrappers.h>
+       #include <d3d11_4.h>
+       #include <dxgi1_6.h>
++      #include <windows.ui.xaml.media.dxinterop.h>
+       #if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)
+       #error "not winrt"
+       #endif

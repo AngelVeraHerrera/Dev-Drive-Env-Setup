@@ -1,0 +1,20 @@
+{
+  "name": "vcpkg-qmake",
+  "version-date": "2025-05-19",
+  "description": "[MILETHOS] Local overlay: selects GNU make instead of jom/nmake for a MinGW target, whose qmake spec emits POSIX recipes that nmake-family tools cannot run.",
+  "port-version": 1,
+  "documentation": "https://learn.microsoft.com/vcpkg/maintainers/functions/vcpkg_qmake_configure",
+  "license": "MIT",
+  "supports": "native",
+  "dependencies": [
+    "pkgconf",
+    {
+      "name": "qtbase",
+      "default-features": false
+    },
+    {
+      "name": "vcpkg-cmake-get-vars",
+      "host": true
+    }
+  ]
+}

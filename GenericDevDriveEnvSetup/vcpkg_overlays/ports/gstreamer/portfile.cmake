@@ -1,9 +1,52 @@
+# ---------------------------------------------------------------------------------------------------------------------
+# LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
+#
+# Exactly FOUR deltas from upstream. Re-apply both when bumping to the next version, and nothing else -- everything
+# else here is upstream's and must be taken verbatim:
+#
+#   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
+#      gstfilesink.c redefines off_t to guint64 on Win32 but still maps ftruncate to _chsize, which takes a long.
+#      GCC rejects the narrowing. Still unfixed in 1.28.6 -- verified: the file carries "#define ftruncate _chsize"
+#      unchanged -- so the patch is still required. Keep it LF-terminated: vcpkg applies patches with `git apply`,
+#      which refuses a CRLF patch against an LF source, while plain `patch` tolerates it. That difference silently
+#      cost us an applied patch once already.
+#
+#   2. PATCHES gains d3d11-winrt-probe-mingw.diff.
+#      gst-plugins-bad's d3d11 enables its winapi_app (UWP) sources from a probe that does not include
+#      <windows.ui.xaml.media.dxinterop.h>, the one header those sources need and the one header mingw-w64 does not
+#      ship. WINAPI_PARTITION_APP is true on desktop, so the probe passes and the build then fails on
+#      gstd3d11window_corewindow.cpp. The patch adds that header to the probe, so d3d11 keeps its desktop features
+#      and only the two UWP window backends are skipped. Preferred over -Dgst-plugins-bad:d3d11=disabled, which
+#      would drop screen capture and the win32 window with it. New in 1.28.6: 1.26.5 pinned d3d11=enabled and did
+#      not reach this code.
+#
+#   3. -Dgst-plugins-bad:d3d11-wgc=disabled and -Dgst-plugins-bad:d3d12-wgc=disabled.
+#      The Windows Graphics Capture backends use WinRT template types (ABI::Windows::Foundation::TypedEventHandler
+#      specialisations, spelled __FITypedEventHandler_2_*) that mingw-w64's generated headers do not provide the way
+#      the MSVC Windows SDK does, so gstd3d12graphicscapture.cpp does not compile:
+#
+#        error: '__FITypedEventHandler_2_Windows__CGraphics__CCapture__C...' does not name a type
+#
+#      Upstream exposes these as their own feature options, so this is a supported configuration rather than a patch,
+#      and the rest of d3d11/d3d12 -- video sink, decoders, converters -- stays enabled. Screen capture is what is
+#      given up, which this project does not use: the camera path is appsrc plus encoders and file/network sinks.
+#
+#   4. -Dgstreamer:gst_debug=true, where upstream sets false.
+#      Not cosmetic, and not merely a preference. With gst_debug=false, gstinfo.h reaches its
+#      `#else /* GST_DISABLE_GST_DEBUG */` branch and issues `#pragma GCC poison gst_debug_log` under
+#      `defined(__GNUC__)`. gst-plugins-bad's Direct3D12 code calls gst_debug_log directly, so under MinGW the build
+#      dies with "attempt to use poisoned 'gst_debug_log'" -- while MSVC ignores the pragma entirely, which is why
+#      upstream CI never sees it: d3d12 is Windows-only and vcpkg's Windows CI is MSVC. The alternative fix is
+#      -Dgst-plugins-bad:d3d12=disabled, rejected because it drops the plugin; leaving the debug log compiled in
+#      costs binary size and buys pipeline diagnostics we want anyway.
+# ---------------------------------------------------------------------------------------------------------------------
+
 vcpkg_from_gitlab(
     GITLAB_URL https://gitlab.freedesktop.org
     OUT_SOURCE_PATH SOURCE_PATH
     REPO gstreamer/gstreamer
     REF "${VERSION}"
-    SHA512 2870d76fffd68bb5c702766a5dd3aa95f864c56a1d19444a3ad0a0e38fa1c66b25d61d5eb31046a3c53b875499ce7b784277cc9bf0bcbf698f35df0fb6a7b3f1
+    SHA512 b29aaf0d6eb6e28184f7cab904cdab06c2680a65b5353d0f0dd0880df530694a41c0b5b0881390bec95115187891b1895912724bedc401b23d766c99421fe790
     HEAD_REF main
     PATCHES
         fix-clang-cl.patch
@@ -11,8 +54,14 @@ vcpkg_from_gitlab(
         fix-multiple-def.patch
         x264-api-imports.diff
         duplicate-unused.diff
-        gstfilesink_fix_gcc15-2-Rev11.patch
+        11894.diff  # https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/11894
+        no-moltenvk-download.diff
+        gstfilesink_fix_gcc15-2-Rev11.patch   # LOCAL, see header
+        d3d11-winrt-probe-mingw.diff          # LOCAL, see header
 )
+
+# subprojects that do their own downloads
+file(REMOVE_RECURSE "${SOURCE_PATH}/subprojects/moltenvk")
 
 vcpkg_find_acquire_program(FLEX)
 vcpkg_find_acquire_program(BISON)
@@ -138,6 +187,11 @@ else()
     set(PLUGIN_BASE_GL_PLATFORM auto)
 endif()
 
+# Darwin platforms require MoltenVK for Vulkan support
+if(VCPKG_TARGET_IS_APPLE AND "vulkan" IN_LIST FEATURES)
+    message(WARNING "You will need to install MoltenVK dependencies to use feature vulkan\n")
+endif()
+
 #
 # References
 #   https://gitlab.freedesktop.org/gstreamer/gstreamer/-/blob/1.20.4/subprojects/gstreamer/meson_options.txt
@@ -162,7 +216,6 @@ vcpkg_configure_meson(
         -Ddevtools=disabled
         -Drtsp_server=disabled
         -Drs=disabled
-        -Dvaapi=disabled
         -Dgst-examples=disabled
         # Bindings
         -Dpython=disabled
@@ -234,8 +287,10 @@ vcpkg_configure_meson(
         -Dgst-plugins-bad:bs2b=disabled
         -Dgst-plugins-bad:curl=disabled # Error during plugin build
         -Dgst-plugins-bad:curl-ssh2=disabled
-        -Dgst-plugins-bad:d3dvideosink=enabled
-        -Dgst-plugins-bad:d3d11=enabled
+        -Dgst-plugins-bad:d3dvideosink=auto
+        -Dgst-plugins-bad:d3d11=auto
+        -Dgst-plugins-bad:d3d11-wgc=disabled  # LOCAL, see header
+        -Dgst-plugins-bad:d3d12-wgc=disabled  # LOCAL, see header
         -Dgst-plugins-bad:decklink=disabled
         -Dgst-plugins-bad:directfb=disabled
         -Dgst-plugins-bad:directsound=auto
@@ -299,7 +354,7 @@ vcpkg_configure_meson(
         -Dglib_debug=disabled
         -Dglib_assert=false
         -Dglib_checks=false
-        -Dgstreamer:gst_debug=true
+        -Dgstreamer:gst_debug=true    # LOCAL, see header
         -Dgstreamer:extra-checks=disabled
     ADDITIONAL_BINARIES
         flex='${FLEX}'

@@ -1,11 +1,11 @@
 {
   "name": "gstreamer",
-  "version": "1.26.5",
-  "description": "GStreamer open-source multimedia framework core library. [MILETHOS] Fixed gstfilesink for GCC 15.2.0 Rev11.",
+  "version": "1.28.6",
+  "description": "GStreamer open-source multimedia framework core library. [MILETHOS] gst_debug kept enabled (MinGW poisons gst_debug_log otherwise) and gstfilesink ftruncate fixed for GCC.",
+  "port-version": 1,
   "homepage": "https://gstreamer.freedesktop.org/",
-  "license": "LGPL-2.0-only",
+  "license": "LGPL-2.1-or-later",
   "supports": "!uwp & !xbox",
-  "port-version":1,
   "dependencies": [
     "glib",
     {
@@ -15,14 +15,6 @@
     {
       "name": "vcpkg-tool-meson",
       "host": true
-    },
-    {
-      "name": "directx-headers",
-      "platform": "windows"
-    },
-    {
-      "name": "directxmath",
-      "platform": "windows"
     }
   ],
   "default-features": [
@@ -868,9 +860,9 @@
           ]
         },
         "libx11",
+        "libxcb",
         "libxext",
-        "libxkbcommon",
-        "xcb"
+        "libxkbcommon"
       ]
     },
     "x264": {
