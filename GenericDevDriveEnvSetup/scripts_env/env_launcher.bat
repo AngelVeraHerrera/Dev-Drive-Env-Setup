@@ -124,11 +124,22 @@ REM UNQUOTED and bash sourced only its first word. Any space in the path (a repo
 REM one, since the on-drive path is space-free by construction) silently broke the launcher.
 REM
 REM There is no reliable way to nest a double quote three layers deep through cmd -> msys2_shell -> bash -lc, so the
-REM value is exported instead. Inside bash, `set -f` and an empty IFS stop the unquoted expansion from being split
-REM or globbed, and both are undone before the interactive shell starts.
+REM value is exported instead, and an EMPTY IFS stops the unquoted expansion from being word-split.
+REM
+REM `set -f` was here too, to stop the expansion being globbed, and it was a bug: the option is not scoped to the
+REM expansion, it disables pathname expansion for the whole sourced bootstrap. The bootstrap finds its env file with
+REM an array glob, so that glob stopped expanding and yielded the literal pattern -- and because a failed glob still
+REM produces exactly one element, the script's "no env file found" guard did not fire either. The symptom was:
+REM
+REM     [INFO] Detected prefix: *
+REM     [ERROR] Env file not found: /R/env/launcher/../*_env_variables.env
+REM
+REM with the file sitting right there. IFS alone is enough and safe: the only IFS-sensitive line in the bootstrap
+REM sets IFS itself (`while IFS= read -r`). The residual exposure is a bootstrap path containing a glob character,
+REM which is far less likely than one containing a space, and unlike a space it is not silent.
 set "DP_BOOTSTRAP=%BOOTSTRAP_POSIX%"
 
 start "Loading env..." cmd /c ^
 ""%MSYS2_SHELL%" -%MSYS2_ENV% -defterm -here -no-start ^
--c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; set -f; IFS=; . $DP_BOOTSTRAP; unset IFS DP_BOOTSTRAP; set +f; exec bash'"
+-c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; IFS=; . $DP_BOOTSTRAP; unset IFS DP_BOOTSTRAP; exec bash'"
 exit /b 0

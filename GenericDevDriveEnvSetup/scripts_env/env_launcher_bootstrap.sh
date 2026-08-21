@@ -15,7 +15,21 @@ log_e(){ printf '[ERROR] %s\n' "$*"; }
 # The trailing `|| true` is load-bearing. Under `set -e` a function returns the status of its last command, and
 # with no tty the [[ ]] test is false -> return 1 -> the sourcing shell aborts silently, before `exec bash`. That
 # made the bootstrap unusable from any script or CI, with no diagnostic whatsoever.
-pause_if_interactive() { [[ -t 0 && -t 1 ]] && { echo; read -r -p "[PAUSE] Press Enter to continue..." _; }; return 0; }
+# Pauses only when a human is there to press Enter, and not even then if the caller says otherwise.
+#
+# Two independent conditions, because "is there a tty" and "does anyone want to be stopped" are different questions.
+# A scheduled task or a CI job has no tty and is covered by the first; a wrapper script that DOES have a tty but
+# wants to run unattended sets DEV_ENV_NO_PAUSE=1 and is covered by the second. Any value other than 0 or empty
+# counts, so =1, =yes and =true all work.
+#
+# The trailing `return 0` is not decorative: this script runs under `set -e`, the [[ ]] test is the last command, and
+# a false test would otherwise make the function return 1 and take the whole shell down -- which is exactly what
+# happened every time the bootstrap was sourced without a tty.
+pause_if_interactive() {
+  [[ -n "${DEV_ENV_NO_PAUSE:-}" && "${DEV_ENV_NO_PAUSE}" != "0" ]] && return 0
+  [[ -t 0 && -t 1 ]] && { echo; read -r -p "[PAUSE] Press Enter to continue..." _; }
+  return 0
+}
 die() { log_e "$*"; pause_if_interactive; exit 1; }
 
 expand_env_vars_once() {

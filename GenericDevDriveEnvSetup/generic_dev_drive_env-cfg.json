@@ -1,22 +1,19 @@
 {
     "environment": 
     {
-        "dev_drive_label": "DEV_DEGORAS_SLR",
-        "dev_drive_letter": "X",
+        "dev_drive_label": "DEV_DEGORAS_SLR_T1",
+        "dev_drive_letter": "R",
         "dev_env_name": "DegorasSLR",
         "vhd_root": "C:/DevDrives",
         "vhd_size_gb": 50,
         "use_dev_drive": false,
         "force_diskpart": true,
         "vhd_fixed": true,
-        "//custom_variables": "Extra KEY=VALUE lines written into the generated .env, in the order given. For tools that want a variable and nothing else -- CMake locating CUDA, a vendor SDK root. Being on PATH is NOT implied; use custom_path_entries for that.",
         "custom_variables":
         {
             "CUDA_PATH": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin"
         },
-        "//custom_path_entries": "Extra PATH components, prepended in the order given, ahead of BASE_PATH. Each may be a literal path or a ${REFERENCE} to a custom_variables entry or to a generated one. Step 3 REFUSES a reference nothing defines: it would expand to an empty PATH component, which execvp and bash both read as the current directory.",
         "custom_path_entries": [ "${CUDA_PATH}" ],
-        "//append_windows_system_path": "Append the Windows system directories (System32 and friends) to the tail of BASE_PATH. Default true when the key is absent. Native tools reach cmd.exe through popen(), so without them windres fails with \"can't popen ... Bad file descriptor\" and gcc cannot create its temporary files. They go at the TAIL so nothing there can shadow the toolchain.",
         "append_windows_system_path": true,
         "proxy_url": "http://192.168.1.68:8080"
     },
@@ -40,8 +37,8 @@
 			{ "name": "gcc",         "mode": "pinned", "version": "16.2.0-3" },
 			{ "name": "gcc-libs",    "mode": "pinned", "version": "16.2.0-3" },
 			{ "name": "gcc-objc",    "mode": "pinned", "version": "16.2.0-3" },
-			{ "name": "make",        "mode": "pinned", "version": "4.4.1-5" },
-			{ "name": "make",        "mode": "pinned", "version": "4.4.1-3", "repo": "msys" },
+			{ "name": "make",        "mode": "pinned", "version": "4.4.1-3" },
+			{ "name": "make",        "mode": "pinned", "version": "4.4.1-3", "repo": "msys"},
 			{ "name": "diffutils",   "mode": "pinned", "version": "3.12-1" },
 			{ "name": "lld",         "mode": "pinned", "version": "22.1.8-2" },
 			{ "name": "ripgrep",     "mode": "pinned", "version": "15.2.0-1" },
@@ -88,13 +85,10 @@
 			{ "name": "mongo-c-driver", "features": ["openssl"] },
 			{ "name": "mongo-cxx-driver" },
 			{ "name": "xerces-c" },
+			{ "name": "sdl2" },
 			{ "name": "zeromq", "features": ["curve", "draft", "sodium"] },
 			{ "name": "cppzmq" },
 			{ "name": "glib" },
-			{ "name": "pango" },
-			{ "name": "graphene" },
-			{ "name": "protobuf" },
-			{ "name": "flatbuffers" },
 			{ "name": "grpc", "features": ["codegen"] },
 			{ "name": "ffmpeg", "features": 
 				[
@@ -152,6 +146,7 @@
 				"windeployqt"
 				]
 			},
+			{ "name": "qt5compat" },
 			{ "name": "qtdeclarative" },
             { "name": "opencv4", "features":
                 [
