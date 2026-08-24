@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# Exactly FOUR deltas from upstream. Re-apply both when bumping to the next version, and nothing else -- everything
+# Exactly FIVE deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
 # else here is upstream's and must be taken verbatim:
 #
 #   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
@@ -39,6 +39,41 @@
 #      upstream CI never sees it: d3d12 is Windows-only and vcpkg's Windows CI is MSVC. The alternative fix is
 #      -Dgst-plugins-bad:d3d12=disabled, rejected because it drops the plugin; leaving the debug log compiled in
 #      costs binary size and buys pipeline diagnostics we want anyway.
+#
+#   5. vcpkg.json declares directxmath AND directx-headers under the plugins-bad feature, which upstream does not.
+#      These are the two things the MSVC Windows SDK ships and mingw-w64 does NOT, and no port in this graph declares
+#      either, so on mingw they are simply absent unless something else happened to install them. DirectXMath is what
+#      gst-plugins-bad's d3d11 library needs; DirectX-Headers is what its d3d12 library needs.
+#
+#      What makes this worth a delta rather than a note is HOW it fails, twice over and never where the problem is.
+#
+#      Without DirectXMath: d3d11/meson.build probes for it and, not finding it, calls subdir_done() -- SILENTLY.
+#      gstd3d11_dep then never exists, cuda/meson.build sees that and calls subdir_done() too, equally silently, and
+#      the first consumer to say anything is sys/nvcodec, which is enabled explicitly and therefore errors:
+#
+#        sys/nvcodec/meson.build:69:4: ERROR: Problem encountered: The nvcodec was enabled explicitly, but required
+#        gstcuda dependency is not found
+#
+#      So the visible symptom names nvcodec and CUDA and has nothing to do with either. No CUDA toolkit is needed to
+#      build nvcodec at all: the CUDA entry points are dlopened at runtime through the bundled stub headers in
+#      gst-libs/gst/cuda/stub.
+#
+#      Without DirectX-Headers: d3d12 is skipped the same silent way, and THAT surfaces as a compile error inside
+#      nvcodec, because sys/nvcodec/gstnvdecoder.cpp guards its d3d11 include on G_OS_WIN32 (line 58) while nothing
+#      before that line has included glib -- unless HAVE_GST_D3D12 is defined, in which case the d3d12 include two
+#      lines earlier pulls glib in and G_OS_WIN32 is defined by the time it is tested. With d3d12 off, the include is
+#      skipped and the file goes on to use GstD3D11Device and GST_CAPS_FEATURE_MEMORY_D3D11_MEMORY, which it never
+#      declared:
+#
+#        gstnvdecoder.cpp:1665:35: error: 'GstD3D11Device' was not declared in this scope
+#
+#      That include order is an upstream latent bug and it is NOT fixed here: enabling d3d12 masks it, which is the
+#      state that has always worked, and d3d12 is wanted anyway. Worth knowing that it is there, because disabling
+#      d3d12 later would bring it straight back wearing an unrelated face.
+#
+#      Declaring both here means vcpkg installs and orders them, instead of the build depending on whether they are
+#      coincidentally present: the environment where this worked had both installed, the one where it failed had
+#      neither, and nothing in either configuration said so.
 # ---------------------------------------------------------------------------------------------------------------------
 
 vcpkg_from_gitlab(
