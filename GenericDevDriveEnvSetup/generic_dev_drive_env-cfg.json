@@ -81,7 +81,12 @@
                 "udpsrc",
                 "srtsink",
                 "hlssink2",
-                "fpsdisplaysink"
+                "fpsdisplaysink",
+                "svtav1enc",
+                "avdec_h264",
+                "avenc_aac",
+                "glupload",
+                "glimagesink"
             ]
         },
         "append_windows_system_path": true,
