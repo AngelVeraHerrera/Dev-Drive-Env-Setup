@@ -23,7 +23,13 @@ param
     # All four scripts take the same switch and must be given the SAME file: they hand state to each other through
     # the generated .env on the dev drive, and mixing configs between steps produces an environment that matches
     # neither.
-    [string]$ConfigFile = "drivenv-cfg.json"
+    [string]$ConfigFile = "drivenv-cfg.json",
+
+    # @brief Validate the configuration and stop, changing nothing.
+    #
+    # The validation runs on every invocation regardless; this switch only stops the script afterwards. Useful for
+    # checking an edited configuration in a second, and for checking one BEFORE a step that takes an hour.
+    [switch]$ValidateOnly
 )
 
 function Write-NoFormat
@@ -109,34 +115,6 @@ function Enable-HWDetection
     }
 }
 
-# CHECK PERMISSIONS
-# --------------------------------------------------------------------
-
-if (-not (Test-IsAdministrator))
-{
-    # -ConfigFile MUST be forwarded. Without it the elevated child falls back to the default configuration and
-    # provisions a DIFFERENT drive than the one asked for, silently, in a separate window -- while the parent exits 0
-    # as though all was well. Forwarded verbatim rather than resolved: the child has the same script directory, so a
-    # relative name resolves identically, and an absolute one is already unambiguous.
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = "powershell.exe"
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ConfigFile `"$ConfigFile`""
-    $psi.Verb      = "runas"   # triggers UAC
-    $psi.UseShellExecute = $true
-
-    try
-    {
-        [System.Diagnostics.Process]::Start($psi) | Out-Null
-    }
-    catch
-    {
-        Write-Error "Elevation was cancelled or failed."
-        Abort-WithError
-    }
-
-    exit 0
-}
-
 # CONFIGURATION
 # --------------------------------------------------------------------
 
@@ -167,7 +145,70 @@ try
     Abort-WithError 
 }
 
-$Global:DevDrive     = $Cfg.environment.driveLetter
+# Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
+# than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
+. (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+
+$cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
+if ($cfgProblems.Count -gt 0)
+{
+    Write-Error ("Configuration has {0} problem(s): {1}" -f $cfgProblems.Count, $ConfigPath)
+    foreach ($cfgProblem in $cfgProblems) { Write-Error "    $cfgProblem" }
+    Abort-WithError
+}
+
+Write-Info "Configuration validated against the schema: no problems."
+
+if ($ValidateOnly)
+{
+    Write-Info "-ValidateOnly was given, so nothing further will run."
+    exit 0
+}
+
+# CHECK PERMISSIONS
+# --------------------------------------------------------------------
+#
+# Deliberately AFTER the configuration is loaded and validated, because validating needs no privileges and elevating
+# does. Run the other way round, as this was, and the script asks for administrator rights -- a UAC prompt, a second
+# window -- before it has any idea whether the configuration it was handed is usable. Worse, -ValidateOnly, whose
+# entire promise is to change nothing, would trigger that prompt and then a real run in the elevated child.
+#
+# So: parse, validate, stop if only validation was wanted, and only then ask for rights.
+
+
+if (-not (Test-IsAdministrator))
+{
+    # -ConfigFile MUST be forwarded. Without it the elevated child falls back to the default configuration and
+    # provisions a DIFFERENT drive than the one asked for, silently, in a separate window -- while the parent exits 0
+    # as though all was well. Forwarded verbatim rather than resolved: the child has the same script directory, so a
+    # relative name resolves identically, and an absolute one is already unambiguous.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = "powershell.exe"
+    $childArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ConfigFile `"$ConfigFile`""
+
+    # -ValidateOnly must be forwarded for the same reason -ConfigFile must, only worse. Unforwarded, a person asking
+    # this script to CHECK a configuration gets a UAC prompt and, on accepting it, a real provisioning run. With the
+    # block placed after the validation below that cannot happen any more -- the switch exits before reaching here --
+    # but forwarding it costs one line and means a future reordering cannot bring the trap back.
+    if ($ValidateOnly) { $childArguments += " -ValidateOnly" }
+
+    $psi.Arguments = $childArguments
+    $psi.Verb      = "runas"   # triggers UAC
+    $psi.UseShellExecute = $true
+
+    try
+    {
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
+    }
+    catch
+    {
+        Write-Error "Elevation was cancelled or failed."
+        Abort-WithError
+    }
+
+    exit 0
+}
+
 
 if (-not $Cfg.environment)
 {

@@ -58,7 +58,13 @@ param
     #
     # For a run whose purpose is to look, not to gate. Without it a failure exits 1, which is what makes this usable
     # from a script or a scheduled check.
-    [switch]$NoFail
+    [switch]$NoFail,
+
+    # @brief Validate the configuration and stop, changing nothing.
+    #
+    # The validation runs on every invocation regardless; this switch only stops the script afterwards. Useful for
+    # checking an edited configuration in a second, and for checking one BEFORE a step that takes an hour.
+    [switch]$ValidateOnly
 )
 
 # FUNCTIONS
@@ -246,6 +252,25 @@ catch
     Abort-WithError
 }
 
+# Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
+# than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
+. (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+
+$cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
+if ($cfgProblems.Count -gt 0)
+{
+    Write-Error ("Configuration has {0} problem(s): {1}" -f $cfgProblems.Count, $cfgPath)
+    foreach ($cfgProblem in $cfgProblems) { Write-Error "    $cfgProblem" }
+    Abort-WithError
+}
+
+Write-Info "Configuration validated against the schema: no problems."
+
+if ($ValidateOnly)
+{
+    Write-Info "-ValidateOnly was given, so nothing further will run."
+    exit 0
+}
 $driveLetter = ([string]$Cfg.environment.dev_drive_letter).Trim().TrimEnd(':').ToUpperInvariant()
 $devEnvName  = ([string]$Cfg.environment.dev_env_name).Trim()
 $envFilePath = Join-Path "$driveLetter`:" (("env/{0}_env_variables.env" -f $devEnvName).ToLower())

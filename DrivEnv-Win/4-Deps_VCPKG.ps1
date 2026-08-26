@@ -35,7 +35,13 @@ param
     # All four scripts take the same switch and must be given the SAME file: they hand state to each other through
     # the generated .env on the dev drive, and mixing configs between steps produces an environment that matches
     # neither.
-    [string]$ConfigFile = "drivenv-cfg.json"
+    [string]$ConfigFile = "drivenv-cfg.json",
+
+    # @brief Validate the configuration and stop, changing nothing.
+    #
+    # The validation runs on every invocation regardless; this switch only stops the script afterwards. Useful for
+    # checking an edited configuration in a second, and for checking one BEFORE a step that takes an hour.
+    [switch]$ValidateOnly
 )
 
 function Write-NoFormat
@@ -305,6 +311,25 @@ catch
     Abort-WithError
 }
 
+# Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
+# than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
+. (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+
+$cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
+if ($cfgProblems.Count -gt 0)
+{
+    Write-Error ("Configuration has {0} problem(s): {1}" -f $cfgProblems.Count, $ConfigPath)
+    foreach ($cfgProblem in $cfgProblems) { Write-Error "    $cfgProblem" }
+    Abort-WithError
+}
+
+Write-Info "Configuration validated against the schema: no problems."
+
+if ($ValidateOnly)
+{
+    Write-Info "-ValidateOnly was given, so nothing further will run."
+    exit 0
+}
 if (-not $Cfg.environment)  { Write-Error "Missing 'environment' object in config JSON: $ConfigPath"; Abort-WithError }
 if (-not $Cfg.vcpkg)        { Write-Error "Missing 'vcpkg' object in config JSON: $ConfigPath";       Abort-WithError }
 if (-not $Cfg.vcpkg.target) { Write-Error "Missing 'vcpkg.target' object in config JSON: $ConfigPath";Abort-WithError }
