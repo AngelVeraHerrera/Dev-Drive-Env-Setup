@@ -233,10 +233,31 @@
             {
                 "name": "ffmpeg",
                 "features": [
-                    "all-gpl",
+                    "avcodec",
+                    "avformat",
+                    "avfilter",
+                    "avdevice",
+                    "swresample",
+                    "swscale",
                     "ffmpeg",
+                    "ffprobe",
                     "ffplay",
-                    "ffprobe"
+                    "x264",
+                    "x265",
+                    "aom",
+                    "dav1d",
+                    "vpx",
+                    "mp3lame",
+                    "opus",
+                    "vorbis",
+                    "speex",
+                    "openjpeg",
+                    "webp",
+                    "zlib",
+                    "bzip2",
+                    "lzma",
+                    "xml2",
+                    "soxr"
                 ]
             },
             {

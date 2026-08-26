@@ -667,9 +667,17 @@ Write-Info "STEP 3: OK"
 
 Write-Info "STEP 4: Verify the installed ports."
 
+# --x-json, not the plain listing, and this is a bug fix rather than a preference. `vcpkg list` pads the
+# "name:triplet" column to a fixed width and TRUNCATES what does not fit, with an ellipsis:
+#
+#   qt-advanced-docking-system:x64-mingw-ucrt-dynam...4.5.0   Create customizable layouts...
+#
+# The triplet is simply gone. Matching against it then fails and the port is reported as not installed although it
+# built and installed perfectly -- 46 files, DLL and headers included. Any port whose name is long enough to eat the
+# column hits this, and a 30-character triplet leaves very little of it.
 $listScript = $scriptHeader + @"
 
-./vcpkg list
+./vcpkg list --x-json
 "@
 
 $listResult = Get-Msys2ScriptOutput -BashPath $msys2BashWin -ScriptBody $listScript -TempName "vcpkg_list.sh"
@@ -681,20 +689,47 @@ if ($listResult.ExitCode -ne 0)
     Abort-WithError
 }
 
-# 'vcpkg list' prints one row per port and one extra row per selected feature. Feature rows
-# carry a description where the plain rows carry the version, so presence and version are
-# matched separately to avoid reading a description as a version.
-$anyRowRx   = '^([A-Za-z0-9._-]+)(\[[^\]]*\])?:' + [regex]::Escape($vcpkgTriplet) + '(\s|$)'
-$plainRowRx = '^([A-Za-z0-9._-]+):'              + [regex]::Escape($vcpkgTriplet) + '\s+(\S+)'
-
+# The JSON is keyed by "name:triplet" and each value carries package_name, triplet, version and port_version as
+# fields, so nothing has to be recovered from a formatted column.
 $installedPorts    = @{}
 $installedVersions = @{}
 
-foreach ($line in $listResult.Output)
+$listJson = $null
+try
 {
-    $text = [string]$line
-    if ($text -match $anyRowRx)   { $installedPorts[$matches[1]]    = $true }
-    if ($text -match $plainRowRx) { $installedVersions[$matches[1]] = $matches[2] }
+    $listJson = ($listResult.Output -join "`n") | ConvertFrom-Json
+}
+catch
+{
+    Write-Error "Could not parse the output of 'vcpkg list --x-json': $($_.Exception.Message)"
+    Abort-WithError
+}
+
+foreach ($property in $listJson.PSObject.Properties)
+{
+    $entry = $property.Value
+    $name  = [string]$entry.package_name
+    if (-not $name) { continue }
+
+    # Only this triplet. The key is "name:triplet" but the field is authoritative and needs no parsing.
+    if ([string]$entry.triplet -ne $vcpkgTriplet) { continue }
+
+    $installedPorts[$name] = $true
+
+    # port_version 0 is the common case and vcpkg does not print "#0" anywhere, so neither does this.
+    $version = [string]$entry.version
+    if ($entry.PSObject.Properties.Name -contains "port_version")
+    {
+        $portVersion = [int]$entry.port_version
+        if ($portVersion -gt 0) { $version = "{0}#{1}" -f $version, $portVersion }
+    }
+    if ($version) { $installedVersions[$name] = $version }
+}
+
+if ($installedPorts.Count -eq 0)
+{
+    Write-Error "'vcpkg list --x-json' reported no packages at all for triplet '$vcpkgTriplet'."
+    Abort-WithError
 }
 
 $missing = @()
