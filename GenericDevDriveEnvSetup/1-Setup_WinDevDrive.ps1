@@ -708,8 +708,31 @@ foreach ($script in $scriptFiles)
 # to be added to as an environment is used, and a re-run of this step
 # must not throw that away. New files from the generator do arrive; files
 # already on the drive are left exactly as they are.
+#
+# Each tree is a CHOICE, defaulting to on. testing/ carries a 26 MB video
+# that an environment which will never run the media checks has no reason
+# to hold, and installation/ carries an offline copy of a Microsoft Store
+# package that not every machine needs. Set either to false to skip it;
+# the directory itself is still created, so a drive can accumulate its own
+# notes there regardless.
+$treeWanted = @{ "testing" = $true; "installation" = $true }
+foreach ($name in @($treeWanted.Keys))
+{
+    $key = "install_" + $name + "_material"
+    if ($Cfg.environment.PSObject.Properties.Name -contains $key)
+    {
+        $treeWanted[$name] = [bool]$Cfg.environment.$key
+    }
+}
+
 foreach ($tree in @("testing", "installation"))
 {
+    if (-not $treeWanted[$tree])
+    {
+        Write-Info "$tree material not requested (environment.install_${tree}_material = false), skipping."
+        continue
+    }
+
     $source = Join-Path $scriptDir $tree
     if (-not (Test-Path -LiteralPath $source))
     {

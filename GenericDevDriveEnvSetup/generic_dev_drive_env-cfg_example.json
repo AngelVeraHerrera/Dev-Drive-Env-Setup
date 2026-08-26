@@ -20,7 +20,9 @@
             "logs/gstreamer/dot",
             "logs/gstreamer/registry",
             "workspace_vcpkg_patches"
-        ]
+        ],
+        "install_testing_material": true,
+        "install_installation_material": true
     },
     "msys2": {
         "source": {
