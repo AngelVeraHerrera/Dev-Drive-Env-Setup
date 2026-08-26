@@ -700,9 +700,22 @@ Write-Info "STEP 4: Verify the installed ports."
 # The triplet is simply gone. Matching against it then fails and the port is reported as not installed although it
 # built and installed perfectly -- 46 files, DLL and headers included. Any port whose name is long enough to eat the
 # column hits this, and a 30-character triplet leaves very little of it.
+# The JSON is redirected to a FILE rather than read back from the captured stream, and that is the fix for a real
+# failure. New-Msys2ScriptHeader ends by echoing three "[env] ..." diagnostic lines to stdout, and
+# Get-Msys2ScriptOutput captures stdout and stderr together -- so what came back began
+#
+#     [env] MSYSTEM=UCRT64
+#
+# and parsing it as JSON failed with "Unexpected character encountered while parsing value: e", because "[" opens an
+# array and position 1 is the "e" of "env". The diagnostics are worth keeping and any command may add a warning of
+# its own, so the answer is not to silence the stream but to stop mixing a data channel into it.
+$listJsonWin  = Join-Path $env:TEMP "vcpkg_list.json"
+$listJsonUnix = Convert-ToMSYSPath $listJsonWin
+Remove-Item -LiteralPath $listJsonWin -Force -ErrorAction SilentlyContinue
+
 $listScript = $scriptHeader + @"
 
-./vcpkg list --x-json
+./vcpkg list --x-json > '$listJsonUnix'
 "@
 
 $listResult = Get-Msys2ScriptOutput -BashPath $msys2BashWin -ScriptBody $listScript -TempName "vcpkg_list.sh"
@@ -714,19 +727,39 @@ if ($listResult.ExitCode -ne 0)
     Abort-WithError
 }
 
+if (-not (Test-Path -LiteralPath $listJsonWin))
+{
+    Write-Error "'vcpkg list --x-json' wrote no output file."
+    foreach ($line in $listResult.Output) { Write-Error ("    | " + $line) }
+    Abort-WithError
+}
+
 # The JSON is keyed by "name:triplet" and each value carries package_name, triplet, version and port_version as
 # fields, so nothing has to be recovered from a formatted column.
 $installedPorts    = @{}
 $installedVersions = @{}
 
 $listJson = $null
+$listRaw  = Get-Content -LiteralPath $listJsonWin -Raw -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $listJsonWin -Force -ErrorAction SilentlyContinue
+
 try
 {
-    $listJson = ($listResult.Output -join "`n") | ConvertFrom-Json
+    $listJson = $listRaw | ConvertFrom-Json
 }
 catch
 {
+    # What was actually received is printed. A parse error without its input is a dead end: this exact message,
+    # without the text behind it, cost an investigation that the first ten lines would have ended immediately.
     Write-Error "Could not parse the output of 'vcpkg list --x-json': $($_.Exception.Message)"
+    Write-Error "What was received instead:"
+    $shown = 0
+    foreach ($line in ([string]$listRaw -split "`r?`n"))
+    {
+        if ($shown -ge 10) { Write-Error "    | ... (truncated)"; break }
+        Write-Error ("    | " + $line)
+        $shown++
+    }
     Abort-WithError
 }
 
