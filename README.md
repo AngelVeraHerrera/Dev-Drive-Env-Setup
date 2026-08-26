@@ -210,6 +210,10 @@ What "working" means for *this* drive, which is a question a generator cannot an
 
 ## Verification
 
+This section is step 5, which checks the environment that was built. The configuration file itself is checked
+separately and much earlier: every step validates it before acting on any value in it, and an unknown key is an
+error rather than a silent default -- see [Configuration](#configuration).
+
 ```powershell
 .\5-Verify_Env.ps1            # exits non-zero if anything is wrong
 .\5-Verify_Env.ps1 -NoFail    # report only, for a run whose purpose is to look
