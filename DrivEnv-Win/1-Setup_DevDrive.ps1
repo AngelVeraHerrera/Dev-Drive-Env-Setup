@@ -179,9 +179,9 @@ if ($ValidateOnly)
 if (-not (Test-IsAdministrator))
 {
     # -ConfigFile MUST be forwarded. Without it the elevated child falls back to the default configuration and
-    # provisions a DIFFERENT drive than the one asked for, silently, in a separate window -- while the parent exits 0
-    # as though all was well. Forwarded verbatim rather than resolved: the child has the same script directory, so a
-    # relative name resolves identically, and an absolute one is already unambiguous.
+    # provisions a DIFFERENT drive than the one asked for, silently, in a separate window -- and succeeds at it, so
+    # even the exit code propagated below would report success. Forwarded verbatim rather than resolved: the child has
+    # the same script directory, so a relative name resolves identically, and an absolute one is already unambiguous.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "powershell.exe"
     $childArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ConfigFile `"$ConfigFile`""
@@ -198,15 +198,57 @@ if (-not (Test-IsAdministrator))
 
     try
     {
-        [System.Diagnostics.Process]::Start($psi) | Out-Null
+        $childProcess = [System.Diagnostics.Process]::Start($psi)
     }
     catch
     {
+        # Cancelling the UAC prompt lands here: ShellExecuteEx reports 1223, "operation cancelled by the user".
         Write-Error "Elevation was cancelled or failed."
         Abort-WithError
     }
 
-    exit 0
+    # Wait for the elevated run, and exit with whatever it returned.
+    #
+    # Handing the work to a child and exiting 0 immediately made this script incapable of reporting failure. A caller
+    # -- a person reading the exit code, a wrapper, a scheduled job -- was told success no matter what happened in the
+    # elevated window, and never saw that window's output either. Not theoretical: a run that stopped dead at the very
+    # first guard, "VHD already exists", still exited 0 and printed nothing whatsoever.
+    #
+    # The cost is that this window now stays open until the elevated one is done, and the elevated one waits for a key
+    # press before closing when it fails. That is the right trade. Note that elevation only happens when the script
+    # was NOT started elevated, which is the interactive case; a caller that already holds administrator rights never
+    # reaches this branch and so never blocks.
+    if ($null -eq $childProcess)
+    {
+        Write-Error "Elevation returned no process, so the result of the elevated run cannot be known."
+        Abort-WithError
+    }
+
+    Write-Info "Elevated run started as PID $($childProcess.Id). Waiting for it to finish..."
+    $childProcess.WaitForExit()
+
+    # Read through a guard: the handle ShellExecuteEx hands back for an elevated process is enough to wait on, and
+    # normally enough to query, but a failure to read the code must not become a crash in place of a verdict.
+    $childExitCode = 1
+    try
+    {
+        $childExitCode = $childProcess.ExitCode
+    }
+    catch
+    {
+        Write-Error "The elevated run finished but its exit code could not be read. Treating that as a failure."
+    }
+
+    if ($childExitCode -eq 0)
+    {
+        Write-Info "Elevated run finished successfully."
+    }
+    else
+    {
+        Write-Error "The elevated run failed with exit code $childExitCode. Its own log records why."
+    }
+
+    exit $childExitCode
 }
 
 
