@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# Exactly SIX deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
+# Exactly SEVEN deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
 # else here is upstream's and must be taken verbatim:
 #
 #   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
@@ -89,6 +89,28 @@
 #      the next silent regression into an error at the line that caused it. This drive's whole video path (the
 #      d3d11 decoders, d3d11videosink, d3d11screencapturesrc, and gstcuda behind nvcodec) depends on d3d11 existing,
 #      so its silent absence is never acceptable here.
+#
+#   7. PATCHES gains mediafoundation-winrt-optional-mingw.diff.
+#      The same disease delta 2 cures for d3d11, in the plugin next door, and it cost the whole Media Foundation
+#      encoder family: no mfh264enc, no mfh265enc, no mfaacenc, no MF decoders. Symptom: they simply are not there.
+#
+#      On desktop Windows BOTH partition probes succeed -- WINAPI_PARTITION_DESKTOP and WINAPI_PARTITION_APP are true
+#      at once -- so mediafoundation intends to build a desktop half and a WinRT half. The WinRT half needs the
+#      GstWinRt library, and gst-libs/gst/winrt/meson.build refuses to build for any compiler but MSVC:
+#
+#        if cxx.get_id() != 'msvc'
+#          subdir_done()
+#
+#      So on mingw that dependency can NEVER be satisfied, and the app branch then abandoned the entire subdirectory
+#      -- desktop half included, which needs nothing from WinRT. At "auto" it did so in silence.
+#
+#      The patch declines only the half that cannot be built, which is what the next block already assumes: three
+#      lines later `if winapi_desktop` adds the desktop sources on its own. What is given up is gstmfcapturewinrt.cpp
+#      and mediacapturewrapper.cpp -- UWP camera capture, useless to a desktop build. Every encoder and decoder is in
+#      the unconditional source list, which is why this costs nothing and returns everything.
+#
+#      Worth sending upstream rather than carrying forever: it is a real bug on any non-MSVC Windows toolchain, and
+#      MSVC is unaffected because there gstwinrt builds and both halves are taken as before.
 # ---------------------------------------------------------------------------------------------------------------------
 
 vcpkg_from_gitlab(
@@ -107,7 +129,8 @@ vcpkg_from_gitlab(
         11894.diff  # https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/11894
         no-moltenvk-download.diff
         gstfilesink_fix_gcc15-2-Rev11.patch   # LOCAL, see header
-        d3d11-winrt-probe-mingw.diff          # LOCAL, see header
+        d3d11-winrt-probe-mingw.diff
+        mediafoundation-winrt-optional-mingw.diff          # LOCAL, see header
 )
 
 # subprojects that do their own downloads

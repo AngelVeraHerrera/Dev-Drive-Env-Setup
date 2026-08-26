@@ -15,15 +15,20 @@ missing element fails in a way that looks like a broken install:
     port, so they are present. Without them the plugins vanish SILENTLY
     and the first complaint comes from somewhere unrelated.
 
-  * mfh264enc / mfh265enc (Media Foundation) are NOT built on this
-    toolchain as things stand. Upstream's probe decides it is building
-    for WinRT -- WINAPI_PARTITION_APP is true on desktop Windows too --
-    and then needs a GstWinRt library that mingw-w64 cannot provide, so
-    the plugin skips itself without a word. The overlay already fixes
-    exactly this for d3d11; the same fix has not been applied to
-    mediafoundation. Every command below marked [NEEDS MF] therefore
-    does nothing yet. x264enc, x265enc, openh264enc and nvh264enc are
-    the working encoders.
+  * Media Foundation works, but only as far as the machine does.
+    mfh264enc, mfaacenc, mfmp3enc, mfvp9enc, mfvideosrc and the MF
+    decoders are all present. mfh265enc is NOT, and that is the hardware
+    and the OS rather than the build: MF registers an encoder only when
+    the system offers a matching transform, this GPU has no HEVC encoder
+    (Kepler), and the Microsoft HEVC Video Extension is not installed --
+    it is sitting in <drive>:/installation as a package, unopened. Use
+    x265enc for H.265 here.
+
+    (Getting even mfh264enc took a patch: upstream's probe decides it is
+    building for WinRT -- WINAPI_PARTITION_APP is true on desktop Windows
+    too -- and then wants a GstWinRt library that is MSVC-only upstream,
+    so the whole plugin skipped itself in silence. See delta 7 in
+    installation/vcpkg_overlays.txt.)
 
   * glupload / glimagesink need the "gl" feature on the gstreamer port,
     which the configuration does not currently request.
@@ -108,9 +113,16 @@ gst-launch-1.0 -e -v filesrc location=$VIDEO ! matroskademux name=d \
   d.video_0 ! queue ! decodebin ! videoconvert ! \
   nvh264enc ! h264parse ! mp4mux ! filesink location=reenc_nv_h264.mp4
 
-# [NEEDS MF] the Media Foundation equivalents, kept for when the plugin builds:
-# gst-launch-1.0 -e -v videotestsrc is-live=true num-buffers=600 ! video/x-raw,framerate=60/1,width=1920,height=1080 ! \
-#   videoconvert ! mfh264enc ! h264parse ! mp4mux ! filesink location=mf_h264_1080p60.mp4
+# Media Foundation encode, which is the vendor-NEUTRAL hardware path: the same
+# command works on Intel and on AMD without changing an element name.
+gst-launch-1.0 -e -v videotestsrc is-live=true num-buffers=600 ! \
+  video/x-raw,framerate=60/1,width=1920,height=1080 ! \
+  videoconvert ! mfh264enc ! h264parse ! mp4mux ! filesink location=mf_h264_1080p60.mp4
+
+# Re-encode the real file through Media Foundation.
+gst-launch-1.0 -e -v filesrc location=$VIDEO ! matroskademux name=d \
+  d.video_0 ! queue ! decodebin ! videoconvert ! \
+  mfh264enc ! h264parse ! mp4mux ! filesink location=reenc_mf_h264.mp4
 
 
 -----------------------------------------------------------------------
@@ -133,7 +145,8 @@ gst-launch-1.0 -v filesrc location=$VIDEO ! matroskademux name=d \
 -----------------------------------------------------------------------
 7. SEND AND RECEIVE OVER RTP
 -----------------------------------------------------------------------
-# Two shells, sender first. x264enc rather than mfh264enc so it runs today.
+# Two shells, sender first. x264enc here, though mfh264enc and nvh264enc are
+# both drop-in replacements.
 gst-launch-1.0 -v videotestsrc is-live=true ! video/x-raw,framerate=60/1,width=1280,height=720 ! \
   videoconvert ! x264enc tune=zerolatency bitrate=4000 speed-preset=veryfast ! \
   h264parse config-interval=1 ! rtph264pay pt=96 ! \
@@ -166,8 +179,8 @@ gst-launch-1.0 -v \
   d3d11h264dec ! \
   fpsdisplaysink video-sink=d3d11videosink sync=false text-overlay=true
 
-# Screen capture, encoded and sent. Uses NVENC; swap in x264enc if the
-# GPU is busy, or mfh264enc once Media Foundation builds.
+# Screen capture, encoded and sent. Uses NVENC; mfh264enc and x264enc are
+# drop-in replacements if the GPU is busy, or not NVIDIA at all.
 gst-launch-1.0 -v \
   d3d11screencapturesrc show-cursor=false ! \
   queue ! d3d11download ! videoconvert ! \

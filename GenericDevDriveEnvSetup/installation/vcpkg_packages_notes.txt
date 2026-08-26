@@ -1,0 +1,130 @@
+=======================================================================
+WHY THESE PACKAGES AND FEATURES, AND WHY NOT THE OTHERS
+=======================================================================
+
+What this is, and what it is NOT
+-----------------------------------------------------------------------
+The DECISIONS. Which features were asked for, which were deliberately
+left out, and which were tried and did not work. The mechanical part --
+which ports at which versions are actually installed -- is generated
+into vcpkg_packages.txt and vcpkg_packages.json by step 4 and needs no
+help from anybody.
+
+This file is only worth keeping if it is honest about the difference
+between "we chose not to" and "it did not build". Those get conflated and
+then nobody retries the second kind.
+
+The authoritative list of what a build actually enabled is the meson
+"Build Options:" line in the port's configure log. Every claim below was
+read from there rather than remembered.
+
+
+ENABLED, and the reason
+-----------------------------------------------------------------------
+  nvcodec        NVIDIA encode and decode. REVERSES an earlier decision:
+                 a previous environment excluded it on the grounds that
+                 "on Windows it is more efficient to encode with Media
+                 Foundation and decode with d3d11". Both paths now exist
+                 and nvcodec is the more direct one on NVIDIA hardware.
+                 Costs the d3d11/d3d12/cuda family in build time, which
+                 is wanted anyway for the d3d11 decoders.
+  d3d11          Forced to "enabled" rather than left at "auto", so a
+                 missing dependency is an error instead of a silent skip.
+                 See vcpkg_overlays.txt, delta 6.
+  srt            Secure Reliable Transport. ALSO REVERSES an earlier
+                 decision, which recorded srt as failing through srtp.
+                 It builds here with srtp disabled -- the two are
+                 separate features and only srtp was the problem.
+  libde265       H.265 decoding, used by the RTP receive tests.
+  openh264,
+  x264, x265     Software H.264/H.265, the encoders that work everywhere
+                 regardless of GPU. x265 needs gpl.
+  hls, openjpeg,
+  opus, webp     Container and codec support the station's formats need.
+  libav          The ffmpeg bridge. SEE THE OPEN PROBLEM BELOW.
+
+
+DELIBERATELY NOT ENABLED
+-----------------------------------------------------------------------
+  amfcodec       AMD hardware encode. No AMD hardware here.
+  va, msdk       Intel VAAPI / Media SDK. Same reason.
+  vulkan         Not needed for the capture-and-stream path, and a large
+                 dependency.
+  x11, wayland,
+  kms, directfb,
+  tinyalsa, oss,
+  opensles,
+  v4l2codecs     Not Windows.
+  webrtc, dtls,
+  srtp           The WebRTC stack. Not part of the station's design: the
+                 transport here is RTP over UDP, plus SRT.
+  opencv         gst-plugins-bad's opencv elements, NOT the opencv
+                 library itself, which is a separate port and IS
+                 installed. Nothing uses the gstreamer-side elements.
+  onnx           Machine-learning inference in the pipeline. Not used.
+  closedcaption,
+  ttml, teletext Subtitle and caption formats. Not used.
+  zbar, zxing,
+  qroverlay      Barcode and QR. Not used.
+  Everything
+  else disabled  Codecs and sinks with no consumer here. Enabling a
+                 feature is not free: it is another dependency to build,
+                 another thing to break on a version bump, and another
+                 patch to carry when it breaks.
+
+
+TRIED AND DID NOT WORK -- retry these, do not assume
+-----------------------------------------------------------------------
+  mediafoundation
+                 SILENTLY skipped by upstream on any non-MSVC toolchain,
+                 which cost every mf* encoder. FIXED HERE by delta 7 of
+                 the gstreamer overlay -- see vcpkg_overlays.txt for the
+                 full diagnosis. Recorded because the failure mode is
+                 worth recognising again: a plugin can be requested,
+                 reported as "auto", and simply not exist.
+
+  gl / gl-graphene
+                 NOT in the current configuration, so glupload,
+                 glcolorconvert and glimagesink do not exist. A previous
+                 environment had both. Nothing about them is known to be
+                 broken -- they were simply not requested. If the OpenGL
+                 tests in testing/gstreamer matter, add the features.
+
+  nls            Needs a complete gettext, which this toolchain does not
+                 provide comfortably. The cost is untranslated messages,
+                 which nothing here depends on.
+
+  soup           Fails through libsoup -> gnutls -> nettle. Recorded from
+                 a previous environment and NOT re-verified against the
+                 current baseline; worth one attempt before believing it.
+
+  aom            AV1. Recorded as incompatible previously and disabled
+                 here. The GPU has no AV1 support either way.
+
+  fluidsynth,
+  faad, dc1394   Recorded as incompatible or unnecessary previously.
+                 Neither re-verified.
+
+
+OPEN PROBLEMS
+-----------------------------------------------------------------------
+  libgstlibav.dll does not load.
+                 "The specified module could not be found", which means a
+                 DLL dependency is missing. avcodec-63.dll and
+                 avformat-63.dll ARE present in bin/, and every direct
+                 import of the plugin resolves, so the cause is deeper
+                 and is NOT yet known. This matters: libav is in the
+                 requested features and that plugin is what provides the
+                 ffmpeg decoders inside gstreamer.
+
+  libgstsvtav1.dll does not load.
+                 Harmless: SvtAv1Enc.dll is not installed because
+                 svt-av1 is not in the package list. Worth noting only
+                 because it means gstreamer built a plugin for a library
+                 the environment does not have.
+
+
+NOT INSTALLED BY ANY STEP
+-----------------------------------------------------------------------
+See manual_installs.txt. The short version: the Microsoft HEVC Video
+Extension, and an NVIDIA display driver.

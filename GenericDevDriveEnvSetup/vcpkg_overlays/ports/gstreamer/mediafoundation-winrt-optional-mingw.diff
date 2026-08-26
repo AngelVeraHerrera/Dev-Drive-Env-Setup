@@ -1,0 +1,63 @@
+Subject: [PATCH] mediafoundation: decline only the WinRT half when GstWinRt is unavailable
+
+On a desktop Windows target BOTH partition probes succeed: WINAPI_PARTITION_DESKTOP and
+WINAPI_PARTITION_APP are true at the same time, so winapi_desktop and winapi_app are both
+set and the plugin is meant to build both halves.
+
+The WinRT half needs the GstWinRt library from gst-libs/gst/winrt, and that library is
+MSVC-ONLY by upstream's own decision:
+
+    gst-libs/gst/winrt/meson.build:
+        if cxx.get_id() != 'msvc'
+          subdir_done()
+
+So on any other toolchain gstwinrt_dep can never be found, and the block patched here then
+abandons THE WHOLE SUBDIRECTORY -- taking the desktop half with it, which needs nothing from
+WinRT and would have built perfectly. With mediafoundation left at 'auto' that happens in
+complete silence: the result is a gstreamer with no mfh264enc, no mfh265enc, no mfaacenc and
+no Media Foundation decoders, and nothing anywhere saying why.
+
+The two halves are not alternatives, and the code three lines further down already knows it:
+`if winapi_desktop` adds the desktop sources independently. Only the app branch conflates
+"the UWP sources cannot be built" with "nothing can be built".
+
+What the WinRT half actually contains is gstmfcapturewinrt.cpp and mediacapturewrapper.cpp --
+UWP camera capture, which a desktop build has no use for. Every encoder and decoder lives in
+the unconditional source list, which is why declining that half costs nothing here.
+
+So: when GstWinRt is missing and the desktop partition is available, clear winapi_app and
+carry on. The error is kept for the only case in which nothing can be built -- no desktop
+partition either. GST_MF_WINAPI_APP follows winapi_app, so the generated config stays honest.
+
+MSVC is unaffected: there gstwinrt builds, gstwinrt_dep is found, and both halves are taken
+exactly as before.
+---
+diff --git a/subprojects/gst-plugins-bad/sys/mediafoundation/meson.build b/subprojects/gst-plugins-bad/sys/mediafoundation/meson.build
+--- a/subprojects/gst-plugins-bad/sys/mediafoundation/meson.build
++++ b/subprojects/gst-plugins-bad/sys/mediafoundation/meson.build
+@@ -124,8 +124,9 @@ if not winapi_desktop and not winapi_app
+   error('Neither Desktop partition nor App partition')
+ endif
+ 
+-if winapi_app
+-  if not gstwinrt_dep.found()
++if winapi_app and not gstwinrt_dep.found()
++  # Nothing can be built only when the desktop partition is unavailable too.
++  if not winapi_desktop
+     if mf_option.enabled()
+       error('The mediafoundation plugin was enabled explicitly, but GstWinRt library is unavailable')
+     else
+@@ -133,6 +134,13 @@ if winapi_app
+     endif
+   endif
+ 
++  # GstWinRt is MSVC-only upstream, so on any other toolchain this half can never be
++  # built. Decline just this half: the desktop plugin below is unaffected, and all it
++  # costs is UWP camera capture, which a desktop build cannot use anyway.
++  winapi_app = false
++endif
++
++if winapi_app
+   mf_sources += mf_app_sources
+   mf_lib_deps += [runtimeobject_lib, gstwinrt_dep]
+ endif
