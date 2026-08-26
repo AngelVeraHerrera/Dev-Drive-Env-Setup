@@ -921,14 +921,38 @@ catch
 # what the baseline was, which is what makes it traceable.
 try
 {
-    $gitCmd  = Get-Command git -ErrorAction SilentlyContinue
+    # Prefer the git ON THE DRIVE over whatever the caller happens to have on PATH, the same way and for the same
+    # reason step 3 does it: this environment is self-contained, and asking Get-Command first made the richness of
+    # the record depend on the PATH of whoever launched the script rather than on the drive. Someone running step 4
+    # from a plain PowerShell with no system git got the bare commit; from the environment launcher, the full
+    # description. Same drive, same baseline, two different inventories.
+    #
+    # Step 2 installs the MinGW flavour, which lands in <MINGW_ROOT>\bin; the plain MSYS package would land in
+    # <MSYS2_ROOT>\usr\bin. Both are accepted. PATH stays as a last resort so nothing is lost where it used to work.
+    $gitSource = $null
+
+    $gitCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($mingwRoot)) { $gitCandidates += (Join-Path (Convert-ToWinPath $mingwRoot) "bin\git.exe") }
+    if (-not [string]::IsNullOrWhiteSpace($msys2Root)) { $gitCandidates += (Join-Path (Convert-ToWinPath $msys2Root) "usr\bin\git.exe") }
+
+    foreach ($gitCandidate in $gitCandidates)
+    {
+        if (Test-Path -LiteralPath $gitCandidate) { $gitSource = $gitCandidate; break }
+    }
+
+    if (-not $gitSource)
+    {
+        $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+        if ($gitCmd) { $gitSource = $gitCmd.Source }
+    }
+
     $baseline = $null
 
-    if ($gitCmd -and $vcpkgRootWin -and (Test-Path -LiteralPath $vcpkgRootWin))
+    if ($gitSource -and $vcpkgRootWin -and (Test-Path -LiteralPath $vcpkgRootWin))
     {
         # -c safe.directory: a clone on a drive this account does not own is refused by git as "dubious
         # ownership", which is right for anything that writes and pointless for one read of the log.
-        $baseline = & $gitCmd.Source -c "safe.directory=*" -C $vcpkgRootWin log -1 `
+        $baseline = & $gitSource -c "safe.directory=*" -C $vcpkgRootWin log -1 `
             --format="%H%nAuthor: %an <%ae>%nDate: %aI%nSubject: %s" 2>&1
         if ($LASTEXITCODE -ne 0) { $baseline = $null }
     }
