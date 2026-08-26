@@ -5,12 +5,12 @@
 *install*/
 # ...except the notes that must travel with the generator. The pattern above is for install_logs/;
 # installation/ is hand-written knowledge about what an environment needed, which is the opposite of a log.
-!GenericDevDriveEnvSetup/installation/
-!GenericDevDriveEnvSetup/installation/**
+!installation/
+!installation/**
 *deploy*/
 
 # Cfg files
-generic_dev_drive_env-cfg.json
+drivenv-cfg.json
 
 # Logs
 *.log

@@ -52,7 +52,7 @@ param
     #
     # A bare file name or a relative path resolves against THIS SCRIPT'S directory. Must be the SAME file the other
     # steps were given: this one reads what they wrote.
-    [string]$ConfigFile = "generic_dev_drive_env-cfg.json",
+    [string]$ConfigFile = "drivenv-cfg.json",
 
     # @brief Report problems and still exit zero.
     #

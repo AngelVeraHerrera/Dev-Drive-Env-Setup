@@ -35,7 +35,7 @@ param
     # All four scripts take the same switch and must be given the SAME file: they hand state to each other through
     # the generated .env on the dev drive, and mixing configs between steps produces an environment that matches
     # neither.
-    [string]$ConfigFile = "generic_dev_drive_env-cfg.json"
+    [string]$ConfigFile = "drivenv-cfg.json"
 )
 
 function Write-NoFormat
