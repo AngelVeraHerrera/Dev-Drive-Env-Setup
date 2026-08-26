@@ -3,6 +3,10 @@
 *product*/
 *todo*/
 *install*/
+# ...except the notes that must travel with the generator. The pattern above is for install_logs/;
+# installation/ is hand-written knowledge about what an environment needed, which is the opposite of a log.
+!GenericDevDriveEnvSetup/installation/
+!GenericDevDriveEnvSetup/installation/**
 *deploy*/
 
 # Cfg files

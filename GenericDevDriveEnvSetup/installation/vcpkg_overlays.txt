@@ -1,0 +1,97 @@
+=======================================================================
+WHAT THE OVERLAY PORTS CHANGE, AND WHY
+=======================================================================
+
+Why this file exists
+-----------------------------------------------------------------------
+Every overlay in vcpkg_overlays/ports exists because an upstream port
+does not work on this toolchain, and every one of them is a thing that
+has to be re-applied when the port is bumped. Knowledge that lives only
+in a diff is knowledge that gets lost on the next rebase -- which has
+already happened once here, expensively: the directxmath/directx-headers
+dependency was solved and written down for a previous environment, the
+note did not travel with the overlay, and the same problem was diagnosed
+again from scratch months later, presenting as an error about CUDA.
+
+Keep this file next to the ports and update it in the same commit.
+
+
+gstreamer            (five deltas, all documented in its portfile head)
+-----------------------------------------------------------------------
+1. gstfilesink_fix_gcc15-2-Rev11.patch
+   gstfilesink.c redefines off_t to guint64 on Win32 but still maps
+   ftruncate to _chsize, which takes a long. GCC rejects the narrowing.
+   Keep the patch LF-terminated: vcpkg applies patches with `git apply`,
+   which refuses a CRLF patch against an LF source.
+
+2. d3d11-winrt-probe-mingw.diff
+   gst-plugins-bad's d3d11 enables its UWP sources from a probe that
+   does not include <windows.ui.xaml.media.dxinterop.h>, the one header
+   mingw-w64 does not ship. WINAPI_PARTITION_APP is true on desktop, so
+   the probe passes and the build then fails. The patch adds that header
+   to the probe, so d3d11 keeps its desktop features and only the two
+   UWP window backends are skipped.
+
+3. d3d11-wgc and d3d12-wgc disabled
+   The Windows Graphics Capture backends use WinRT template types that
+   mingw-w64's generated headers do not provide the way the MSVC SDK
+   does. Upstream exposes these as feature options, so this is a
+   supported configuration rather than a patch. Screen capture through
+   WGC is what is given up; d3d11screencapturesrc still works.
+
+4. gst_debug=true in release builds
+   With gst_debug=false, gstinfo.h poisons gst_debug_log and anything
+   that logs fails to compile. Also means GST_DEBUG actually does
+   something in the shipped build.
+
+5. directxmath and directx-headers declared under plugins-bad
+   The two things the MSVC Windows SDK ships and mingw-w64 does not.
+   DirectXMath is what d3d11 needs; DirectX-Headers is what d3d12 needs.
+   Nothing in the dependency graph declares either, so without this they
+   are present only by accident.
+
+   READ THE PORTFILE HEADER FOR THIS ONE. The failure mode is the point:
+   both are probed and, when missing, the subdirectory calls
+   subdir_done() -- silently. d3d11 disappears, gstcuda disappears with
+   it, and the first thing to complain is nvcodec, with a message about
+   a missing CUDA dependency. No CUDA toolkit is involved in building
+   nvcodec at all.
+
+   KNOWN AND NOT FIXED: gstnvdecoder.cpp guards its d3d11 include on
+   G_OS_WIN32 while nothing before that line has included glib, so the
+   include only happens because the d3d12 include two lines earlier
+   pulls glib in. Enabling d3d12 masks it. Disabling d3d12 later would
+   bring it back looking like an unrelated compile error.
+
+   ALSO KNOWN AND NOT FIXED: sys/mediafoundation has the same disease
+   delta 2 cures for d3d11. Its "building for WinRT" probe compiles, so
+   winapi_app is true, and it then wants a GstWinRt library mingw-w64
+   cannot provide -- so mediafoundation skips itself in silence and
+   mfh264enc / mfh265enc do not exist. The d3d11 probe patch fixed only
+   d3d11.
+
+fastdds              (four deltas, MinGW-only, all invisible to MSVC)
+-----------------------------------------------------------------------
+See its portfile head, which lists them with the patch names:
+dllexport on an internal-linkage const, clock_gettime redefined where
+mingw-w64 already has it, and two others.
+
+libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
+-----------------------------------------------------------------------
+Forced static linkage. The upstream ports build shared libraries that
+this environment does not want to deploy.
+
+glib
+-----------------------------------------------------------------------
+Carries libintl.patch and does not use vcpkg_from_* because the project
+uses submodules. The exact reason for the libintl patch is NOT recorded
+here -- whoever wrote it should add a line.
+
+graphene, pango, vcpkg-qmake
+-----------------------------------------------------------------------
+NOT DOCUMENTED. These overlays exist but nothing in them says what they
+change or why, and guessing from the diff would be worse than admitting
+it. A previous environment's notes claimed gettext was disabled in
+graphene and pango; the current overlays contain no gettext or nls
+handling at all, so that note described a different set of ports and
+does not apply here.

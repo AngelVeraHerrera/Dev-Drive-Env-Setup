@@ -1,0 +1,40 @@
+=======================================================================
+THINGS THAT ARE NOT INSTALLED BY THE GENERATOR
+=======================================================================
+
+Nothing in this file is handled by any of the numbered setup steps. It
+is here because an environment that looks complete and then fails at
+run time, for a reason nothing in the repository mentions, costs more
+time than a short list.
+
+
+Microsoft HEVC Video Extension
+-----------------------------------------------------------------------
+  Microsoft.HEVCVideoExtension_2.0.61931.0_neutral_~_8wekyb3d8bbwe
+
+Needed for HEVC through Media Foundation. Without it, the Media
+Foundation H.265 encoder and decoder are missing at RUN time even when
+the plugin is present -- the codec comes from the operating system, not
+from anything vcpkg builds.
+
+Normally a Microsoft Store item. The offline package is kept beside this
+file for machines with no Store access.
+
+Note as things stand: mediafoundation does not build on this toolchain
+at all (see vcpkg_overlays.txt), so mfh265enc is absent for a different
+and earlier reason. This extension matters once that is fixed.
+
+
+NVIDIA driver
+-----------------------------------------------------------------------
+nvcodec needs no CUDA toolkit to BUILD -- the entry points are opened at
+run time through the stub headers gstreamer bundles. It does need a
+driver that provides nvcuda.dll, i.e. an installed NVIDIA display
+driver, and the elements it registers depend on the GPU: nvcodec asks
+the chip what it can do. A Kepler-era card offers H.264 only, with no
+HEVC and no AV1, and that is the hardware rather than the build.
+
+The optional CUDA runtime compiler (nvrtc64_*_0.dll, part of the CUDA
+toolkit) is used by some CUDA conversion elements. Its absence is
+reported by gst-inspect as an Info line and does not affect NVENC or
+NVDEC.

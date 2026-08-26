@@ -1,6 +1,5 @@
 {
-    "environment": 
-    {
+    "environment": {
         "dev_drive_label": "DEV_DEGORAS_SLR",
         "dev_drive_letter": "X",
         "dev_env_name": "DegorasSLR",
@@ -9,98 +8,194 @@
         "use_dev_drive": false,
         "force_diskpart": true,
         "vhd_fixed": true,
-        "proxy_url": "http://192.168.1.68:8080"
+        "proxy_url": "http://192.168.1.68:8080",
+        "custom_variables": {
+            "GST_PLUGIN_PATH": "${VCPKG_ROOT}/installed/${VCPKG_DEFAULT_TRIPLET}/plugins/gstreamer",
+            "GST_REGISTRY": "${DEVDRIVE_LETTER}/logs/gstreamer/registry/registry.x86_64.bin",
+            "GST_DEBUG_DUMP_DOT_DIR": "${DEVDRIVE_LETTER}/logs/gstreamer/dot",
+            "GST_DEBUG_FILE": "${DEVDRIVE_LETTER}/logs/gstreamer/gst-debug.log",
+            "GST_DEBUG": "2"
+        },
+        "custom_folders": [
+            "logs/gstreamer/dot",
+            "logs/gstreamer/registry",
+            "workspace_vcpkg_patches"
+        ]
     },
-    "msys2":
-    {
-        "source":
-        {
+    "msys2": {
+        "source": {
             "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe",
             "sha256": ""
         },
-        "target": 
-        {
+        "target": {
             "profile": "ucrt",
             "arch": "x86_64",
             "base_url": "https://repo.msys2.org"
         },
-        "packages": 
-        [
-			{ "name": "ninja",      "mode": "latest" },
-			{ "name": "gdb",        "mode": "latest" },
-			{ "name": "gcc",        "mode": "latest" },
-			{ "name": "gcc-libs",   "mode": "latest" },
-			{ "name": "gcc-objc",   "mode": "latest" },
-			{ "name": "make",       "mode": "latest" },
-			{ "name": "make",       "mode": "latest", "repo": "msys" },
-			{ "name": "diffutils",  "mode": "latest" },
-			{ "name": "lld",        "mode": "latest" },
-			{ "name": "ripgrep",    "mode": "latest" },
-			{ "name": "curl",       "mode": "latest" },
-			{ "name": "doxygen",    "mode": "latest" },
-			{ "name": "7zip",       "mode": "latest" },
-			{ "name": "ntldd",      "mode": "latest" },
-			{ "name": "cmake",      "mode": "latest" },
-			{ "name": "qt-creator", "mode": "latest" }
+        "packages": [
+            {
+                "name": "ninja",
+                "mode": "latest"
+            },
+            {
+                "name": "gdb",
+                "mode": "latest"
+            },
+            {
+                "name": "gcc",
+                "mode": "latest"
+            },
+            {
+                "name": "gcc-libs",
+                "mode": "latest"
+            },
+            {
+                "name": "gcc-objc",
+                "mode": "latest"
+            },
+            {
+                "name": "make",
+                "mode": "latest"
+            },
+            {
+                "name": "make",
+                "mode": "latest",
+                "repo": "msys"
+            },
+            {
+                "name": "diffutils",
+                "mode": "latest"
+            },
+            {
+                "name": "lld",
+                "mode": "latest"
+            },
+            {
+                "name": "ripgrep",
+                "mode": "latest"
+            },
+            {
+                "name": "curl",
+                "mode": "latest"
+            },
+            {
+                "name": "doxygen",
+                "mode": "latest"
+            },
+            {
+                "name": "7zip",
+                "mode": "latest"
+            },
+            {
+                "name": "ntldd",
+                "mode": "latest"
+            },
+            {
+                "name": "cmake",
+                "mode": "latest"
+            },
+            {
+                "name": "qt-creator",
+                "mode": "latest"
+            }
         ]
     },
-    "vcpkg": 
-    {
-        "source":
-        {
+    "vcpkg": {
+        "source": {
             "repository_url": "https://github.com/microsoft/vcpkg.git",
             "baseline_mode": "latest",
             "baseline_commit": "06d00ffa491e4668627728f14b891d22c6fea146"
         },
-        "target":
-        {
+        "target": {
             "triplet": "x64-mingw-ucrt-dynamic-release"
         },
-        "packages":
-		[
-			{ "name": "fmt" },
-			{ "name": "pkgconf" },
-			{ "name": "nlohmann-json" },
-			{ "name": "openssl" },
-			{ "name": "spdlog" },
-			{ "name": "zlib" },
-			{ "name": "curl", "features":
-				[
-				"openssl",
-				"ssh",
-				"ssl",
-				"tool",
-				"brotli",
-				"c-ares",
-				"zstd"
-				]
-			},
-			{ "name": "libbson" },
-			{ "name": "mongo-c-driver", "features": ["openssl"] },
-			{ "name": "mongo-cxx-driver" },
-			{ "name": "xerces-c" },
-			{ "name": "zeromq" },
-			{ "name": "cppzmq" },
-			{ "name": "glib" },
-			{ "name": "pango" },
-			{ "name": "graphene" },
-			{ "name": "ffmpeg", "features": ["all-gpl","ffmpeg","ffplay","ffprobe"] },
-			{ "name": "qtbase", "features":
-				[
-				"gui",
-				"widgets",
-				"network",
-				"opengl",
-				"openssl",
-				"freetype",
-				"harfbuzz",
-				"png",
-				"jpeg",
-				"zstd",
-				"concurrent",
-				"windeployqt"
-				]
-			}
-		]
+        "packages": [
+            {
+                "name": "fmt"
+            },
+            {
+                "name": "pkgconf"
+            },
+            {
+                "name": "nlohmann-json"
+            },
+            {
+                "name": "openssl"
+            },
+            {
+                "name": "spdlog"
+            },
+            {
+                "name": "zlib"
+            },
+            {
+                "name": "curl",
+                "features": [
+                    "openssl",
+                    "ssh",
+                    "ssl",
+                    "tool",
+                    "brotli",
+                    "c-ares",
+                    "zstd"
+                ]
+            },
+            {
+                "name": "libbson"
+            },
+            {
+                "name": "mongo-c-driver",
+                "features": [
+                    "openssl"
+                ]
+            },
+            {
+                "name": "mongo-cxx-driver"
+            },
+            {
+                "name": "xerces-c"
+            },
+            {
+                "name": "zeromq"
+            },
+            {
+                "name": "cppzmq"
+            },
+            {
+                "name": "glib"
+            },
+            {
+                "name": "pango"
+            },
+            {
+                "name": "graphene"
+            },
+            {
+                "name": "ffmpeg",
+                "features": [
+                    "all-gpl",
+                    "ffmpeg",
+                    "ffplay",
+                    "ffprobe"
+                ]
+            },
+            {
+                "name": "qtbase",
+                "features": [
+                    "gui",
+                    "widgets",
+                    "network",
+                    "opengl",
+                    "openssl",
+                    "freetype",
+                    "harfbuzz",
+                    "png",
+                    "jpeg",
+                    "zstd",
+                    "concurrent",
+                    "windeployqt"
+                ]
+            }
+        ]
     }
 }
