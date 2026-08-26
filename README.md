@@ -78,9 +78,12 @@ changes outside the drive, both by design and both worth knowing about:
 
 ## 🚀 Quick Start
 
+The repository root holds only `README.md`, `LICENSE` and the git files. Everything the generator itself needs lives
+one level down, in `DrivEnv-Win/`, and that is the directory every command below is run from.
+
 ```powershell
 git clone https://github.com/DegorasProjectTeam/DrivEnv-Win.git
-cd DrivEnv-Win
+cd DrivEnv-Win\DrivEnv-Win
 copy drivenv-cfg_example.json drivenv-cfg.json
 ```
 
@@ -88,7 +91,7 @@ Edit `drivenv-cfg.json` — at minimum the drive letter, the label and the envir
 order, from an **elevated** PowerShell for the first one:
 
 ```powershell
-.\1-Setup_WinDevDrive.ps1     # create and mount the drive, lay out the folders, write the launchers
+.\1-Setup_DevDrive.ps1     # create and mount the drive, lay out the folders, write the launchers
 .\2-Setup_MSYS2.ps1           # install MSYS2 and the pinned toolchain packages
 .\3-Clone_VCPKG.ps1           # clone vcpkg at the baseline, write the environment file
 .\4-Deps_VCPKG.ps1            # install the configured packages, write the installation inventory
@@ -99,7 +102,7 @@ Every step takes the same `-ConfigFile` switch and **must be given the same file
 through the generated environment file on the drive.
 
 ```powershell
-.\1-Setup_WinDevDrive.ps1 -ConfigFile my-other-drive.json
+.\1-Setup_DevDrive.ps1 -ConfigFile my-other-drive.json
 ```
 
 A bare name or a relative path resolves against the script's own directory, so a config sitting beside the scripts
@@ -206,8 +209,8 @@ is opened with `LOAD_WITH_ALTERED_SEARCH_PATH`, so its dependencies resolve exac
 
 ## 🧪 Testing Material
 
-`testing/` is copied to the drive and holds hand-runnable checks for the libraries that have historically been
-difficult on this toolchain:
+`DrivEnv-Win/testing/` is copied to the drive and holds hand-runnable checks for the libraries that have
+historically been difficult on this toolchain:
 
 - **`gstreamer/`** — element checks, pipelines, NVIDIA and Media Foundation encode paths, RTP send/receive launchers,
   low-latency patterns, and a real 1080p60 file to demux rather than a synthesised one.
@@ -223,10 +226,10 @@ difficult on this toolchain:
 
 ## 🩹 Overlay Ports
 
-`vcpkg_overlays/ports/` carries local ports for packages that do not build correctly on this toolchain as published.
-Every one of them is a thing that must be re-applied when the port is bumped, so **every one of them is documented**
-in [`installation/vcpkg_overlays.txt`](installation/vcpkg_overlays.txt) — what it changes, why, and how the failure
-presents itself.
+`DrivEnv-Win/vcpkg_overlays/ports/` carries local ports for packages that do not build correctly on this
+toolchain as published. Every one of them is a thing that must be re-applied when the port is bumped, so
+**every one of them is documented** — what it changes, why, and how the failure presents itself — in
+[`installation/vcpkg_overlays.txt`](DrivEnv-Win/installation/vcpkg_overlays.txt).
 
 That file exists because the alternative was tried: a fix was made for an earlier environment, the reasoning lived
 only in the diff, the diff did not survive a rebase, and the same problem was diagnosed from scratch months later —
