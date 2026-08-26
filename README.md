@@ -224,9 +224,9 @@ Output is a summary by group, a list of anything that failed, and a report writt
 
 ```
  packages   27 checked, 0 failed
- load      477 checked, 0 failed
- tools       8 checked, 0 failed
- commands    4 checked, 0 failed
+ load       445 checked, 0 failed
+ tools      8 checked, 0 failed
+ commands   4 checked, 0 failed
  elements   29 checked, 0 failed
 ```
 

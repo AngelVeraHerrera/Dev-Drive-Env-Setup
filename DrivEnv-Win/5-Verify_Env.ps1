@@ -216,9 +216,24 @@ function Add-Result
     }
 }
 
+function Set-GroupTotal
+{
+    # @brief Records how many things a group actually examined, when that differs from the number of results it filed.
+    #
+    # The load check walks every installed library and files ONE result, because four hundred lines of "ok" is not a
+    # report. But then the summary counted results and printed "load 1 checked" directly underneath its own
+    # "Libraries checked: 445" -- two numbers for the same work, in the same output, contradicting each other. The
+    # summary uses this instead where it is set, so the headline matches the detail.
+    param ([string]$Group, [int]$Total)
+
+    $script:groupTotals[$Group] = $Total
+}
+
 # ====================================================================
 # START
 # ====================================================================
+
+$script:groupTotals = @{}
 
 $scriptStart   = Get-Date
 $originalTitle = $host.UI.RawUI.WindowTitle
@@ -478,6 +493,7 @@ public static class DevDriveLoader
     }
 
     Write-Info "Libraries checked: $($targets.Count), failed to load: $failed"
+    Set-GroupTotal -Group "load" -Total $targets.Count
     if ($failed -eq 0 -and $targets.Count -gt 0)
     {
         Add-Result -Group "load" -Name "$($targets.Count) libraries" -State "ok"
@@ -638,13 +654,19 @@ Write-NoFormat "================================================================
 Write-NoFormat " VERIFICATION SUMMARY"
 Write-NoFormat "======================================================================"
 
+$totalChecked = 0
 foreach ($group in ($script:results | Select-Object -ExpandProperty Group -Unique))
 {
     $inGroup    = @($script:results | Where-Object { $_.Group -eq $group })
     $badInGroup = @($inGroup | Where-Object { $_.State -eq "fail" })
     $skipInGrp  = @($inGroup | Where-Object { $_.State -eq "skip" })
     $extra = if ($skipInGrp.Count -gt 0) { ", {0} not checked" -f $skipInGrp.Count } else { "" }
-    Write-NoFormat (" {0,-10} {1} checked, {2} failed{3}" -f $group, $inGroup.Count, $badInGroup.Count, $extra)
+
+    $shown = $inGroup.Count
+    if ($script:groupTotals.ContainsKey($group)) { $shown = $script:groupTotals[$group] }
+    $totalChecked += $shown
+
+    Write-NoFormat (" {0,-10} {1} checked, {2} failed{3}" -f $group, $shown, $badInGroup.Count, $extra)
 }
 
 if ($skipped.Count -gt 0)
@@ -682,7 +704,7 @@ if (Test-Path -LiteralPath $inventoryDir)
         "ENVIRONMENT VERIFICATION",
         "=======================================================================",
         ("Run on {0}. Triplet {1}." -f (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"), $triplet),
-        ("{0} checks, {1} failed, {2} not checked." -f $script:results.Count, $failures.Count, $skipped.Count),
+        ("{0} checks, {1} failed, {2} not checked." -f $totalChecked, $failures.Count, $skipped.Count),
         ""
     )
     foreach ($r in $script:results)
@@ -699,8 +721,11 @@ if (Test-Path -LiteralPath $inventoryDir)
 }
 
 $elapsed = (Get-Date) - $scriptStart
-Write-Info ("{0} checks, {1} passed, {2} failed, {3} not checked, in {4:N1} s" -f $script:results.Count,
-            $passes.Count, $failures.Count, $skipped.Count, $elapsed.TotalSeconds)
+# Derived from $totalChecked rather than counted from the results, so this line cannot disagree with the per-group
+# lines printed a moment ago.
+$totalPassed = $totalChecked - $failures.Count - $skipped.Count
+Write-Info ("{0} checks, {1} passed, {2} failed, {3} not checked, in {4:N1} s" -f $totalChecked,
+            $totalPassed, $failures.Count, $skipped.Count, $elapsed.TotalSeconds)
 
 $host.UI.RawUI.WindowTitle = $originalTitle
 
