@@ -9,7 +9,7 @@
 # License: MIT
 # ====================================================================
 #
-# Prerequisites: 1-Setup_WinDevDrive.ps1, 2-Setup_MSYS2.ps1 and
+# Prerequisites: 1-Setup_DevDrive.ps1, 2-Setup_MSYS2.ps1 and
 # 3-Clone_VCPKG.ps1 must have completed.
 #
 # Installation model: vcpkg CLASSIC mode. Ports are installed once into
@@ -478,7 +478,7 @@ try
 }
 catch
 {
-    Write-Error "Dev Drive '$devDrive' is not available or not mounted. Run 1-Setup_WinDevDrive.ps1 first."
+    Write-Error "Dev Drive '$devDrive' is not available or not mounted. Run 1-Setup_DevDrive.ps1 first."
     Abort-WithError
 }
 

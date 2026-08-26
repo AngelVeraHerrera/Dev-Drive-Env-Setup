@@ -9,7 +9,7 @@
 # License: MIT
 # ====================================================================
 #
-# Prerequisites: 1-Setup_WinDevDrive.ps1 and 2-Setup_MSYS2.ps1 must have
+# Prerequisites: 1-Setup_DevDrive.ps1 and 2-Setup_MSYS2.ps1 must have
 # completed. This script reads the environment file they produced
 # (<drive>:\env\<dev_env_name>_env_variables.env) as the source of truth
 # for the MSYS2 layout instead of re-deriving it from convention.
@@ -479,7 +479,7 @@ try
 }
 catch
 {
-    Write-Error "Dev Drive '$devDrive' is not available or not mounted. Run 1-Setup_WinDevDrive.ps1 first."
+    Write-Error "Dev Drive '$devDrive' is not available or not mounted. Run 1-Setup_DevDrive.ps1 first."
     Abort-WithError
 }
 
@@ -487,7 +487,7 @@ Write-Info "Reading environment file produced by the previous steps..."
 if (-not (Test-Path -LiteralPath $envFilePath))
 {
     Write-Error "Environment file not found: $envFilePath"
-    Write-Error "Run 1-Setup_WinDevDrive.ps1 and 2-Setup_MSYS2.ps1 before this script."
+    Write-Error "Run 1-Setup_DevDrive.ps1 and 2-Setup_MSYS2.ps1 before this script."
     Abort-WithError
 }
 
