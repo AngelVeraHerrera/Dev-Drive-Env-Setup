@@ -98,6 +98,10 @@ order, from an **elevated** PowerShell for the first one:
 .\5-Verify_Env.ps1            # prove the result works
 ```
 
+Step 1 is the only one needing administrator rights. Started without them it asks for elevation, does the work in
+the elevated window, and waits for it -- so the window you started from stays open until that finishes, and then
+exits with the same code. Started already elevated it runs straight through and nothing waits.
+
 Every step takes the same `-ConfigFile` switch and **must be given the same file**: they hand state to each other
 through the generated environment file on the drive.
 
