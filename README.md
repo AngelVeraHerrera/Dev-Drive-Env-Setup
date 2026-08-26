@@ -102,6 +102,16 @@ Step 1 is the only one needing administrator rights. Started without them it ask
 the elevated window, and waits for it -- so the window you started from stays open until that finishes, and then
 exits with the same code. Started already elevated it runs straight through and nothing waits.
 
+It also refuses to start unless the ground is clear. It checks that the drive letter is free, that no VHDX already
+sits at `vhd_root`, and that the volume there has at least `vhd_size_gb` available. All three run before anything is
+created and before elevation is even requested, so a configuration naming an occupied letter costs a second rather
+than a 50 GB file, a UAC prompt and a failure at the end.
+
+> ⚠️ **A letter can be taken by something `Get-Volume` cannot see** -- a mapped network drive, a `subst`, or a
+> disk attached with no mounted filesystem. The check consults the logical drive list as well, and says which kind of
+> thing holds the letter, because "in use by a network drive" and "in use by a mounted volume" call for different
+> fixes.
+
 Every step takes the same `-ConfigFile` switch and **must be given the same file**: they hand state to each other
 through the generated environment file on the drive.
 
@@ -130,7 +140,7 @@ first. All five also take `-ValidateOnly`, which validates and stops without cha
 an edited file, and worth considerably more before a step that takes an hour than after it.
 
 ```powershell
-.-Verify_Env.ps1 -ValidateOnly
+.\5-Verify_Env.ps1 -ValidateOnly
 ```
 
 > ⚠️ **An unknown key is an error, not a default.** Every reader in these scripts falls back to a default when
