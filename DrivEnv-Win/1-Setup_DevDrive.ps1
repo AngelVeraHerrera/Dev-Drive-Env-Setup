@@ -1,4 +1,4 @@
-# ====================================================================
+﻿# ====================================================================
 # SETUP WINDOWS DEV DRIVE SCRIPT
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
@@ -320,8 +320,21 @@ if (Test-Path $vhdFilePath) {
 }
 
 Write-Info "Checking if drive letter is in use..."
+
+# Get-Volume only sees volumes, and a drive letter can be held by something that is not one: a mapped network drive,
+# a subst, or a VHD already attached whose filesystem is not mounted. Any of those passes a Get-Volume test and then
+# fails when the letter is actually assigned -- by which point the VHDX exists and AutoPlay has been switched off.
+# GetLogicalDrives sees every letter that is taken, whatever is holding it, so it catches the rest.
+$letterHolder = $null
 if (Get-Volume -driveLetter $driveLetter -ErrorAction SilentlyContinue) {
-    Write-Error "Drive letter $driveLetter is already in use."
+    $letterHolder = "a mounted volume"
+}
+elseif (@([System.IO.Directory]::GetLogicalDrives() | ForEach-Object { $_.Substring(0, 1) }) -contains $driveLetter) {
+    $letterHolder = "something that is not a volume: a mapped network drive, a subst, " +
+                    "or an attached disk with no mounted filesystem"
+}
+if ($null -ne $letterHolder) {
+    Write-Error "Drive letter $driveLetter is already in use by $letterHolder."
     Abort-WithError
 }
 
