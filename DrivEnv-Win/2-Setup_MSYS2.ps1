@@ -164,6 +164,45 @@ function Invoke-Msys2Bash
     return $LASTEXITCODE
 }
 
+function Invoke-Pacman
+{
+    # @brief Run a pacman operation, retrying it a bounded number of times. Returns the exit code of the last attempt.
+    #
+    # Any pacman operation that downloads can fail for a reason that has nothing to do with this environment: a mirror
+    # that stalls at zero bytes per second, a .sig file that 404s, a connection reset halfway through. Those are
+    # transient, and pacman is built to survive them -- partial downloads stay in its cache and --needed skips what is
+    # already installed -- so retrying costs seconds and turns a failed run into a completed one. Without a retry the
+    # whole step aborts and a person re-runs it by hand, which is the same thing done slower.
+    #
+    # --disable-download-timeout is passed always, never per call site. Without it pacman hands curl a minimum-speed
+    # rule and aborts the entire transaction when a mirror drops below it for ten seconds -- a property of the mirror,
+    # not of the package being fetched.
+    param
+    (
+        [Parameter(Mandatory=$true)][string]$BashPath,
+        [Parameter(Mandatory=$true)][string]$Arguments,
+        [int]$Attempts     = 3,
+        [int]$DelaySeconds = 5
+    )
+
+    $code = 1
+    for ($try = 1; $try -le $Attempts; $try++)
+    {
+        if ($try -gt 1) { Write-Info "pacman attempt $try of $Attempts..." }
+
+        $code = Invoke-Msys2Bash -BashPath $BashPath -Command ("pacman --disable-download-timeout " + $Arguments)
+        if ($code -eq 0) { return 0 }
+
+        if ($try -lt $Attempts)
+        {
+            Write-Info "pacman failed with exit code $code. Retrying in $DelaySeconds seconds."
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    return $code
+}
+
 function Configure-MSYS2Proxy
 {
     param(
@@ -641,8 +680,8 @@ Write-Info "STEP 4: Upgrade MSYS2 core system."
 
 $coreUpdateScript = Join-Path $env:TEMP "upgrade_core.sh"
 Set-Content -Path $coreUpdateScript -Encoding ASCII -Value @'
-pacman -Sy --noconfirm
-pacman -Su --noconfirm
+pacman -Sy --noconfirm --disable-download-timeout
+pacman -Su --noconfirm --disable-download-timeout
 '@
 $coreScriptUnix = $coreUpdateScript -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
 
@@ -670,7 +709,7 @@ Write-Info "STEP 5: Install toolchain and utilities (JSON-driven)."
 # Always install git (needed for vcpkg, common workflows)
 $gitPkgName = "mingw-w64-{0}-{1}-git" -f $msysProfile, $msysArch
 Write-Info "Installing git (latest): $gitPkgName"
-$code = Invoke-Msys2Bash -BashPath $bashPath -Command "pacman -S --noconfirm --needed $gitPkgName"
+$code = Invoke-Pacman -BashPath $bashPath -Arguments "-S --noconfirm --needed $gitPkgName"
 if ($code -ne 0)
 {
     Write-Error "git installation failed (exit code $code): $gitPkgName"
@@ -735,8 +774,8 @@ foreach ($p in $msysPackages)
 if ($latestPkgs.Count -gt 0)
 {
     Write-Info "Installing latest packages via pacman -S..."
-    $installLatestCmd = "pacman -S --noconfirm --needed --disable-download-timeout " + ($latestPkgs -join " ")
-    $code = Invoke-Msys2Bash -BashPath $bashPath -Command $installLatestCmd
+    $installLatestArgs = "-S --noconfirm --needed " + ($latestPkgs -join " ")
+    $code = Invoke-Pacman -BashPath $bashPath -Arguments $installLatestArgs
     if ($code -ne 0) {
         Write-Error "Latest package installation failed (exit code $code)."
         Abort-WithError
