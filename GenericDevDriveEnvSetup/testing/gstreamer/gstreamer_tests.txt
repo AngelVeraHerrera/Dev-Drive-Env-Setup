@@ -125,6 +125,42 @@ gst-launch-1.0 -e -v filesrc location=$VIDEO ! matroskademux name=d \
   mfh264enc ! h264parse ! mp4mux ! filesink location=reenc_mf_h264.mp4
 
 
+# PROVING THE GPU IS REALLY DOING IT
+#
+# Three ways, in order of how much they prove. Worth knowing all three,
+# because the first one does not work on every card.
+#
+# 1. THE CAPS, which is structural proof and always available. Look for
+#    this line in the -v output of the pipeline above:
+#
+#      nvh264dec0.GstPad:src: caps = video/x-raw(memory:CUDAMemory)
+#
+#    memory:CUDAMemory means the decoded frame is in GPU memory and never
+#    came back across the bus. No amount of software fallback produces
+#    that caps feature.
+#
+# 2. GPU MEMORY, which is a number. Run the pipeline and sample:
+#
+#      nvidia-smi --query-gpu=memory.used --format=csv,noheader
+#
+#    Measured on the GT 730 here: 859 MiB idle, 981 MiB while an
+#    NVENC->NVDEC 1080p60 pipeline ran, back to idle afterwards.
+#
+# 3. UTILISATION COUNTERS, if the card has them. On this GT 730 with
+#    driver 475 they do NOT exist:
+#
+#      nvidia-smi --query-gpu=utilization.gpu,utilization.encoder --format=csv
+#        -> [N/A], [N/A]
+#
+#    and --query-compute-apps returns [N/A] as well. That is the card, not
+#    the pipeline: those counters arrived on later consumer GPUs. Do not
+#    read the N/A as "the GPU is idle" -- method 2 says otherwise.
+#
+# A throughput comparison against x264enc is the other obvious check, and
+# it is a fair one ONLY on an otherwise idle machine: a software encoder
+# measured while the drive is compiling Qt looks far worse than it is.
+
+
 -----------------------------------------------------------------------
 6. A REAL FILE
 -----------------------------------------------------------------------

@@ -22,7 +22,65 @@
             "workspace_vcpkg_patches"
         ],
         "install_testing_material": true,
-        "install_installation_material": true
+        "install_installation_material": true,
+        "verification": {
+            "check_packages": true,
+            "check_dll_load": true,
+            "check_tools": [
+                "vcpkg",
+                "gst-inspect-1.0",
+                "gst-launch-1.0",
+                "gst-discoverer-1.0",
+                "ffmpeg",
+                "ffprobe",
+                "curl",
+                "pkgconf"
+            ],
+            "check_commands": [
+                {
+                    "run": "gst-inspect-1.0 --version",
+                    "expect": "GStreamer"
+                },
+                {
+                    "run": "ffmpeg -hide_banner -version",
+                    "expect": "ffmpeg version"
+                },
+                {
+                    "run": "curl --version",
+                    "expect": "OpenSSL"
+                },
+                {
+                    "run": "pkgconf --version",
+                    "expect": ""
+                }
+            ],
+            "check_gstreamer_elements": [
+                "videotestsrc",
+                "audiotestsrc",
+                "decodebin",
+                "playbin",
+                "matroskademux",
+                "x264enc",
+                "x265enc",
+                "openh264enc",
+                "libde265dec",
+                "d3d11h264dec",
+                "d3d11h265dec",
+                "d3d11videosink",
+                "d3d11screencapturesrc",
+                "nvh264enc",
+                "nvh264dec",
+                "mfh264enc",
+                "rtph264pay",
+                "rtph265pay",
+                "rtpjitterbuffer",
+                "udpsink",
+                "udpsrc",
+                "srtsink",
+                "hlssink2",
+                "fpsdisplaysink"
+            ]
+        }
     },
     "msys2": {
         "source": {
