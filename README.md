@@ -121,6 +121,20 @@ Once step 3 has run, the environment is entered from the drive itself:
 One file, four sections. `drivenv-cfg_example.json` is tracked and documents every key;
 `drivenv-cfg.json` is the one you edit and is deliberately **not** tracked.
 
+Every step validates this file before it acts on any value in it, and reports every problem at once rather than the
+first. All five also take `-ValidateOnly`, which validates and stops without changing anything -- a second's check on
+an edited file, and worth considerably more before a step that takes an hour than after it.
+
+```powershell
+.-Verify_Env.ps1 -ValidateOnly
+```
+
+> ⚠️ **An unknown key is an error, not a default.** Every reader in these scripts falls back to a default when
+> a key is absent, so a typo used to be silent: `install_testing_materials` in the plural copied the testing tree you
+> asked it to skip, and `check_toolz` left step 5 checking no tools at all and then reporting `tools 0 checked, 0
+> failed` as a pass. A verification step that quietly verifies less than it was asked to is worse than none, because
+> it is believed. So the validator refuses the file and suggests the nearest key it knows.
+
 ### `environment`
 
 | Key | Meaning |
