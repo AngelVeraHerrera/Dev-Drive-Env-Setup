@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# Exactly FIVE deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
+# Exactly SIX deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
 # else here is upstream's and must be taken verbatim:
 #
 #   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
@@ -74,6 +74,21 @@
 #      Declaring both here means vcpkg installs and orders them, instead of the build depending on whether they are
 #      coincidentally present: the environment where this worked had both installed, the one where it failed had
 #      neither, and nothing in either configuration said so.
+#
+#   6. -Dgst-plugins-bad:d3d11=enabled, where upstream leaves it auto.
+#      A safety net for exactly the failure delta 5 describes, and restored from a previous environment's overlay,
+#      which had it. With d3d11 at "auto", a missing DirectXMath makes the subdirectory bail via subdir_done() and
+#      SAY NOTHING; three layers later the build fails somewhere unrelated, wearing CUDA's name. With it "enabled",
+#      d3d11/meson.build reaches
+#
+#        directxmath_dep = dependency('DirectXMath', 'directxmath', required: d3d11_opt)
+#
+#      with required=true, and meson stops there with a message that actually names DirectXMath.
+#
+#      A no-op while delta 5 holds -- d3d11 builds either way -- which is the point: it costs nothing now and turns
+#      the next silent regression into an error at the line that caused it. This drive's whole video path (the
+#      d3d11 decoders, d3d11videosink, d3d11screencapturesrc, and gstcuda behind nvcodec) depends on d3d11 existing,
+#      so its silent absence is never acceptable here.
 # ---------------------------------------------------------------------------------------------------------------------
 
 vcpkg_from_gitlab(
@@ -323,7 +338,7 @@ vcpkg_configure_meson(
         -Dgst-plugins-bad:curl=disabled # Error during plugin build
         -Dgst-plugins-bad:curl-ssh2=disabled
         -Dgst-plugins-bad:d3dvideosink=auto
-        -Dgst-plugins-bad:d3d11=auto
+        -Dgst-plugins-bad:d3d11=enabled       # LOCAL, see header
         -Dgst-plugins-bad:d3d11-wgc=disabled  # LOCAL, see header
         -Dgst-plugins-bad:d3d12-wgc=disabled  # LOCAL, see header
         -Dgst-plugins-bad:decklink=disabled

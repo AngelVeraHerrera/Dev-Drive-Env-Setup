@@ -225,6 +225,25 @@ function Set-EnvFileValues
     [System.IO.File]::WriteAllLines($Path, $out, $utf8NoBom)
 }
 
+function Test-EnvFileDefines
+{
+    # @brief Whether the env file already carries a KEY= line for this name, i.e. an earlier step defined it.
+    param
+    (
+        [string]$Path,
+        [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    foreach ($raw in (Get-Content -LiteralPath $Path))
+    {
+        $line = [string]$raw
+        $idx  = $line.IndexOf("=")
+        if ($idx -gt 0 -and $line.Substring(0, $idx).Trim() -eq $Name) { return $true }
+    }
+    return $false
+}
+
 function Resolve-GitExecutable
 {
     # @brief Locate git.exe inside the generated MSYS2 installation.
@@ -949,6 +968,22 @@ if ($Cfg.environment.custom_variables)
         # splits on the FIRST '=' only, so a value containing spaces survives either way -- but quoting makes the
         # intent obvious in a file people read and hand-edit.
         if ($value -match '\s') { $value = '"' + $value + '"' }
+
+        # Every ${REFERENCE} a custom VALUE makes must already be defined, for the same reason the PATH entries
+        # below are checked: the launcher expands line by line, so a forward reference or a typo yields the EMPTY
+        # STRING and the variable is silently wrong rather than absent. GST_PLUGIN_PATH is the cautionary case --
+        # empty means "find no plugins at all", and what the user then sees is a gstreamer that appears to have been
+        # built without any.
+        foreach ($m in [regex]::Matches($value, '\$\{([A-Za-z_][A-Za-z0-9_]*)\}'))
+        {
+            $ref = $m.Groups[1].Value
+            if (-not $vcpkgEnvValues.Contains($ref) -and $customVarNames -notcontains $ref -and
+                -not (Test-EnvFileDefines -Path $envFilePath -Name $ref))
+            {
+                Write-Error ("environment.custom_variables: '{0}' references `${{{1}}}, which nothing defines yet. Variables are expanded in order, so it must be a drive/MSYS2 variable from an earlier step or an earlier entry of custom_variables." -f $name, $ref)
+                Abort-WithError
+            }
+        }
 
         $vcpkgEnvValues[$name] = $value
         $customVarNames += $name

@@ -615,15 +615,46 @@ $folders =
 @(
     "${driveLetter}:/buildtrees",
     "${driveLetter}:/deploys",
+    "${driveLetter}:/installation",
     "${driveLetter}:/logs/env",
     "${driveLetter}:/env/launcher",
     "${driveLetter}:/env/settings",
+    "${driveLetter}:/testing",
     "${driveLetter}:/workspace"
 )
 
+# --------------------------------------------------------------------
+# environment.custom_folders
+# --------------------------------------------------------------------
+# Anything else this particular environment needs, created relative to the drive root. It exists because some
+# configuration choices imply directories that nothing else creates: GST_REGISTRY and GST_DEBUG_DUMP_DOT_DIR name
+# paths GStreamer will not make for itself, so without them the registry silently fails to cache and the pipeline
+# graphs go nowhere. Hard-coding those here would be wrong -- they follow from the variables, which are the user's.
+#
+# Relative only, and checked: an absolute path or a "..' would let a hand-edited config write outside the drive this
+# script is supposed to own.
+foreach ($entry in @($Cfg.environment.custom_folders))
+{
+    $rel = ([string]$entry).Trim().Replace("\", "/").Trim("/")
+    if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+
+    if ($rel -match '^[A-Za-z]:' -or $rel.StartsWith("/"))
+    {
+        Write-Error "environment.custom_folders: '$entry' must be relative to the drive root, not absolute."
+        Abort-WithError
+    }
+    if (($rel -split '/') -contains "..")
+    {
+        Write-Error "environment.custom_folders: '$entry' must not contain '..'."
+        Abort-WithError
+    }
+
+    $folders += "${driveLetter}:/$rel"
+}
+
 foreach ($f in $folders) {
     if (-Not (Test-Path $f)) {
-        New-Item -ItemType Directory -Path $f | Out-Null
+        New-Item -ItemType Directory -Path $f -Force | Out-Null
         Write-Info "Created folder: $f"
     }
 }
@@ -663,6 +694,56 @@ foreach ($script in $scriptFiles)
         Write-Error "Failed to copy $($script.Name): $_"
         Abort-WithError
     }
+}
+
+# --------------------------------------------------------------------
+# Testing material and installation notes
+# --------------------------------------------------------------------
+# Both trees travel WITH THE DRIVE rather than living only in this
+# repository, because that is where they are useful: somebody handed a
+# generated drive can check it and can read what had to be done to it,
+# without also being handed the generator.
+#
+# Copied, not linked, and copied WITHOUT overwriting: the notes are meant
+# to be added to as an environment is used, and a re-run of this step
+# must not throw that away. New files from the generator do arrive; files
+# already on the drive are left exactly as they are.
+foreach ($tree in @("testing", "installation"))
+{
+    $source = Join-Path $scriptDir $tree
+    if (-not (Test-Path -LiteralPath $source))
+    {
+        Write-Info "No $tree tree in the generator, nothing to copy."
+        continue
+    }
+
+    $target = "${driveLetter}:/$tree"
+    Write-Info "Copying $tree material to $target ..."
+
+    $copied = 0
+    $kept   = 0
+    foreach ($item in (Get-ChildItem -LiteralPath $source -Recurse -File))
+    {
+        $rel  = $item.FullName.Substring($source.Length).TrimStart("\", "/")
+        $dest = Join-Path $target $rel
+        $destDir = Split-Path -Parent $dest
+
+        if (-not (Test-Path -LiteralPath $destDir))
+        {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+
+        if (Test-Path -LiteralPath $dest)
+        {
+            $kept++
+            continue
+        }
+
+        Copy-Item -LiteralPath $item.FullName -Destination $dest
+        $copied++
+    }
+
+    Write-Info "$tree : $copied file(s) copied, $kept already present and left alone."
 }
 
 Write-Info "STEP 6: OK"

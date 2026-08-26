@@ -159,6 +159,74 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
 done < "$ENV_FILE"
 
 # ---------------------------------------------------------------
+# vcpkg tool directories
+# ---------------------------------------------------------------
+# vcpkg does not gather executables in one place. Every port that ships tools gets its own
+# installed/<triplet>/tools/<port>/ directory, so gst-launch-1.0, ffprobe, glib-compile-schemas and the rest each sit
+# in a directory of their own and NONE of them reaches PATH. Before this, gst-inspect-1.0 could only be run by
+# spelling out its full path, while vcpkg, gcc and cmake resolved fine -- which made it look like a gstreamer problem
+# rather than a missing convention.
+#
+# SCANNED AT LAUNCH, not written into the .env at generation time: the set grows every time a port with tools is
+# installed, so a list baked in once would be stale after the next dependency step.
+#
+# TWO LEVELS DEEP, and that is measured rather than assumed. Most ports put their executables straight into
+# tools/<port>/ -- gstreamer, ffmpeg, glib, curl, pkgconf -- while Qt6, icu, hwloc and libiconv put theirs one level
+# further down in tools/<port>/bin/. A directory holding no .exe is skipped, so nothing empty joins PATH.
+#
+# The paths need no conversion here: export_env_kv() has already turned every drive-letter value into its POSIX form,
+# which matters because a colon inside a PATH component is the separator -- "R:/vcpkg" in a POSIX PATH is not one
+# component but the two useless ones "R" and "/vcpkg".
+#
+# Inserted immediately AHEAD OF BASE_PATH, where this environment's own components belong. That does mean a vcpkg
+# tool wins over an MSYS2 one of the same name: tools/curl/curl.exe ahead of /usr/bin/curl, tools/pkgconf ahead of the
+# MSYS2 pkgconf. That is the intent -- projects on this drive link against these builds, so they should run them too.
+add_vcpkg_tool_dirs() {
+  local root="${VCPKG_ROOT:-}"
+  local triplet="${VCPKG_DEFAULT_TRIPLET:-}"
+  [[ -n "$root" && -n "$triplet" ]] || return 0
+
+  local tools_root="${root}/installed/${triplet}/tools"
+  if [[ ! -d "$tools_root" ]]; then
+    log_i "No vcpkg tools directory yet: ${tools_root}"
+    return 0
+  fi
+
+  local dirs="" d
+  local -a exes
+  # nullglob so a level that matches nothing contributes nothing instead of the literal pattern.
+  shopt -s nullglob
+  for d in "$tools_root"/*/ "$tools_root"/*/*/; do
+    exes=("$d"*.exe)
+    (( ${#exes[@]} > 0 )) && dirs="${dirs:+$dirs:}${d%/}"
+  done
+  shopt -u nullglob
+
+  if [[ -z "$dirs" ]]; then
+    log_i "No vcpkg tool executables found under: ${tools_root}"
+    return 0
+  fi
+
+  # Spliced rather than prepended to the whole of PATH, so the order the .env established -- VCPKG_BIN, VCPKG_ROOT,
+  # then the configured custom entries -- survives. A PATH that does not end in BASE_PATH has been hand-edited, and
+  # prepending is then the safe fallback.
+  if [[ -n "${BASE_PATH:-}" && "$PATH" == *"$BASE_PATH" ]]; then
+    PATH="${PATH%"$BASE_PATH"}${dirs}:${BASE_PATH}"
+  else
+    PATH="${dirs}:${PATH}"
+  fi
+  export PATH
+
+  local count
+  count="$(printf '%s' "$dirs" | tr ':' '\n' | grep -c . || true)"
+  log_i "vcpkg tool directories on PATH: ${count}"
+  return 0
+}
+
+add_vcpkg_tool_dirs
+
+
+# ---------------------------------------------------------------
 # Required variables
 # ---------------------------------------------------------------
 [[ -n "${DEVSYSTEM_NAME:-}" ]] || die "DEVSYSTEM_NAME not set in env file"

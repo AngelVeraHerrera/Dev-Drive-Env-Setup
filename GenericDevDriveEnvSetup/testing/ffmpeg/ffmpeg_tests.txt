@@ -1,0 +1,63 @@
+=======================================================================
+FFMPEG CHECKS
+=======================================================================
+Run these from the environment's own launcher. See ../README.txt.
+
+VIDEO=$DEVDRIVE_ROOT/testing/gstreamer/videos/FPS_test_1080p60_L4.2.mkv
+
+
+1. WHAT WAS BUILT IN
+-----------------------------------------------------------------------
+# The configuration line is the answer to most questions about ffmpeg.
+# Read it before believing anything else: it lists every --enable that
+# this build actually got, which is decided by the features requested on
+# the vcpkg port and nothing else.
+ffmpeg -version
+ffmpeg -buildconf | head -40
+
+# Codecs, filtered. An encoder that is not listed is not there, however
+# much the documentation says otherwise.
+ffmpeg -hide_banner -encoders | grep -iE "264|265|hevc|vp9|av1"
+ffmpeg -hide_banner -decoders | grep -iE "264|265|hevc|vp9|av1"
+
+# Hardware acceleration. Note that NVENC is NOT requested by this
+# environment's ffmpeg features, so an empty or cuda-less list here is
+# the configuration, not a fault. GStreamer is where the NVIDIA path
+# lives -- see ../gstreamer/gstreamer_tests.txt.
+ffmpeg -hide_banner -hwaccels
+
+
+2. READ A REAL FILE
+-----------------------------------------------------------------------
+ffprobe -hide_banner $VIDEO
+
+# Stream detail as JSON, which is the form worth scripting against.
+ffprobe -v error -print_format json -show_streams -show_format $VIDEO
+
+
+3. DECODE AND ENCODE
+-----------------------------------------------------------------------
+# Decode only, no output: proves the demuxer and decoder without writing
+# anything. The frame count and any errors are the result.
+ffmpeg -hide_banner -v error -i $VIDEO -f null -
+
+# Transcode a few seconds. libx264 comes from the all-gpl feature.
+ffmpeg -hide_banner -i $VIDEO -t 5 -c:v libx264 -preset veryfast -crf 23 -c:a aac ffmpeg_out.mp4
+
+# Scale and change container, no re-encode of audio.
+ffmpeg -hide_banner -i $VIDEO -t 5 -vf scale=1280:720 -c:v libx264 -c:a copy ffmpeg_720p.mkv
+
+# Extract the H.264 elementary stream without touching the pixels. If
+# this fails, the problem is the container layer, not the codec.
+ffmpeg -hide_banner -i $VIDEO -t 5 -c:v copy -an -bsf:v h264_mp4toannexb ffmpeg_raw.h264
+
+
+4. THE OTHER TWO BINARIES
+-----------------------------------------------------------------------
+# ffplay needs a working video output; it is a quick way to tell a
+# rendering problem from a decoding one.
+ffplay -autoexit -t 5 $VIDEO
+
+# Both of these are separate features on the vcpkg port. Missing binary
+# means the feature was not requested.
+which ffmpeg ffprobe ffplay

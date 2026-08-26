@@ -1,0 +1,73 @@
+=======================================================================
+CURL CHECKS
+=======================================================================
+Run these from the environment's own launcher. See ../README.txt.
+
+Two curls exist on this drive and they are NOT the same program: the
+MSYS2 one in /usr/bin and the vcpkg one in tools/curl. The launcher puts
+the vcpkg tool directories ahead of BASE_PATH, so the vcpkg build is the
+one that runs. Every check below is about that one -- it is what the
+projects on this drive link against.
+
+  command -v curl          # which one is winning
+  /usr/bin/curl --version  # the MSYS2 one, for comparison
+
+
+1. WHAT WAS BUILT IN
+-----------------------------------------------------------------------
+# The version line names the TLS backend and the second line lists the
+# protocols. Both are decided by the features on the vcpkg port.
+curl --version
+
+# What to expect from this environment's feature list -- openssl, ssh,
+# brotli, c-ares, zstd:
+#   OpenSSL in the version line, not Schannel
+#   scp and sftp among the protocols        (ssh)
+#   brotli and zstd among the Features      (compression)
+#   AsynchDNS among the Features            (c-ares)
+curl --version | tr ' ' '\n' | grep -iE "openssl|brotli|zstd|libssh"
+
+
+2. PLAIN HTTP AND HTTPS
+-----------------------------------------------------------------------
+# Headers only, so nothing is downloaded. -v shows the TLS handshake,
+# which is where a missing or misconfigured CA bundle shows up.
+curl -sS -I https://example.com
+curl -sS -v -o /dev/null https://example.com 2>&1 | grep -iE "SSL|TLS|certificate|issuer"
+
+# Certificate verification is the thing most likely to be wrong on a
+# fresh environment: a build with no CA bundle fails HTTPS everywhere
+# while HTTP works fine.
+curl -sS -o /dev/null -w "%{http_code} %{ssl_verify_result}\n" https://example.com
+
+
+3. THROUGH THE PROXY
+-----------------------------------------------------------------------
+# If the environment was generated with environment.proxy_url, the proxy
+# variables are already exported. These two should agree; if the first
+# works and the second does not, the proxy is the difference.
+echo "proxy: ${https_proxy:-<none>}"
+curl -sS -o /dev/null -w "%{http_code}\n" https://example.com
+curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" https://example.com
+
+
+4. THE PROTOCOLS THE FEATURES PROMISED
+-----------------------------------------------------------------------
+# Each of these should report a protocol error rather than "unsupported
+# protocol". The distinction is the point: unsupported means the feature
+# is not in the build.
+curl -sS --max-time 5 sftp://127.0.0.1/ 2>&1 | head -2
+curl -sS --max-time 5 scp://127.0.0.1/  2>&1 | head -2
+
+# Compression actually negotiated, not merely compiled in:
+curl -sS --compressed -o /dev/null -w "%{size_download}\n" https://example.com
+curl -sS -H "Accept-Encoding: zstd" -o /dev/null -w "%{http_code}\n" https://example.com
+
+
+5. AS A LIBRARY, NOT A BINARY
+-----------------------------------------------------------------------
+# What a CMake project will actually find and link. A tool that runs
+# while pkg-config reports nothing means the binary is on PATH but the
+# development files are not where the build system looks.
+pkgconf --modversion libcurl
+pkgconf --libs --cflags libcurl
