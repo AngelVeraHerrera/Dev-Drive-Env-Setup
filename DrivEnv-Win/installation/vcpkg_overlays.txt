@@ -140,11 +140,54 @@ Carries libintl.patch and does not use vcpkg_from_* because the project
 uses submodules. The exact reason for the libintl patch is NOT recorded
 here -- whoever wrote it should add a line.
 
-graphene, pango, vcpkg-qmake
+vcpkg-qmake                        (one delta, documented in place)
 -----------------------------------------------------------------------
-NOT DOCUMENTED. These overlays exist but nothing in them says what they
-change or why, and guessing from the diff would be worse than admitting
-it. A previous environment's notes claimed gettext was disabled in
-graphene and pango; the current overlays contain no gettext or nls
-handling at all, so that note described a different set of ports and
-does not apply here.
+Not undocumented after all. The reason is written where it applies: the
+header of vcpkg_qmake_build.cmake, summarised in the port's description
+field. Upstream picks the build tool from CMAKE_HOST_WIN32 alone, so on
+Windows it always lands on jom or nmake no matter what toolchain the
+TARGET uses. For a MinGW target that is the wrong family: qmake's MinGW
+spec emits POSIX recipes (rm -f, test -d, mkdir -p, cp -f) and jom hands
+them to cmd.exe, which fails on the first one before anything compiles.
+The overlay selects GNU make when VCPKG_TARGET_IS_MINGW.
+
+STILL NEEDED. Upstream at baseline 06d00ff still has the bare
+if(CMAKE_HOST_WIN32). Deleting this overlay breaks every qmake-built Qt
+port on this triplet.
+
+Worth sending upstream: a real bug for any MinGW target.
+
+
+graphene                             (one delta: a dependency removed)
+-----------------------------------------------------------------------
+Port-version 5 with upstream's HOST dependency on "gettext" (default
+features off, feature "tools") deleted. That is the whole intent; the
+other differences against the baseline are upstream's own port-version
+6, which changed the download URLs to download.gnome.org plus a mirror.
+
+Measured 2026-08-26: the upstream commit that FIRST added that gettext
+dependency (5618da41e8) is the same one that produced port-version 5,
+so this was a deliberate removal, not an old copy that predates it.
+
+PROBABLY DROPPABLE, and cheap to check. What it avoids is a host
+gettext -- and gettext is installed in this environment anyway, pulled
+in by something else in the graph. If avoiding that build is the only
+reason this overlay exists, it buys nothing today. To retire it: remove
+the overlay and install graphene. Note that doing so moves graphene
+from port-version 5 to 6 and rebuilds whatever sits above it.
+
+
+pango                                         (a stale fork, no reason)
+-----------------------------------------------------------------------
+Still undocumented, and unlike vcpkg-qmake the diff does not reveal an
+intent. The overlay is 1.56.1 port-version 2 while the baseline offers
+1.58.0, with 1.57.0 and 1.57.1 in between. It fetches a git tag from
+GitLab instead of the release tarball, omits upstream's
+relax-gi-requirement.diff, drops the four meson options that turn off
+documentation, man pages, tests and examples, and adds -Dgtk_doc=false.
+
+That reads like a port copied and adjusted before those upstream changes
+existed rather than a fix for anything. But nothing records WHY, so
+deleting it is not tidying: it is a two-minor-version upgrade of pango
+and a rebuild of everything above it. Do it deliberately, and write the
+result here.
