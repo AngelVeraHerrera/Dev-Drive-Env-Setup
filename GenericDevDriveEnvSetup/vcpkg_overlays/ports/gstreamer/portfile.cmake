@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# Exactly SEVEN deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
+# Exactly EIGHT deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
 # else here is upstream's and must be taken verbatim:
 #
 #   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
@@ -111,6 +111,17 @@
 #
 #      Worth sending upstream rather than carrying forever: it is a real bug on any non-MSVC Windows toolchain, and
 #      MSVC is unaffected because there gstwinrt builds and both halves are taken as before.
+#
+#   8. -Dgst-plugins-bad:svtav1=enabled, with svt-av1 declared as a dependency of plugins-bad.
+#      AV1 encoding through SVT-AV1. Upstream leaves this to auto-detection -- dependency('SvtAv1Enc') with no
+#      feature option in the vcpkg port -- and auto-detection is precisely what went wrong here: the plugin got
+#      built against an svt-av1 that was present only as somebody else's transitive dependency, and dangled the
+#      moment that dependency was removed. Declaring the package and demanding the plugin makes both explicit, so
+#      a missing svt-av1 is an error naming svt-av1 rather than a plugin that quietly cannot load.
+#
+#      This depends on the LOCAL fastfeat overlay: without it libSvtAv1Enc.dll can never load, because the fastfeat
+#      import library names a DLL that the port does not install. Read that overlay's header before touching either.
+#      Enabling this without fastfeat fixed brings back a dangling plugin AND, through avcodec, a dead ffmpeg.
 # ---------------------------------------------------------------------------------------------------------------------
 
 vcpkg_from_gitlab(
@@ -403,6 +414,7 @@ vcpkg_configure_meson(
         -Dgst-plugins-bad:sctp=auto
         -Dgst-plugins-bad:shm=disabled
         -Dgst-plugins-bad:spandsp=disabled
+        -Dgst-plugins-bad:svtav1=enabled      # LOCAL, see header
         -Dgst-plugins-bad:svthevcenc=disabled
         -Dgst-plugins-bad:teletext=disabled
         -Dgst-plugins-bad:tinyalsa=disabled

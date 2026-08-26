@@ -275,6 +275,7 @@
                     "x265",
                     "aom",
                     "dav1d",
+                    "svt-av1",
                     "vpx",
                     "mp3lame",
                     "opus",

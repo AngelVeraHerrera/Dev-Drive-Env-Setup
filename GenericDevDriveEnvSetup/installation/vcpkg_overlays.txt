@@ -16,7 +16,7 @@ again from scratch months later, presenting as an error about CUDA.
 Keep this file next to the ports and update it in the same commit.
 
 
-gstreamer            (five deltas, all documented in its portfile head)
+gstreamer           (eight deltas, all documented in its portfile head)
 -----------------------------------------------------------------------
 1. gstfilesink_fix_gcc15-2-Rev11.patch
    gstfilesink.c redefines off_t to guint64 on Win32 but still maps
@@ -63,12 +63,65 @@ gstreamer            (five deltas, all documented in its portfile head)
    pulls glib in. Enabling d3d12 masks it. Disabling d3d12 later would
    bring it back looking like an unrelated compile error.
 
-   ALSO KNOWN AND NOT FIXED: sys/mediafoundation has the same disease
-   delta 2 cures for d3d11. Its "building for WinRT" probe compiles, so
-   winapi_app is true, and it then wants a GstWinRt library mingw-w64
-   cannot provide -- so mediafoundation skips itself in silence and
-   mfh264enc / mfh265enc do not exist. The d3d11 probe patch fixed only
-   d3d11.
+6. -Dgst-plugins-bad:d3d11=enabled, where upstream leaves it auto.
+   A safety net for exactly the failure delta 5 describes, restored from a
+   previous environment's overlay. At "auto" a missing DirectXMath makes
+   the subdirectory bail silently; at "enabled" meson stops at the line
+   that names DirectXMath. A no-op while delta 5 holds, which is the
+   point: it costs nothing now and turns the next silent regression into
+   an error where it happens.
+
+7. mediafoundation-winrt-optional-mingw.diff
+   The same disease as delta 2, in the plugin next door, and it cost every
+   mf* encoder. Fixed: the WinRT half is declined instead of the whole
+   subdirectory. mfh264enc, mfaacenc, mfmp3enc, mfvp9enc and the MF
+   decoders now exist. mfh265enc does not, and that is the GPU and the OS
+   rather than the build.
+
+8. -Dgst-plugins-bad:svtav1=enabled, with svt-av1 declared as a dependency.
+   AV1 encoding. Upstream leaves it to auto-detection, and auto-detection
+   is what went wrong: the plugin was built against an svt-av1 present
+   only as someone else's transitive dependency and dangled when that went
+   away. DEPENDS ON THE fastfeat OVERLAY ABOVE -- enabling this without it
+   brings back a dangling plugin and, through avcodec, a dead ffmpeg.
+
+fastfeat                                  (one delta, MinGW only)
+-----------------------------------------------------------------------
+Builds the library WITHOUT the "lib" prefix on anything but MSVC, so the
+file on disk is fastfeat.dll.
+
+The port injects its own CMakeLists.txt and its own fastfeat.def, and the
+CMakeLists globs *.def into the sources -- so the linker reads the .def as
+a module-definition file, and its first line is
+
+    LIBRARY   fastfeat
+
+A LIBRARY statement NAMES the DLL: the linker writes "fastfeat.dll" into
+the import library. On MSVC that is true, because MSVC gives a DLL no
+prefix. On MinGW, CMake adds "lib", the output is libfastfeat.dll, and the
+import library now promises a file nobody installs.
+
+WHAT IT BREAKS, and not one line of it mentions fastfeat:
+
+    svt-av1 links fastfeat            -> builds and installs, no complaint
+    libSvtAv1Enc.dll                  -> cannot load, wants fastfeat.dll
+    avcodec-63.dll links libSvtAv1Enc -> cannot load
+    ffmpeg.exe                        -> dies at startup, 0xC0000135
+    libgstlibav.dll links avcodec     -> the whole ffmpeg bridge in
+                                         gstreamer disappears: no
+                                         avdec_h264, no avenc_aac
+
+Every build in that chain reports success. The first thing to object is a
+program trying to LOAD the library, which is why step 5 found it and no
+compiler ever would. It had been broken in two environments unnoticed.
+
+The prefix is dropped rather than the LIBRARY line deleted, so the name
+upstream chose is honoured and the artefact is called the same thing on
+both toolchains.
+
+Worth sending upstream: a real bug on any non-MSVC Windows toolchain, and
+MSVC is unaffected either way.
+
 
 fastdds              (four deltas, MinGW-only, all invisible to MSVC)
 -----------------------------------------------------------------------
