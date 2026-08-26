@@ -68,11 +68,12 @@ changes outside the drive, both by design and both worth knowing about:
 | Windows 10 or 11 | A **Dev Drive** (`use_dev_drive`) needs Windows 11 23H2 or later; otherwise a plain VHDX is used |
 | PowerShell | Developed and tested on PowerShell 7. The scripts use nothing newer than 5.1, which ships with Windows |
 | Administrator | Required by step 1 only, to create and mount the virtual disk |
-| Git | Used to clone vcpkg |
 | Free space | At least `vhd_size_gb` on the volume holding `vhd_root` |
 
-> ⚠️ Nothing else needs to be installed first. The toolchain, the package manager and every dependency are placed on
-> the drive by the scripts.
+> ⚠️ Nothing else needs to be installed first, and that includes Git. The toolchain, the package manager and
+> every dependency are placed on the drive by the scripts, and the git that clones vcpkg is the one step 2 installed
+> on the drive -- located there explicitly rather than found on `PATH`, so the result does not depend on what the
+> machine happened to have.
 
 ---
 
