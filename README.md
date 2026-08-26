@@ -1,17 +1,17 @@
 # DrivEnv-Win
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)](#-requirements)
-[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-requirements)
-[![Toolchain](https://img.shields.io/badge/toolchain-MSYS2%20UCRT64-orange)](#-what-you-get)
-[![vcpkg](https://img.shields.io/badge/packages-vcpkg-brightgreen)](#-configuration)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)](#requirements)
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#requirements)
+[![Toolchain](https://img.shields.io/badge/toolchain-MSYS2%20UCRT64-orange)](#what-you-get)
+[![vcpkg](https://img.shields.io/badge/packages-vcpkg-brightgreen)](#configuration)
 
 Builds a complete, reproducible C++ development drive on Windows from a single JSON file: VHDX, pinned MSYS2/UCRT64
 toolchain, vcpkg with overlay ports, launchers, and a verification step that checks every library actually loads.
 
 ---
 
-## 📖 About This Repository
+## About This Repository
 
 A development environment is normally something that accumulates: a toolchain installed by hand, a package manager
 cloned at whatever commit was current, a `PATH` that grew over years, and knowledge about why any of it works living
@@ -32,7 +32,7 @@ works rather than assuming it.
 
 ---
 
-## ✅ What You Get
+## What You Get
 
 A drive that mounts under one letter and contains everything a build needs:
 
@@ -61,7 +61,7 @@ changes outside the drive, both by design and both worth knowing about:
 
 ---
 
-## ⚙️ Requirements
+## Requirements
 
 | Requirement | Notes |
 | --- | --- |
@@ -76,7 +76,7 @@ changes outside the drive, both by design and both worth knowing about:
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 The repository root holds only `README.md`, `LICENSE` and the git files. Everything the generator itself needs lives
 one level down, in `DrivEnv-Win/`, and that is the directory every command below is run from.
@@ -116,7 +116,7 @@ Once step 3 has run, the environment is entered from the drive itself:
 
 ---
 
-## 🧩 Configuration
+## Configuration
 
 One file, four sections. `drivenv-cfg_example.json` is tracked and documents every key;
 `drivenv-cfg.json` is the one you edit and is deliberately **not** tracked.
@@ -179,7 +179,7 @@ What "working" means for *this* drive, which is a question a generator cannot an
 
 ---
 
-## 🔍 Verification
+## Verification
 
 ```powershell
 .\5-Verify_Env.ps1            # exits non-zero if anything is wrong
@@ -207,7 +207,7 @@ is opened with `LOAD_WITH_ALTERED_SEARCH_PATH`, so its dependencies resolve exac
 
 ---
 
-## 🧪 Testing Material
+## Testing Material
 
 `DrivEnv-Win/testing/` is copied to the drive and holds hand-runnable checks for the libraries that have
 historically been difficult on this toolchain:
@@ -224,7 +224,7 @@ historically been difficult on this toolchain:
 
 ---
 
-## 🩹 Overlay Ports
+## Overlay Ports
 
 `DrivEnv-Win/vcpkg_overlays/ports/` carries local ports for packages that do not build correctly on this
 toolchain as published. Every one of them is a thing that must be re-applied when the port is bumped, so
@@ -240,7 +240,7 @@ than carried forever. The notes say which.
 
 ---
 
-## 📋 Installation Record
+## Installation Record
 
 Step 4 writes an inventory to `<drive>:\installation\`, next to the hand-written notes:
 
@@ -260,6 +260,6 @@ drifts. The hand-written ones are hand-written because no tool knows *why* a dec
 
 ---
 
-## 📄 License
+## License
 
 MIT — see [LICENSE](LICENSE).
