@@ -124,11 +124,77 @@ Worth sending upstream: a real bug on any non-MSVC Windows toolchain, and
 MSVC is unaffected either way.
 
 
-fastdds              (four deltas, MinGW-only, all invisible to MSVC)
+fastdds        (seven deltas, MinGW-only, all invisible to MSVC)
 -----------------------------------------------------------------------
 See its portfile head, which lists them with the patch names:
 dllexport on an internal-linkage const, clock_gettime redefined where
-mingw-w64 already has it, and two others.
+mingw-w64 already has it, and five others.
+
+BUT THE DELTAS ARE NOT THE INTERESTING PART. This port builds a DLL that
+CANNOT BE USED for publish or subscribe on MinGW, and the reason is not in
+any patch:
+
+  the DLL does not export     vtable for eprosima::fastdds::dds::TypeSupport
+  nor                         traits<TypeDescriptor>::make_shared
+  nor                         traits<MemberDescriptor>::make_shared
+
+Nothing that DEFINES a type can therefore link against it -- neither a
+type from fastddsgen nor one built through the XTypes dynamic API. Creating
+a DomainParticipant works, which is why a smoke test passes and hides it.
+
+Measured 2026-08-27, not inferred. All three symbols are PRESENT in the
+compiled objects (nm on TypeSupport.cpp.obj and across the 260 objects of
+the release build); only the export table is short. Confirmed from the
+other direction too: a real publisher compiles with zero errors and then
+fails to link on exactly those three names.
+
+The cause is annotation, in two flavours:
+  * TypeSupport marks each METHOD with FASTDDS_EXPORTED_API but not the
+    CLASS. GCC exports the methods; the vtable is a separate data symbol
+    that only comes out when the class itself carries the attribute.
+  * make_shared is declared exported INSIDE a template
+    (detail/type_traits.hpp), where GCC ignores the attribute for explicit
+    instantiations -- it has to sit on the instantiation directive.
+
+WHAT WAS TRIED AND DID NOT WORK: -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON.
+CMake generated no .def at all and the symbol count did not move. Fast DDS
+manages its own exports and the property never reached the target.
+
+WHAT WORKS: build it under the x64-mingw-ucrt-static-release triplet. A
+static archive has no export table, so the linker takes the symbols
+straight out of it and the whole problem is structural rather than
+configurable. Verified end to end: a run-time XTypes type, a matched
+writer and reader, and a sample round-tripped with a double, an unsigned
+and a string intact.
+
+    ./vcpkg install fastdds --triplet x64-mingw-ucrt-static-release
+
+That pulls fastcdr, foonathan-memory, tinyxml2 and openssl statically as
+well -- 9.5 minutes here -- and needs the fastcdr overlay below. The
+dynamic build is still installed and still fine for anything that does not
+define a type.
+
+Worth sending upstream: two one-line annotation fixes would remove the
+need for any of this.
+
+
+fastcdr                            (one delta, static builds only)
+-----------------------------------------------------------------------
+mingw-static-no-resource.patch -- upstream adds FastCdr.rc to the source
+list unconditionally.
+
+A Windows resource script belongs in a DLL or an EXE, never in a static
+archive, and windres does not shrug at it:
+
+    windres.exe: no resources
+    ninja: build stopped: subcommand failed.
+
+With BUILD_SHARED_LIBS=OFF the guarded body of the .rc compiles to
+nothing, windres treats an empty result as an error, and the build dies
+before a single object exists. The patch adds the file only for a shared
+build, so the dynamic triplet behaves exactly as before.
+
+Exists only because fastdds has to be built statically -- see above.
 
 libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
 -----------------------------------------------------------------------
