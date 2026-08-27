@@ -872,6 +872,46 @@ else
     Write-Info "Triplet installed into overlay: $tripletDst"
 }
 
+# Every OTHER triplet in the overlay directory is installed as well, verified the same way. Only the CONFIGURED one
+# is mandatory; the rest are alternatives, and one of them is not a hypothetical: fastdds has to be built under
+# x64-mingw-ucrt-static-release because its MinGW DLL does not export the vtable of TypeSupport nor the
+# traits<>::make_shared instantiations, so nothing that defines a DDS type can link against the shared build. A
+# static archive has no export table and the problem cannot arise.
+#
+# Before this, a triplet that was not the configured one sat in the repository and never reached the drive, so using
+# it meant copying a file by hand and remembering why.
+$tripletSrcDir = Split-Path -Parent $tripletSrc
+$extraTriplets = @(Get-ChildItem -LiteralPath $tripletSrcDir -Filter "*.cmake" -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -ne $tripletFileName })
+
+foreach ($extraTriplet in $extraTriplets)
+{
+    $extraHashSrc = Join-Path $tripletSrcDir ($extraTriplet.BaseName + ".sha256")
+
+    # No hash, no install. The configured triplet aborts the run when its hash is missing; an alternative only
+    # declines to travel, because refusing to generate a whole drive over a triplet nobody asked for would be worse.
+    if (-not (Test-Path -LiteralPath $extraHashSrc))
+    {
+        Write-Warn ("Additional triplet '{0}' has no .sha256 and was NOT installed." -f $extraTriplet.Name)
+        Write-Warn  "Regenerate the hashes with Utility-Hash_Generator.bat in the triplets directory."
+        continue
+    }
+
+    $extraExpected = ((Get-Content -Path $extraHashSrc -Raw).Split(" ")[0]).Trim().ToUpperInvariant()
+    $extraActual   = (Get-FileHash -Path $extraTriplet.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+
+    if ($extraActual -ne $extraExpected)
+    {
+        Write-Error ("Triplet integrity check failed for: {0}" -f $extraTriplet.FullName)
+        Write-Error ("Expected SHA256 {0} but found {1}" -f $extraExpected, $extraActual)
+        Abort-WithError
+    }
+
+    $extraDst = Join-Path $overlayTripletsWin $extraTriplet.Name
+    Copy-Item -LiteralPath $extraTriplet.FullName -Destination $extraDst -Force
+    Write-Info ("Additional triplet installed: {0}" -f $extraDst)
+}
+
 Write-Info "STEP 6: OK"
 
 # STEP 7: Install the controlled overlay ports.
