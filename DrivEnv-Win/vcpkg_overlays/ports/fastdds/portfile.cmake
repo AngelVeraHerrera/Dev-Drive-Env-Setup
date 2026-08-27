@@ -1,9 +1,13 @@
 # ---------------------------------------------------------------------------------------------------------------------
-# LOCAL OVERLAY of the upstream fastdds port. FOUR deltas, all MinGW-only, all invisible to MSVC:
+# LOCAL OVERLAY of the upstream fastdds port. FIVE deltas, all MinGW-only, all invisible to MSVC:
+#   VCPKG_LIBRARY_LINKAGE static     -- the DLL does not export what a publisher needs. See the block below.
 #   mingw-qos-default-linkage.patch  -- dllexport on an internal-linkage const definition.
 #   mingw-no-clock-gettime.patch     -- clock_gettime redefined where mingw-w64 already has it.
 #   the tool-copy block below        -- gated off MinGW, where fastdds itself does not build the tools.
 #   MINGW_COMPILER propagated        -- without it every consumer hits dllimport-on-a-definition.
+#
+# The other five patches this portfile names -- disable-autolink, disable-test, disable-werror, fix-deps and
+# pdb-file -- are UPSTREAM's, carried unchanged. They are not deltas.
 #
 # GCC refuses to dllexport a namespace-scope const definition, which has internal linkage:
 #
@@ -14,6 +18,22 @@
 # those five compile. The patch makes the two match. MSVC does not object, so upstream CI never sees it.
 # Re-check on every version bump: if upstream drops the redundant macro, delete the patch.
 # ---------------------------------------------------------------------------------------------------------------------
+
+# EIGHTH DELTA, and the one that makes this port usable at all: force it STATIC inside the otherwise-dynamic
+# triplet. vcpkg supports per-port linkage exactly for this, and the mongo family in this same directory has been
+# doing it for a long time.
+#
+# The MinGW DLL does not export the vtable of TypeSupport nor the traits<>::make_shared instantiations, so nothing
+# that DEFINES a DDS type can link against it -- see installation/vcpkg_overlays.txt for the measurements. A static
+# archive has no export table, so the problem cannot arise.
+#
+# Why HERE and not through a static triplet: the package stays in the SAME installed tree as everything else, so one
+# CMAKE_PREFIX_PATH still finds it, and its dependencies -- fastcdr, foonathan_memory, tinyxml2, openssl -- stay
+# DYNAMIC. That last part matters more than it looks: a static triplet rebuilds openssl statically too, and an
+# application linking this alongside Qt or curl would then carry two OpenSSL instances in one process.
+#
+# Verified: a publisher and a subscriber with a run-time XTypes type, a matched pair and a sample round-tripped.
+set(VCPKG_LIBRARY_LINKAGE static)
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH

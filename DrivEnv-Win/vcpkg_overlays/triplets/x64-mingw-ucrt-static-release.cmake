@@ -3,16 +3,20 @@
 # Target: x64-mingw-ucrt-static-release
 # =====================================================================
 #
-# Identical to the dynamic triplet except for VCPKG_LIBRARY_LINKAGE, and
-# it exists for one measured reason: Fast DDS on MinGW builds a DLL whose
-# export table is missing the two things a consumer needs to DEFINE a
-# type -- the vtable of TypeSupport and the traits<>::make_shared
-# instantiations. Both are present in the compiled objects; only the
-# table is short, and -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON did not fill
-# it (no .def was generated at all).
+# Identical to the dynamic triplet except for VCPKG_LIBRARY_LINKAGE. It
+# provides a FULLY static build: every package installed under it, and all
+# of their dependencies, are static archives in their own installed tree.
 #
-# A static library has no export table, so the linker takes the symbols
-# straight out of the archive and the problem cannot arise.
+# It is NOT the way Fast DDS is built here, although it was written for
+# that. Forcing linkage in the fastdds portfile turned out to be the
+# better tool: same installed tree, one CMAKE_PREFIX_PATH, and the
+# dependencies stay dynamic so a process linking Fast DDS alongside Qt or
+# curl does not end up with two OpenSSL instances.
+#
+# Use this triplet when you want the WHOLE dependency closure static and
+# accept a separate tree for it. Note that it needs the fastcdr overlay:
+# upstream compiles a Windows resource script into the library, and
+# windres refuses that in a static build.
 #
 # NOTE the CRT stays DYNAMIC. On MinGW that is the UCRT DLL, which is what
 # every other package here links; a static CRT would give each library its

@@ -189,6 +189,25 @@ The repository, the baseline mode and commit, the triplet, and the packages with
 { "name": "mongo-c-driver", "features": ["openssl"] }
 ```
 
+`vcpkg.target.triplet` is the default for every package. A package may override it with an optional `triplet` of its
+own, for the case where one library has to be built differently from the rest:
+
+```json
+{ "name": "fastdds", "triplet": "x64-mingw-ucrt-static-release" }
+```
+
+Every triplet in `DrivEnv-Win/vcpkg_overlays/triplets/` is installed to the drive, each verified against its
+`.sha256`, so an override only needs the triplet to exist there. The configured triplet still aborts the run if its
+hash is missing; an additional one declines to travel with a warning instead.
+
+> ⚠️ **A different triplet means a different installed tree.** Everything built under it, dependencies included,
+> lands in `vcpkg/installed/<that-triplet>/`, so consumers need a second `CMAKE_PREFIX_PATH` — and a library built
+> there brings its own static copies of shared dependencies. An application linking a package from a static tree
+> alongside Qt or curl from the dynamic one can end up with two OpenSSL instances in a single process. When the goal
+> is just "this one library static", `set(VCPKG_LIBRARY_LINKAGE static)` in an overlay portfile is the lighter tool:
+> the package stays in the same tree and its dependencies stay shared. That is how Fast DDS and the mongo family are
+> built here.
+
 > ⚠️ Prefer explicit feature lists over blanket ones such as ffmpeg's `all-gpl`. `all-gpl` enables everything,
 > including codecs that cannot work on this toolchain — and one of them took `avcodec` down with it, and `ffmpeg.exe`
 > and GStreamer's whole libav bridge after that. An explicit list is also a statement of intent that a reader can

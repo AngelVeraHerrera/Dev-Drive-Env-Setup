@@ -124,11 +124,18 @@ Worth sending upstream: a real bug on any non-MSVC Windows toolchain, and
 MSVC is unaffected either way.
 
 
-fastdds        (seven deltas, MinGW-only, all invisible to MSVC)
+fastdds         (five deltas, MinGW-only, all invisible to MSVC)
 -----------------------------------------------------------------------
-See its portfile head, which lists them with the patch names:
-dllexport on an internal-linkage const, clock_gettime redefined where
-mingw-w64 already has it, and five others.
+FIVE LOCAL deltas, listed in the portfile head. The five patches the
+portfile also names -- disable-autolink, disable-test, disable-werror,
+fix-deps, pdb-file -- are UPSTREAM's and are not deltas; counting patch
+files instead of local changes is how "four" became "seven" in an earlier
+draft of this file.
+
+The local ones: dllexport on an internal-linkage const, clock_gettime
+redefined where mingw-w64 already has it, the gated tool-copy block,
+MINGW_COMPILER propagated, and static linkage forced -- which is the one
+that matters and is explained below.
 
 BUT THE DELTAS ARE NOT THE INTERESTING PART. This port builds a DLL that
 CANNOT BE USED for publish or subscribe on MinGW, and the reason is not in
@@ -160,19 +167,39 @@ WHAT WAS TRIED AND DID NOT WORK: -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON.
 CMake generated no .def at all and the symbol count did not move. Fast DDS
 manages its own exports and the property never reached the target.
 
-WHAT WORKS: build it under the x64-mingw-ucrt-static-release triplet. A
-static archive has no export table, so the linker takes the symbols
-straight out of it and the whole problem is structural rather than
-configurable. Verified end to end: a run-time XTypes type, a matched
-writer and reader, and a sample round-tripped with a double, an unsigned
-and a string intact.
+WHAT WORKS: a static Fast DDS. A static archive has no export table, so
+the linker takes the symbols straight out of it and the problem is
+structurally impossible rather than merely configured away.
 
-    ./vcpkg install fastdds --triplet x64-mingw-ucrt-static-release
+There are two ways to get one, and they are NOT equivalent.
 
-That pulls fastcdr, foonathan-memory, tinyxml2 and openssl statically as
-well -- 9.5 minutes here -- and needs the fastcdr overlay below. The
-dynamic build is still installed and still fine for anything that does not
-define a type.
+  set(VCPKG_LIBRARY_LINKAGE static)   <- in this port's portfile. USED.
+
+vcpkg supports per-port linkage for exactly this, and the mongo family in
+this same directory has been doing it for years. The package stays in the
+SAME installed tree, so one CMAKE_PREFIX_PATH still finds it, and its
+dependencies stay DYNAMIC.
+
+  --triplet x64-mingw-ucrt-static-release   <- also works, NOT used here.
+
+That installs into a separate tree and rebuilds fastcdr, foonathan-memory,
+tinyxml2 AND openssl statically. Two consequences: consumers need a second
+prefix path, and an application linking Fast DDS alongside Qt or curl ends
+up with TWO OpenSSL instances in one process -- one static inside this
+library, one from libcrypto-3-x64.dll. Different state, different symbols.
+That is the kind of failure this environment keeps being bitten by, so the
+lighter mechanism wins.
+
+Both were built and verified. Same 15 checks pass either way: a run-time
+XTypes type, a matched writer and reader, and a sample round-tripped with
+a double, an unsigned and a string intact. The portfile route produces a
+36 MB binary, the static triplet a 44 MB one, and only the latter needs
+the fastcdr overlay below.
+
+Reached the heavy tool first and the light one second, which is the wrong
+order and worth recording: the question "could the mongo overlays be
+replaced by a static triplet?" is what surfaced it. The answer there is
+no, and for the same reason.
 
 Worth sending upstream: two one-line annotation fixes would remove the
 need for any of this.
@@ -194,7 +221,12 @@ nothing, windres treats an empty result as an error, and the build dies
 before a single object exists. The patch adds the file only for a shared
 build, so the dynamic triplet behaves exactly as before.
 
-Exists only because fastdds has to be built statically -- see above.
+Needed ONLY by a static-triplet build. fastdds itself no longer requires
+it, because forcing linkage in the portfile leaves fastcdr dynamic and
+windres is never asked to compile a resource into an archive. Kept because
+the static triplet is still available and would hit this immediately.
+
+Delete this overlay if the static triplet is ever dropped.
 
 libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
 -----------------------------------------------------------------------

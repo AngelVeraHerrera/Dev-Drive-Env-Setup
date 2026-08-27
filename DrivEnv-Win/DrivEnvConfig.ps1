@@ -71,11 +71,15 @@ function Get-DrivEnvConfigSchema
         }
     }
 
+    # triplet is OPTIONAL and overrides vcpkg.target.triplet for this package alone. Fast DDS is why it
+    # exists: its MinGW DLL does not export what a publisher needs, so it must be built statically inside an
+    # otherwise dynamic environment. No separate "default triplet" key: target.triplet already is the default.
     $vcpkgPackage = @{
         type   = 'object'
         fields = @{
             name     = $reqString
             features = @{ type = 'array'; item = $stringNode }
+            triplet  = @{ type = 'string'; notEmpty = $true }
         }
     }
 

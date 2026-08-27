@@ -430,8 +430,26 @@ foreach ($p in $vcpkgPackages)
     if ($pFeatures.Count -gt 0) { $spec = "{0}[{1}]" -f $pName, ($pFeatures -join ",") }
     else                        { $spec = $pName }
 
+    # An OPTIONAL per-package triplet, for the case where one library has to be built differently from the rest.
+    # Fast DDS is the reason it exists: its MinGW DLL does not export the vtable of TypeSupport nor the
+    # traits<>::make_shared instantiations, so nothing that defines a DDS type can link against a shared build.
+    #
+    # Omitting the field means the configured triplet. There is deliberately NO separate "default triplet" key:
+    # vcpkg.target.triplet already is the default, and two fields meaning the same thing is how they drift apart.
+    $pTriplet = $vcpkgTriplet
+    if ($p.PSObject.Properties.Name -contains "triplet")
+    {
+        $pTriplet = ([string]$p.triplet).Trim()
+        if ([string]::IsNullOrWhiteSpace($pTriplet))
+        {
+            Write-Error ("Empty vcpkg.packages[].triplet for '{0}'." -f $pName)
+            Write-Error "Omit the field entirely to use the configured triplet."
+            Abort-WithError
+        }
+    }
+
     $portNames += $pName
-    $portSpecs += @{ Name = $pName; Features = $pFeatures; Spec = $spec }
+    $portSpecs += @{ Name = $pName; Features = $pFeatures; Spec = $spec; Triplet = $pTriplet }
 }
 
 # Dev drive layout (must match the layout written by 3-Clone_VCPKG.ps1)
@@ -480,7 +498,11 @@ Write-NoFormat "VCPKG Triplet = $vcpkgTriplet"
 Write-NoFormat "Install Mode  = classic"
 Write-NoFormat "Ports         = $($portSpecs.Count)"
 Write-NoFormat "-----------------------------------------------------------------"
-foreach ($port in $portSpecs) { Write-NoFormat ("  - " + $port.Spec) }
+foreach ($port in $portSpecs)
+{
+    if ($port.Triplet -eq $vcpkgTriplet) { Write-NoFormat ("  - " + $port.Spec) }
+    else                                 { Write-NoFormat ("  - {0}   [triplet {1}]" -f $port.Spec, $port.Triplet) }
+}
 Write-NoFormat "================================================================="
 
 # STEP 1: Initial checks and preparations.
@@ -665,11 +687,19 @@ $index = 0
 foreach ($port in $portSpecs)
 {
     $index++
-    Write-Info ("Installing port {0}/{1}: '{2}'..." -f $index, $portSpecs.Count, $port.Spec)
+    if ($port.Triplet -eq $vcpkgTriplet)
+    {
+        Write-Info ("Installing port {0}/{1}: '{2}'..." -f $index, $portSpecs.Count, $port.Spec)
+    }
+    else
+    {
+        Write-Info ("Installing port {0}/{1}: '{2}' for triplet '{3}'..." -f
+                    $index, $portSpecs.Count, $port.Spec, $port.Triplet)
+    }
 
     $installScript = $scriptHeader + @"
 
-./vcpkg install '$($port.Spec)' --triplet '$vcpkgTriplet' --host-triplet '$vcpkgTriplet'
+./vcpkg install '$($port.Spec)' --triplet '$($port.Triplet)' --host-triplet '$vcpkgTriplet'
 "@
 
     $tempName = "vcpkg_install_{0}.sh" -f ($port.Name -replace '[^A-Za-z0-9]', '_')
@@ -769,10 +799,11 @@ foreach ($property in $listJson.PSObject.Properties)
     $name  = [string]$entry.package_name
     if (-not $name) { continue }
 
-    # Only this triplet. The key is "name:triplet" but the field is authoritative and needs no parsing.
-    if ([string]$entry.triplet -ne $vcpkgTriplet) { continue }
-
-    $installedPorts[$name] = $true
+    # Keyed by name AND triplet, because a package may be requested for a triplet other than the configured one
+    # and "installed" then has to mean "installed for the triplet it was asked for". The field is authoritative, so
+    # the "name:triplet" key of the JSON object needs no parsing.
+    $entryTriplet = [string]$entry.triplet
+    $installedPorts["{0}:{1}" -f $name, $entryTriplet] = $true
 
     # port_version 0 is the common case and vcpkg does not print "#0" anywhere, so neither does this.
     $version = [string]$entry.version
@@ -781,39 +812,57 @@ foreach ($property in $listJson.PSObject.Properties)
         $portVersion = [int]$entry.port_version
         if ($portVersion -gt 0) { $version = "{0}#{1}" -f $version, $portVersion }
     }
-    if ($version) { $installedVersions[$name] = $version }
+    if ($version) { $installedVersions["{0}:{1}" -f $name, $entryTriplet] = $version }
 }
 
 if ($installedPorts.Count -eq 0)
 {
-    Write-Error "'vcpkg list --x-json' reported no packages at all for triplet '$vcpkgTriplet'."
+    Write-Error "'vcpkg list --x-json' reported no packages at all."
     Abort-WithError
 }
 
 $missing = @()
 foreach ($port in $portSpecs)
 {
-    if ($installedPorts.ContainsKey($port.Name))
-    {
-        if ($installedVersions.ContainsKey($port.Name)) { $version = $installedVersions[$port.Name] }
-        else                                            { $version = "(unknown)" }
+    $key = "{0}:{1}" -f $port.Name, $port.Triplet
 
-        Write-Info ("Installed: {0} version {1}" -f $port.Name, $version)
+    if ($installedPorts.ContainsKey($key))
+    {
+        if ($installedVersions.ContainsKey($key)) { $version = $installedVersions[$key] }
+        else                                      { $version = "(unknown)" }
+
+        if ($port.Triplet -eq $vcpkgTriplet)
+        {
+            Write-Info ("Installed: {0} version {1}" -f $port.Name, $version)
+        }
+        else
+        {
+            Write-Info ("Installed: {0} version {1}  [triplet {2}]" -f $port.Name, $version, $port.Triplet)
+        }
     }
     else
     {
-        $missing += $port.Name
+        $missing += ("{0} ({1})" -f $port.Name, $port.Triplet)
     }
 }
 
 if ($missing.Count -gt 0)
 {
-    Write-Error ("The following configured ports are not installed for triplet '{0}': {1}" -f $vcpkgTriplet, ($missing -join ", "))
+    Write-Error ("The following configured ports are not installed: {0}" -f ($missing -join ", "))
     Write-Error "The installation is incomplete."
     Abort-WithError
 }
 
-Write-Info ("All {0} configured port(s) are installed for triplet '{1}'." -f $portSpecs.Count, $vcpkgTriplet)
+$extraTripletCount = @($portSpecs | Where-Object { $_.Triplet -ne $vcpkgTriplet }).Count
+if ($extraTripletCount -eq 0)
+{
+    Write-Info ("All {0} configured port(s) are installed for triplet '{1}'." -f $portSpecs.Count, $vcpkgTriplet)
+}
+else
+{
+    Write-Info ("All {0} configured port(s) are installed: {1} for '{2}' and {3} for another triplet." -f
+                $portSpecs.Count, ($portSpecs.Count - $extraTripletCount), $vcpkgTriplet, $extraTripletCount)
+}
 
 Write-Info "STEP 4: OK"
 
