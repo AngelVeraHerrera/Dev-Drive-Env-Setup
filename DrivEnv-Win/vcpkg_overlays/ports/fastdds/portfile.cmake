@@ -1,10 +1,24 @@
 # ---------------------------------------------------------------------------------------------------------------------
-# LOCAL OVERLAY of the upstream fastdds port. FIVE deltas, all MinGW-only, all invisible to MSVC:
+# LOCAL OVERLAY of the upstream fastdds port. FIVE deltas, all MinGW-only, all invisible to MSVC.
+#
+# THREE ARE LOAD-BEARING -- remove any one and the port does not produce something usable:
+#   mingw-no-clock-gettime.patch     -- clock_gettime redefined where mingw-w64 already has it. Fails FIRST, inside
+#                                       the library's own translation unit, whatever the linkage.
+#   the tool-copy block below        -- gated off MinGW, where fastdds itself does not build the tools. Without the
+#                                       gate the whole library compiles and THEN the port fails looking for a
+#                                       fast-discovery-server that was never built.
 #   VCPKG_LIBRARY_LINKAGE static     -- the DLL does not export what a publisher needs. See the block below.
+#
+# TWO ARE DORMANT -- the defects are still present upstream, but cannot fire while linkage is static, because
+# FASTDDS_EXPORTED_API then expands to nothing. Kept because they cost nothing and they are the only thing standing
+# between this port and the two errors quoted below if the linkage delta is ever lifted:
 #   mingw-qos-default-linkage.patch  -- dllexport on an internal-linkage const definition.
-#   mingw-no-clock-gettime.patch     -- clock_gettime redefined where mingw-w64 already has it.
-#   the tool-copy block below        -- gated off MinGW, where fastdds itself does not build the tools.
 #   MINGW_COMPILER propagated        -- without it every consumer hits dllimport-on-a-definition.
+#
+# The operative reason for that dormancy is narrower than "a static archive has no export table", and it is what
+# would change: src/cpp/CMakeLists.txt:149 emits FASTDDS_DYN_LINK only for a SHARED_LIBRARY target, and that
+# generator expression is re-evaluated against the STATIC imported target in the consumer's own configure step. If
+# upstream ever hardcodes FASTDDS_DYN_LINK, both dormant deltas go live on the next rebuild.
 #
 # The other five patches this portfile names -- disable-autolink, disable-test, disable-werror, fix-deps and
 # pdb-file -- are UPSTREAM's, carried unchanged. They are not deltas.
@@ -16,16 +30,22 @@
 #
 # Two of the seven QoS defaults repeat FASTDDS_EXPORTED_API on their definition; the other five do not, and
 # those five compile. The patch makes the two match. MSVC does not object, so upstream CI never sees it.
+# Still exactly two in 3.6.2, re-counted 2026-08-27: PublisherQos.cpp:27 and SubscriberQos.cpp:27.
 # Re-check on every version bump: if upstream drops the redundant macro, delete the patch.
 # ---------------------------------------------------------------------------------------------------------------------
 
-# EIGHTH DELTA, and the one that makes this port usable at all: force it STATIC inside the otherwise-dynamic
-# triplet. vcpkg supports per-port linkage exactly for this, and the mongo family in this same directory has been
-# doing it for a long time.
+# THE DELTA THAT MAKES THIS PORT USABLE AT ALL: force it STATIC inside the otherwise-dynamic triplet. vcpkg
+# supports per-port linkage exactly for this, and the mongo family in this same directory did the same for years.
+# (This block used to be labelled "EIGHTH DELTA", left over from counting patch FILES instead of local changes --
+# the same miscount the header's first line corrects. There are five local deltas, and this is one of them.)
 #
 # The MinGW DLL does not export the vtable of TypeSupport nor the traits<>::make_shared instantiations, so nothing
 # that DEFINES a DDS type can link against it -- see installation/vcpkg_overlays.txt for the measurements. A static
 # archive has no export table, so the problem cannot arise.
+#
+# Re-verified 2026-08-27 against the 3.6.2 sources: TypeSupport.hpp still annotates every METHOD individually and
+# never the CLASS, so the vtable is still unexported. When that changes upstream, this delta retires -- and takes
+# the dormancy of the other two with it, so re-read the header before assuming they are still inert.
 #
 # Why HERE and not through a static triplet: the package stays in the SAME installed tree as everything else, so one
 # CMAKE_PREFIX_PATH still finds it, and its dependencies -- fastcdr, foonathan_memory, tinyxml2, openssl -- stay

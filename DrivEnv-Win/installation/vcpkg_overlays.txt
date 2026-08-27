@@ -16,13 +16,84 @@ again from scratch months later, presenting as an error about CUDA.
 Keep this file next to the ports and update it in the same commit.
 
 
+Audit of 2026-08-27: twelve overlays down to five
+-----------------------------------------------------------------------
+HOW THE QUESTION WAS SETTLED, because the obvious method gives the wrong
+answer. Diffing an overlay against TODAY's baseline conflates two
+unrelated things: a change made here on purpose, and mere version drift.
+An overlay pinning an old version differs from the current port in dozens
+of lines that nobody here ever wrote.
+
+So each overlay was diffed against the OFFICIAL port at the SAME version,
+recovered from vcpkg's own git history. Whatever survives that comparison
+is genuinely local. That one change is what turned "glib carries
+libintl.patch for reasons unknown" into "glib deletes one dependency and
+nothing else" -- libintl.patch is upstream's, and always was.
+
+Then every surviving delta was checked against the CURRENT sources, and
+where a build could settle it, a build was run: baseline ports into a
+scratch install root (--x-install-root) so the working tree was never
+touched.
+
+RESULT
+
+    glib, graphene, pango           RETIRED, see below
+    libbson, mongo-c-driver,
+    mongo-cxx-driver, utf8proc      pending a linkage decision, see below
+    fastcdr                         a no-op for the route in use
+    fastdds, fastfeat, gstreamer,
+    vcpkg-qmake                     KEPT, each defect re-verified
+
+WHAT THE BUILDS PROVED, as opposed to what reading suggested:
+
+  * Baseline glib 2.88.3 + graphene 1.10.8#6 + pango 1.58.0 install
+    clean, exit 0, 28/28 packages, with gettext[core,tools] building
+    from source in 14 minutes. The reason those three overlays existed
+    is gone.
+  * The gstreamer overlay then builds against those NEW versions, exit
+    0, from source (vcpkg reported "Restored 0 package(s)", so this was
+    not a cached artefact built against the old glib). 111 plugins, 554
+    features, d3d11 / d3d12 / nvcodec / mediafoundation all loading.
+  * Baseline gstreamer FAILS, twice, at the two points its overlay
+    predicts. See deltas 4 and 5 below.
+  * Baseline fastfeat reproduces its load failure end to end. See the
+    fastfeat section.
+
+COST OF RETIRING glib / graphene / pango: 16 of the 107 installed ports
+sit above glib and are rebuilt when its version moves -- the whole Qt
+stack, ffmpeg, opencv4, gstreamer, gst-rtsp-server, harfbuzz. On a fresh
+drive that costs nothing, because everything is built once anyway. On a
+live drive it is hours. This is a change to make at drive generation,
+not by forcing a rebuild in place.
+
+
 gstreamer           (eight deltas, all documented in its portfile head)
 -----------------------------------------------------------------------
 1. gstfilesink_fix_gcc15-2-Rev11.patch
    gstfilesink.c redefines off_t to guint64 on Win32 but still maps
-   ftruncate to _chsize, which takes a long. GCC rejects the narrowing.
+   ftruncate to _chsize, which takes a long.
    Keep the patch LF-terminated: vcpkg applies patches with `git apply`,
    which refuses a CRLF patch against an LF source.
+
+   NO LONGER NEEDED, measured 2026-08-27, and the only delta of the
+   eight that is not. The two #defines are still there (gstfilesink.c:65
+   and :67) but the defect cannot fire: the file's ONLY ftruncate call
+   is line 687, `ftruncate (fileno (filesink->file), 0)`, and a literal
+   0 gives _chsize(int,long) nothing to narrow. The pristine 1.28.6 file
+   compiles to a real object with GCC 16.2.0, under -Werror plus the
+   project's own full warning list, in three configurations.
+
+   Two things worth knowing before deleting it. The patch's 64-bit
+   branch is DEAD CODE: `#if defined(_chsize_s)` is false because
+   _chsize_s is a function, not a macro, so the patch still calls
+   _chsize(fd, (long) size) and does not buy the 64-bit safety its
+   comment advertises. And upstream's `#define ftruncate _chsize` is
+   itself wrong on this toolchain for a different reason -- mingw-w64
+   does ship a real ftruncate (unistd.h:57, aliased to ftruncate64), so
+   the define discards a 64-bit-capable function in favour of a
+   deprecated 32-bit one. Latent only, while the sole call truncates
+   to 0. Left in place for now: it applies cleanly and costs nothing,
+   and removing it means renumbering this list and the portfile head.
 
 2. d3d11-winrt-probe-mingw.diff
    gst-plugins-bad's d3d11 enables its UWP sources from a probe that
@@ -38,6 +109,30 @@ gstreamer           (eight deltas, all documented in its portfile head)
    does. Upstream exposes these as feature options, so this is a
    supported configuration rather than a patch. Screen capture through
    WGC is what is given up; d3d11screencapturesrc still works.
+
+   ASYMMETRIC, and re-checked 2026-08-27. Only the d3d12 half still has
+   the stated defect: gstd3d12graphicscapture.cpp:69 and :72 do use the
+   MSVC-only __FITypedEventHandler_2_..._t typedefs, mingw-w64 defines
+   none of them, and compiling those two lines reproduces the quoted
+   error verbatim. On the d3d11 side the only WGC source,
+   gstd3d11winrtcapture.cpp, never touches those types and compiles
+   clean.
+
+   THE d3d11 HALF IS KEPT ANYWAY, deliberately, after proposing to drop
+   it and being wrong. "No cost" was the premise and it is false:
+   enabling WGC on d3d11 adds five public GObject properties to
+   d3d11screencapturesrc, and -- the real objection -- it converts a
+   LOUD failure into a SILENT fallback. Today an unsupported DXGI
+   capture reaches `unsupported:` and raises GST_ELEMENT_ERROR. With
+   the option enabled, that path instead flips to WGC and continues,
+   logging an INFO line, into a backend that resolves every entry point
+   at runtime through g_module_open against mingw-w64's community WinRT
+   vtables. Build-passes / degrades-at-runtime is the exact pattern
+   that cost this environment a day on fastfeat.
+
+   If it is ever revisited, the bar is a full meson build AND running
+   d3d11screencapturesrc on this toolchain -- not a translation unit
+   that compiles.
 
 4. gst_debug=true in release builds
    With gst_debug=false, gstinfo.h poisons gst_debug_log and anything
@@ -85,6 +180,23 @@ gstreamer           (eight deltas, all documented in its portfile head)
    only as someone else's transitive dependency and dangled when that went
    away. DEPENDS ON THE fastfeat OVERLAY ABOVE -- enabling this without it
    brings back a dangling plugin and, through avcodec, a dead ffmpeg.
+
+TWO METADATA DELTAS THE PORTFILE HEAD DOES NOT COUNT. It says "exactly
+EIGHT deltas ... and nothing else", and a full recursive diff finds two
+more, both harmless and neither functional: vcpkg.json gains a
+"[MILETHOS] ..." suffix on the description, and it gains
+"port-version": 7 where the baseline has no port-version field at all.
+Say ten, or say "eight functional deltas plus metadata", but do not
+leave the head claiming an invariant a diff disproves.
+
+ONE DEFECT IN THE RESULT, unrelated to any delta and not yet fixed:
+gst/d3d11/gstd3d11config.h is missing from the installed tree, while
+the installed gst/d3d11/gstd3d11.h:28 includes it. Any C++ consumer of
+<gst/d3d11/gstd3d11.h> therefore gets a fatal error. The cause is this
+portfile's own file(REMOVE_RECURSE .../lib/gstreamer-1.0/include). It
+does not affect gst-launch or any plugin -- only code that includes the
+d3d11 helper API directly, which is exactly what a camera streaming
+path would want to do.
 
 fastfeat                                  (one delta, MinGW only)
 -----------------------------------------------------------------------
@@ -136,6 +248,47 @@ The local ones: dllexport on an internal-linkage const, clock_gettime
 redefined where mingw-w64 already has it, the gated tool-copy block,
 MINGW_COMPILER propagated, and static linkage forced -- which is the one
 that matters and is explained below.
+
+THREE ARE LOAD-BEARING, TWO ARE DORMANT. Re-verified against the 3.6.2
+sources on 2026-08-27, and the portfile head does not make this
+distinction:
+
+  load-bearing   static linkage; clock_gettime; the tool-copy gate.
+                 Without the clock_gettime patch the library does not
+                 compile at all -- TimedConditionVariable.cpp:70 still
+                 defines clock_gettime unguarded inside #if _WIN32,
+                 while mingw-w64 already declares it in
+                 pthread_time.h:112. Without the tool gate the build
+                 finishes and then fails looking for a
+                 fast-discovery-server that upstream never built,
+                 because CMakeLists.txt:406-408 still forces
+                 COMPILE_TOOLS OFF on mingw.
+
+  dormant        the QoS dllexport patch; MINGW_COMPILER propagated.
+                 Both defects are still present upstream -- exactly two
+                 of the seven QoS defaults still repeat
+                 FASTDDS_EXPORTED_API on the DEFINITION, in
+                 PublisherQos.cpp:27 and SubscriberQos.cpp:27 -- but
+                 they cannot fire while linkage is static, because
+                 FASTDDS_EXPORTED_API then expands to nothing.
+
+The operative reason for that dormancy is narrower than "a static
+archive has no export table", and worth writing down because it is what
+would change: src/cpp/CMakeLists.txt:149 emits FASTDDS_DYN_LINK only
+for a SHARED_LIBRARY target, and that generator expression is
+re-evaluated against the STATIC imported target in the consumer's own
+configure step. If upstream ever hardcodes FASTDDS_DYN_LINK, both
+dormant deltas go live on the next rebuild. Keep them; they cost
+nothing and they are the only thing between here and the two errors
+quoted below.
+
+RE-CHECK ON EVERY VERSION BUMP, in this order: does
+TimedConditionVariable.cpp still define clock_gettime unguarded; does
+CMakeLists.txt still force COMPILE_TOOLS OFF for mingw while this
+portfile still keys the tool copy on VCPKG_TARGET_IS_WINDOWS; has
+TypeSupport.hpp gained a CLASS-level FASTDDS_EXPORTED_API, which would
+retire the static-linkage delta and with it the dormancy of the other
+two.
 
 BUT THE DELTAS ARE NOT THE INTERESTING PART. This port builds a DLL that
 CANNOT BE USED for publish or subscribe on MinGW, and the reason is not in
@@ -228,18 +381,54 @@ the static triplet is still available and would hit this immediately.
 
 Delete this overlay if the static triplet is ever dropped.
 
+BOTH HALVES OF THAT VERIFIED 2026-08-27. The defect is real and still
+in 2.3.6: src/cpp/CMakeLists.txt:35 still lists FastCdr.rc
+unconditionally, and running the ucrt64 windres on the untouched file
+gives "windres.exe: no resources" and exit 1 without
+-Dfastcdr_EXPORTS, exit 0 with it. And the scoping is real too: on this
+triplet fastcdr is DYNAMIC (libfastcdr.dll plus its import library are
+what is installed, against libfastdds.a for fastdds), so
+BUILD_SHARED_LIBS is ON, fastcdr_EXPORTS is defined, and the patch
+re-adds the .rc it just guarded -- a byte-for-byte no-op.
+
+So this overlay currently changes nothing except a port-version bump
+and the rebuild that bump forces. It is insurance for the static
+triplet and should be deleted in the same commit as that triplet.
+
 libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
 -----------------------------------------------------------------------
 Forced static linkage. The upstream ports build shared libraries that
 this environment does not want to deploy.
 
-glib
------------------------------------------------------------------------
-Carries libintl.patch and does not use vcpkg_from_* because the project
-uses submodules.
+STATUS 2026-08-27: removed from the deployed drive and the baseline
+versions installed in their place -- utf8proc 2.11.3, libbson 2.3.2,
+mongo-c-driver 2.3.1, mongo-cxx-driver 4.4.0. Both HelloWorlds build
+and run against them. Still present in this repository, pending one
+decision, because retiring them is not a pure cleanup.
 
-No reason for libintl.patch is recorded, in this file or in the port. It
-is the one overlay here whose purpose is unknown.
+WHAT THE OVERLAYS ACTUALLY CARRIED, by the same-version comparison:
+
+    utf8proc          one line: set(VCPKG_LIBRARY_LINKAGE static)
+    libbson           the same one line
+    mongo-cxx-driver  that line, -DINLINE_VAR=inline, C++17
+    mongo-c-driver    that line, a rewritten fix-dependencies.patch,
+                      and scrubbing -lutf8proc out of the .pc files and
+                      the exported CMake targets
+
+The version pins were incidental -- nobody chose 1.30.6 over 2.3.1, it
+is just where the fork was taken. What WAS chosen is the static
+linkage, and dropping the overlays drops that too. "It builds and runs
+dynamically" is not the same as "dynamic was wanted".
+
+THE DECISION: if static mongo is still wanted, the overlay to write now
+is far smaller than the one being retired -- the current baseline port
+plus set(VCPKG_LIBRARY_LINKAGE static), no version pin and no patches,
+because the pins and the patches are what went stale, not the linkage.
+If dynamic is acceptable, delete all four and this section with them.
+
+mongo-c-driver also carries two dead files that are referenced by
+nothing and should go either way: fix-dependencies.patch_ and
+patches/fix-dependencies.patch.
 
 vcpkg-qmake                            (one delta, MinGW targets)
 -----------------------------------------------------------------------
@@ -254,45 +443,112 @@ spec emits POSIX recipes (rm -f, test -d, mkdir -p, cp -f) and jom hands
 them to cmd.exe, which fails on the first one before anything compiles.
 The overlay selects GNU make when VCPKG_TARGET_IS_MINGW.
 
-STILL NEEDED. Upstream at baseline 06d00ff still has the bare
-if(CMAKE_HOST_WIN32). Deleting this overlay breaks every qmake-built Qt
-port on this triplet.
+STILL NEEDED, but as DORMANT INSURANCE, and the earlier claim that
+"deleting this overlay breaks every qmake-built Qt port" was wrong.
+Corrected 2026-08-27.
 
-Worth sending upstream: a real bug for any MinGW target.
+The defect is unambiguously still there: vcpkg_qmake_build.cmake:24-37
+has no MinGW branch, nothing in the baseline covers it, and
+VCPKG_QMAKE_USE_NMAKE only swaps jom for nmake -- still the wrong
+family. Both halves of the failure reproduce today: the INSTALLED Qt
+6.11.1 qmake really does emit `DEL_FILE = rm -f` and
+`CHK_DIR_EXISTS = test -d`, and handing those to cmd.exe really does
+fail on the first one.
+
+BUT IT HAS NO LIVE CONSUMERS ON THIS TRIPLET. qtbase does not use
+vcpkg_qmake_build at all -- it is the PRODUCER of qt_release.conf /
+qt_debug.conf, not a consumer. Repo-wide the only consumers are
+qcustomplot, qscintilla and qwt, none of which is installed. So a green
+build of the current package set is NOT evidence that this overlay is
+unnecessary; it is evidence that nothing exercised it.
+
+Keep it: nearly free, and it becomes load-bearing the moment any of
+those three ports enters the plan, where the failure is immediate and
+total -- the first recipe, before one object compiles.
+
+Worth sending upstream as a one-line regression fix: vcpkg's own older
+helper scripts/cmake/vcpkg_build_qmake.cmake:26-28 already has the
+if(VCPKG_TARGET_IS_MINGW) branch that the new one dropped. If it is
+sent, note that this overlay's find_program(... NAMES make
+mingw32-make) resolves to the MSYS build of make, which is what
+supplies the POSIX shell those recipes need; the legacy branch
+hardcodes mingw32-make, which uses cmd.exe unless an sh.exe is on PATH.
 
 
-graphene                             (one delta: a dependency removed)
+RETIRED 2026-08-27: glib, graphene, pango
 -----------------------------------------------------------------------
-Port-version 5 with upstream's HOST dependency on "gettext" (default
-features off, feature "tools") deleted. That is the whole intent; the
-other differences against the baseline are upstream's own port-version
-6, which changed the download URLs to download.gnome.org plus a mirror.
+All three deleted from vcpkg_overlays/ports. Recorded here rather than
+left to the git log, because the interesting part is that all three had
+the SAME single delta and two of them had been written up as mysteries.
 
-Measured 2026-08-26: the upstream commit that FIRST added that gettext
-dependency (5618da41e8) is the same one that produced port-version 5,
-so this was a deliberate removal, not an old copy that predates it.
+THE DELTA, in all three: upstream's HOST dependency on gettext (default
+features off, feature "tools") deleted from vcpkg.json. Nothing else.
+Portfile and every patch byte-identical to the official port at the
+same version -- including glib's libintl.patch and
+use-libiconv-on-windows.patch, which are UPSTREAM's and were never
+local. This file previously called glib "the one overlay whose purpose
+is unknown" and pango "a stale fork, no reason". Both were wrong, and
+wrong for the same reason: they compared against the CURRENT baseline,
+where a version pin manufactures dozens of differences nobody here
+wrote. Comparing against the official port at the overlay's own version
+leaves one deleted dependency and nothing to explain.
 
-PROBABLY OBSOLETE. What it avoids is a host gettext, and gettext is
-installed in this environment regardless, pulled in elsewhere in the
-graph. If avoiding that build was the only reason for the overlay, it
-buys nothing now.
+WHY THEY ARE GONE: the thing they avoided was building a host gettext,
+and that now builds. Verified, not assumed -- gettext[core,tools]
+0.22.5#4 compiled from source in 14 minutes and produced msgfmt.exe,
+xgettext.exe and msgmerge.exe. Baseline glib 2.88.3, graphene
+1.10.8#6 and pango 1.58.0 then installed clean, exit 0, 28/28
+packages, and the gstreamer overlay builds against them.
 
-Retiring it means removing the overlay and installing graphene, which
-moves the port from version 5 to 6 and rebuilds whatever sits above it.
+WHAT THE VERSIONS MOVE: glib 2.84.2 -> 2.88.3, pango 1.56.1 -> 1.58.0,
+graphene 1.10.8#5 -> #6. Note graphene's overlay was BEHIND the
+baseline, not ahead of it.
+
+WHEN IT COSTS SOMETHING: 16 of 107 installed ports sit above glib and
+rebuild when it moves -- qtbase, qtdeclarative, qt5compat, qtcharts,
+qtimageformats, qtlanguageserver, qtmultimedia, qtshadertools, qtsvg,
+qt-advanced-docking-system, ffmpeg, opencv4, gstreamer,
+gst-rtsp-server, graphene, harfbuzz. Free on a fresh drive, hours on a
+live one.
+
+Also retired earlier, for the record, by the same audit: nothing.
+Everything else in this directory was checked and kept.
 
 
-pango                                         (a stale fork, no reason)
+The utf8proc deprecation warning is NOT an overlay problem
 -----------------------------------------------------------------------
-No reason is recorded for this one either, and unlike vcpkg-qmake the
-diff does not reveal one. The overlay is 1.56.1 port-version 2 while
-the baseline offers 1.58.0, with 1.57.0 and 1.57.1 in between. It
-fetches a git tag from GitLab instead of the release tarball, omits
-upstream's relax-gi-requirement.diff, drops the four meson options that
-turn off documentation, man pages, tests and examples, and adds
--Dgtk_doc=false.
+Configuring any mongoc consumer prints:
 
-That is the shape of a port copied and adjusted before those upstream
-changes existed rather than a fix for anything. With no recorded reason,
-removing it is not tidying: it is a two-minor-version upgrade of pango
-and a rebuild of everything above it. The outcome of doing so belongs in
-this file.
+    CMake Warning at .../share/unofficial-utf8proc/
+    unofficial-utf8proc-config.cmake:1 (message):
+      find_package(unofficial-utf8proc) is deprecated.
+    ... mongocConfig.cmake:67 (find_dependency)
+
+DO NOT WRITE AN OVERLAY FOR IT. This is vcpkg scolding vcpkg. The
+caller is injected by vcpkg's own mongo-c-driver port --
+fix-dependencies.patch:74 adds find_dependency(unofficial-utf8proc) --
+while pristine upstream mongo-c-driver 2.3.1 contains no reference to
+that name anywhere; upstream resolves utf8proc through pkg-config. The
+message itself comes from the legacy shim that vcpkg's utf8proc port
+installs on purpose.
+
+Provably cosmetic, checked end to end 2026-08-27: configure exits 0,
+utf8proc::utf8proc resolves to the right import library and DLL,
+libmongoc2.dll imports libutf8proc.dll, and the built program prints
+"mongoc 2.3.1 utf8proc 2.11.3". message(WARNING) is also unpromotable
+to an error, so it cannot start failing a build.
+
+Two reasons an overlay would be actively bad here. It would force a
+rebuild of mongo-c-driver and cascade to mongo-cxx-driver, for zero
+functional gain. And when vcpkg fixes its own inconsistency, the
+overlay becomes exactly the kind of dead weight this audit just spent a
+day removing.
+
+If the noise ever costs real signal in a build log, the cheap answer is
+consumer-side and needs no overlay and no rebuild: point
+unofficial-utf8proc_DIR at a five-line config that does the
+find_dependency and the alias without the message. Verified to silence
+it completely. Still a hack, still something to remember later.
+
+The shim cannot simply be deleted from the utf8proc port either: poco
+depends on it too.

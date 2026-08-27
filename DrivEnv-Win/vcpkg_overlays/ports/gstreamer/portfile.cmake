@@ -1,15 +1,38 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# Exactly EIGHT deltas from upstream. Re-apply every one of them when bumping to the next version, and nothing else -- everything
-# else here is upstream's and must be taken verbatim:
+# EIGHT FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
+# next version, and nothing else -- everything else here is upstream's and must be taken verbatim.
+#
+# The two metadata deltas, both harmless, listed because this head used to claim "exactly eight ... and nothing
+# else" and a full recursive diff disproved it: vcpkg.json gains the "[MILETHOS] ..." suffix on its description,
+# and it gains "port-version" where the baseline port has no port-version field at all.
+#
+# STATUS OF THE EIGHT, re-verified against the 1.28.6 sources on 2026-08-27 (deltas 4 and 5 by running the build,
+# the rest by reading the sources with the real MinGW toolchain):
+#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8
+#   defect gone    : 1 -- see below; kept for now, costs nothing
+#   half inert     : 3 (d3d11 half) -- see below; kept deliberately
 #
 #   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
 #      gstfilesink.c redefines off_t to guint64 on Win32 but still maps ftruncate to _chsize, which takes a long.
-#      GCC rejects the narrowing. Still unfixed in 1.28.6 -- verified: the file carries "#define ftruncate _chsize"
-#      unchanged -- so the patch is still required. Keep it LF-terminated: vcpkg applies patches with `git apply`,
-#      which refuses a CRLF patch against an LF source, while plain `patch` tolerates it. That difference silently
-#      cost us an applied patch once already.
+#      Keep it LF-terminated: vcpkg applies patches with `git apply`, which refuses a CRLF patch against an LF
+#      source, while plain `patch` tolerates it. That difference silently cost us an applied patch once already.
+#
+#      THE DEFECT NO LONGER FIRES, measured 2026-08-27, and this is the only one of the eight in that state. The
+#      two #defines are still there (gstfilesink.c:65 and :67), but the file's ONLY ftruncate call is line 687,
+#      `ftruncate (fileno (filesink->file), 0)`, and a literal 0 gives _chsize(int,long) nothing to narrow. The
+#      PRISTINE 1.28.6 file compiles to a real object under GCC 16.2.0 with -Werror plus the project's own full
+#      warning list, in three configurations. The patch was authored against GCC 15.2.0, so a compiler or header
+#      change between those revisions is the likely explanation.
+#
+#      Kept for now because it applies cleanly and costs nothing, and dropping it means renumbering this list.
+#      Two things to know if it is ever dropped or repaired. Its 64-bit branch is DEAD CODE: `#if defined(_chsize_s)`
+#      is false, because _chsize_s is a function and not a macro, so the patch still calls _chsize(fd,(long)size)
+#      and does not deliver the 64-bit safety its comment advertises. And upstream's `#define ftruncate _chsize` is
+#      wrong here for an unrelated reason -- mingw-w64 DOES ship a real ftruncate (unistd.h:57, aliased to
+#      ftruncate64), so the define discards a 64-bit-capable function for a deprecated 32-bit one. Latent only,
+#      while the sole call site truncates to 0.
 #
 #   2. PATCHES gains d3d11-winrt-probe-mingw.diff.
 #      gst-plugins-bad's d3d11 enables its winapi_app (UWP) sources from a probe that does not include
@@ -30,6 +53,27 @@
 #      Upstream exposes these as their own feature options, so this is a supported configuration rather than a patch,
 #      and the rest of d3d11/d3d12 -- video sink, decoders, converters -- stays enabled. Screen capture is what is
 #      given up, which this project does not use: the camera path is appsrc plus encoders and file/network sinks.
+#
+#      ASYMMETRIC, re-checked 2026-08-27. Only the d3d12 half still has the defect above: gstd3d12graphicscapture.cpp
+#      lines 69 and 72 do use those typedefs, mingw-w64 defines none of them, and compiling just those two lines
+#      reproduces the quoted error verbatim. On the d3d11 side the only WGC source, gstd3d11winrtcapture.cpp, never
+#      touches them and compiles clean, object code and all.
+#
+#      THE d3d11 HALF IS KEPT ANYWAY, deliberately, after proposing to drop it and being wrong. "No cost" was the
+#      premise and it is false. Enabling WGC on d3d11 adds five public GObject properties to d3d11screencapturesrc
+#      (window-handle, show-border, capture-api, adapter, window-capture-mode) and registers new GTypes -- a public
+#      API change to a shipped element. Worse, it converts a LOUD failure into a SILENT one: today an unsupported
+#      DXGI capture falls through to `unsupported:` and raises GST_ELEMENT_ERROR, whereas with WGC enabled that
+#      path flips to the WinRT backend and continues, logging an INFO line, into code that resolves every entry
+#      point at runtime via g_module_open against mingw-w64's community WinRT vtables. Build-passes /
+#      degrades-at-runtime is the exact pattern that cost this project a day on fastfeat.
+#
+#      Proof the option is doing work rather than sitting inert: objdump on the installed libgstd3d11.dll shows no
+#      dwmapi.dll import and none of the strings "Fallback to Windows Graphics Capture" or "RoGetActivationFactory",
+#      while d3d11screencapturesrc itself is present. Dropping it changes the binary.
+#
+#      If it is ever revisited, the bar is a full meson build AND running d3d11screencapturesrc on this toolchain --
+#      not a translation unit that compiles.
 #
 #   4. -Dgstreamer:gst_debug=true, where upstream sets false.
 #      Not cosmetic, and not merely a preference. With gst_debug=false, gstinfo.h reaches its
