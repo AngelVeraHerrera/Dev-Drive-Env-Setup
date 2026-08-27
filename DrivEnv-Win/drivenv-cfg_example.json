@@ -14,7 +14,9 @@
             "GST_REGISTRY": "${DEVDRIVE_LETTER}/logs/gstreamer/registry/registry.x86_64.bin",
             "GST_DEBUG_DUMP_DOT_DIR": "${DEVDRIVE_LETTER}/logs/gstreamer/dot",
             "GST_DEBUG_FILE": "${DEVDRIVE_LETTER}/logs/gstreamer/gst-debug.log",
-            "GST_DEBUG": "2"
+            "GST_DEBUG": "2",
+            "GSTREAMER_TEST_HOST_IP": "192.168.8.70",
+            "GSTREAMER_TEST_PORT": "5500"
         },
         "custom_path_entries": ["${CUDA_PATH}"],
         "custom_folders": ["logs/gstreamer/dot", "logs/gstreamer/registry", "workspace_vcpkg_patches"],

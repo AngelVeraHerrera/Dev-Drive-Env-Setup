@@ -4,7 +4,31 @@ GSTREAMER CHECKS
 Run these from the environment's own launcher. See ../README.txt for why
 that is not optional.
 
-VIDEO=$DEVDRIVE_ROOT/testing/gstreamer/videos/FPS_test_1080p60_L4.2.mkv
+VIDEO=${GSTREAMER_TEST_VIDEO:-$DEVDRIVE_ROOT/testing/gstreamer/videos/FPS_test_1080p60_L4.2.mkv}
+
+
+Configuration that comes from the environment
+-----------------------------------------------------------------------
+Three variables, read from the environment when defined and falling back
+to a default when not. The place to define them once for a whole drive is
+environment.custom_variables in the generator's configuration:
+
+  "GSTREAMER_TEST_HOST_IP": "192.168.8.70",
+  "GSTREAMER_TEST_PORT":    "5500"
+
+  GSTREAMER_TEST_HOST_IP   where the RTP launchers send.   Default 192.168.8.70
+  GSTREAMER_TEST_PORT      the UDP port they send to.      Default 5500
+  GSTREAMER_TEST_VIDEO     the file to demux.              Default the one above
+
+They are used by the scripts in launchers_rtp/, which print which values
+are in effect and whether each came from the environment or from a
+default -- the question when using those launchers was never how to start
+them, it was where they were sending.
+
+The commands in THIS file keep 127.0.0.1 on purpose. They are meant to be
+pasted and run on one machine, and a pasted command that depends on a
+variable being set fails for a reason that has nothing to do with what it
+was testing.
 
 A note on what is and is not available, because a command that names a
 missing element fails in a way that looks like a broken install:

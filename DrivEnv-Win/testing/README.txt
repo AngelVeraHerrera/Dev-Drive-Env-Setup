@@ -37,6 +37,9 @@ Layout
 -----------------------------------------------------------------------
   gstreamer/    element checks, pipelines, RTP send/receive launchers,
                 and a real 1080p60 video to demux rather than synthesise
+                (the launchers read GSTREAMER_TEST_HOST_IP, _PORT and
+                _VIDEO from the environment, so the destination is set
+                once in the configuration rather than per script)
   ffmpeg/       probe and transcode checks
   curl/         TLS and protocol checks
 
