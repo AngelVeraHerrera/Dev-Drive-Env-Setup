@@ -295,11 +295,10 @@ export HISTIGNORE="ls:cd:pwd:clear:history*"
 export HISTTIMEFORMAT="%F %T "
 export PROMPT_COMMAND='history -a; history -n; '"${PROMPT_COMMAND-}"
 
-# Enable prefix search with arrow keys (only in interactive shells with readline)
-if [[ $- == *i* ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
-  bind '"\e[A": history-search-backward' 2>/dev/null || true
-  bind '"\e[B": history-search-forward' 2>/dev/null || true
-fi
+# The arrow-key history search used to be here, guarded on [[ $- == *i* ]], and the guard was never true: this
+# file is sourced by the `bash -lc` shell in the launcher, where $- is "hBc". Measured, not assumed. Worse, a bind
+# would not have survived anyway -- the launcher then calls `exec bash`, and only exported VARIABLES cross an exec.
+# It now lives in <prefix>_env_launcher_bashrc.sh, which the final interactive shell reads as its rcfile.
 
 log_i "Persistent history: ${HISTFILE}"
 

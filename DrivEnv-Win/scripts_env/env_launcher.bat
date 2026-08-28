@@ -139,6 +139,13 @@ REM sets IFS itself (`while IFS= read -r`). The residual exposure is a bootstrap
 REM which is far less likely than one containing a space, and unlike a space it is not silent.
 set "DP_BOOTSTRAP=%BOOTSTRAP_POSIX%"
 
+REM The rcfile for the shell you actually type in, derived from the bootstrap path so it follows the same
+REM discovery and the same prefix. `exec` replaces the process and only exported variables survive it, so
+REM anything the bootstrap sets that is not one -- completions, key bindings, functions -- is gone before the
+REM first prompt. That shell is not a login shell either, so it never reads /etc/profile and never loads
+REM bash-completion. The rcfile is what fixes both; see its own header.
+set "DP_RCFILE=%BOOTSTRAP_POSIX:_env_launcher_bootstrap.sh=_env_launcher_bashrc.sh%"
+
 REM THE SHELL IS HOSTED BY MINTTY, NOT BY THE WINDOWS CONSOLE, and that is a performance decision rather than a
 REM cosmetic one. This line used to pass `-defterm -no-start`, which made msys2_shell.cmd run bash directly in the
 REM cmd window this `start` opens. One window, and pasting was slow enough to notice.
@@ -170,5 +177,5 @@ REM TO GO BACK to the console-hosted shell, put `-defterm -no-start` back on the
 REM on the choice.
 start "Loading env..." cmd /c ^
 ""%MSYS2_SHELL%" -%MSYS2_ENV% -here ^
--c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; IFS=; . $DP_BOOTSTRAP; unset IFS DP_BOOTSTRAP; exec bash'"
+-c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; IFS=; . $DP_BOOTSTRAP; unset DP_BOOTSTRAP; if [ -r $DP_RCFILE ]; then exec bash --rcfile $DP_RCFILE; fi; unset IFS; exec bash'"
 exit /b 0
