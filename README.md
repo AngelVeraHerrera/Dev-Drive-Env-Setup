@@ -124,6 +124,17 @@ than a 50 GB file, a UAC prompt and a failure at the end.
 > thing holds the letter, because "in use by a network drive" and "in use by a mounted volume" call for different
 > fixes.
 
+> **If step 4 fails part-way through, run it again before investigating.** It resumes from where it stopped --
+> vcpkg does not rebuild what is already installed -- so a second run either sails past the failure or stops at the
+> same place. Only the second outcome is worth debugging.
+>
+> This is not defensive boilerplate. Two failures seen in the field were transient and both passed on a plain
+> retry: an `openssl` build dying with `Trying to rename Makefile-179 -> Makefile: Permission denied`, which is a
+> file-lock race rather than a build error, and GCC itself segfaulting mid-compile on `mongo-c-driver`
+> (`internal compiler error: Segmentation fault` during the `fre` pass). Both happened on one machine and not
+> another, and neither leaves the drive in a bad state: vcpkg installs package by package, so a package that failed
+> simply is not installed yet.
+
 Every step takes the same `-ConfigFile` switch and **must be given the same file**: they hand state to each other
 through the generated environment file on the drive.
 
@@ -239,8 +250,10 @@ Optional, and the only section about your projects rather than the environment. 
 }
 ```
 
-Only `url` is required. `default_folder` defaults to `workspace`, the folder step 1 already creates and the launcher
-already exports as `DEVSYSTEM_WORKSPACE`.
+Only `url` is required. `default_folder` names the directory **step 1 creates** and the one `DEVSYSTEM_WORKSPACE`
+points at, so there is one name in one place rather than a fixed `workspace` folder sitting empty beside whatever
+the configuration actually uses. Omit it and it is `workspace`, which is what every environment generated before
+this used. It must be relative to the drive root, with no drive letter and no `..`.
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -336,6 +349,27 @@ historically been difficult on this toolchain:
 > launcher, not by the environment file. And a binary run from a shell carrying *another* environment picks up that
 > environment's DLLs — the failure is `0xC0000139`, "entry point not found", which reads like a broken build rather
 > than a mixed one.
+
+---
+
+### Triplet integrity
+
+Step 3 verifies every overlay triplet against a `.sha256` shipped beside it before installing it on the drive, and
+refuses to install one that does not match.
+
+The hash is over the file's **content with line endings normalised**, not over its raw bytes, and that distinction
+is load-bearing. These are text files in a git repository used with `core.autocrlf=true`, so the same committed
+bytes arrive as LF on one machine and CRLF on another. A byte hash measures the developer's git configuration
+rather than the file: measured, `x64-mingw-ucrt-static-release.cmake` hashes `910B5E89...` as LF and `8BAE34F2...`
+as CRLF, and a hash generated on one machine failed on the other. Regenerating it there fixed it there and broke it
+back here.
+
+Two guards, because either alone is fragile. `.gitattributes` marks these files `-text` so git stops rewriting
+them, and the check normalises anyway, so a clone predating that rule still verifies.
+
+> ⚠️ **If the check ever fails, read the diff before regenerating the hash.** The comparison ignores line
+> endings, so a mismatch means the *content* differs, which is the check doing its job. Regenerate with
+> `Utility-Hash_Generator.bat` in the triplets directory only once you know why it changed.
 
 ---
 

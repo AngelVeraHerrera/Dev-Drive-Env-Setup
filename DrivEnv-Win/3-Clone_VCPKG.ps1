@@ -250,6 +250,39 @@ function Test-EnvFileDefines
     return $false
 }
 
+function Get-TextFileHash
+{
+    # @brief SHA256 of a TEXT file's content, with line endings normalised to LF and any BOM removed first.
+    #
+    # Not Get-FileHash, and the difference is not academic. The triplets are text files living in a git repository,
+    # and git is allowed to rewrite their line endings on checkout: with core.autocrlf=true -- the Windows default,
+    # and what a normal clone of this repository uses -- a file stored with LF arrives on disk with CRLF. A hash of
+    # the raw bytes therefore measures the developer's git configuration rather than the file's content, and the
+    # integrity check fails on a machine that did nothing wrong.
+    #
+    # That is not hypothetical. A hash generated here over the LF working copy
+    #     910B5E890CD9F3D351E8BF44511B340E91792A822F75A816375B5BEF1EC4608F
+    # failed on a second machine holding the byte-identical file as CRLF
+    #     8BAE34F2C2C33567A6166ED63C0C1F18492B634A60C33CAD71C8FA37C2A0DEC2
+    # and regenerating it there fixed it there and broke it here. A check that ping-pongs between machines is worse
+    # than no check, because the first thing anybody learns is to regenerate the hash without reading the file.
+    #
+    # Line endings do not change a single thing CMake reads, so CONTENT is the right thing to hash. Byte stability
+    # is separately protected by .gitattributes, which marks these files -text so git stops touching them; this
+    # function is what makes the check survive a clone that predates that, or a working copy converted by hand.
+    param ([string]$Path)
+
+    $text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $text = $text -replace "`r`n", "`n"
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try   { $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) }
+    finally { $sha.Dispose() }
+
+    return ([System.BitConverter]::ToString($hash) -replace '-', '').ToUpperInvariant()
+}
+
 function Resolve-GitExecutable
 {
     # @brief Locate git.exe inside the generated MSYS2 installation.
@@ -490,10 +523,22 @@ Write-NoFormat "================================================================
 Write-Info "STEP 1: Initial checks and preparations."
 
 Write-Info "Checking permissions..."
-if (-not (Test-IsAdministrator))
+# NO ELEVATION IS REQUIRED HERE, and demanding it was a mistake inherited from step 1. This block used to abort
+# unless the shell was already elevated, which sent people to reopen an Administrator terminal for no reason.
+#
+# This step writes to the dev drive and to the user's TEMP, and nothing else: no services, no registry, no machine
+# environment variables, no VHD, no Defender exclusions, no scheduled tasks. Step 1 needs administrator rights
+# because it creates and formats a volume; this one needs only a volume that already exists. The drive root carries
+# the stock "Authenticated Users: Modify" ACE, inherited by everything on it, so an ordinary user can do all of it.
+# Steps 2, 5 and 6 never had the check and have always worked -- step 6 clones repositories onto the same drive
+# unelevated.
+#
+# Running elevated is WORSE than unnecessary: every directory vcpkg creates -- buildtrees, packages, installed,
+# downloads -- ends up owned by BUILTIN\Administrators rather than by the person who will build against it.
+if (Test-IsAdministrator)
 {
-    Write-Error "This script must be run as Administrator."
-    Abort-WithError
+    Write-Warn "Running elevated. Nothing in this step needs it, and it leaves the vcpkg tree owned by"
+    Write-Warn "Administrators rather than by you. An ordinary terminal is the better choice for steps 2 to 6."
 }
 
 Write-Info "Checking if Dev Drive exists..."
@@ -839,12 +884,14 @@ if (-not (Test-Path -LiteralPath $tripletHashSrc))
 
 # Integrity of the shipped triplet.
 $expectedHash = ((Get-Content -Path $tripletHashSrc -Raw).Split(" ")[0]).Trim().ToUpperInvariant()
-$sourceHash   = (Get-FileHash -Path $tripletSrc -Algorithm SHA256).Hash.ToUpperInvariant()
+$sourceHash   = Get-TextFileHash -Path $tripletSrc
 
 if ($sourceHash -ne $expectedHash)
 {
     Write-Error "Triplet integrity check failed for: $tripletSrc"
     Write-Error "Expected SHA256 $expectedHash but found $sourceHash"
+    Write-Error "The hash ignores line endings, so this means the CONTENT differs. Read the diff before"
+    Write-Error "regenerating the hash: a mismatch is the check working, not the check being wrong."
     Abort-WithError
 }
 
@@ -859,7 +906,7 @@ if (-not (Test-Path -LiteralPath $overlayTripletsWin))
 $currentHash = ""
 if (Test-Path -LiteralPath $tripletDst)
 {
-    $currentHash = (Get-FileHash -Path $tripletDst -Algorithm SHA256).Hash.ToUpperInvariant()
+    $currentHash = Get-TextFileHash -Path $tripletDst
 }
 
 if ($currentHash -eq $expectedHash)
@@ -903,7 +950,7 @@ foreach ($extraTriplet in $extraTriplets)
     }
 
     $extraExpected = ((Get-Content -Path $extraHashSrc -Raw).Split(" ")[0]).Trim().ToUpperInvariant()
-    $extraActual   = (Get-FileHash -Path $extraTriplet.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+    $extraActual   = Get-TextFileHash -Path $extraTriplet.FullName
 
     if ($extraActual -ne $extraExpected)
     {

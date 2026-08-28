@@ -511,10 +511,22 @@ Write-NoFormat "================================================================
 Write-Info "STEP 1: Initial checks and preparations."
 
 Write-Info "Checking permissions..."
-if (-not (Test-IsAdministrator))
+# NO ELEVATION IS REQUIRED HERE, and demanding it was a mistake inherited from step 1. This block used to abort
+# unless the shell was already elevated, which sent people to reopen an Administrator terminal for no reason.
+#
+# This step writes to the dev drive and to the user's TEMP, and nothing else: no services, no registry, no machine
+# environment variables, no VHD, no Defender exclusions, no scheduled tasks. Step 1 needs administrator rights
+# because it creates and formats a volume; this one needs only a volume that already exists. The drive root carries
+# the stock "Authenticated Users: Modify" ACE, inherited by everything on it, so an ordinary user can do all of it.
+# Steps 2, 5 and 6 never had the check and have always worked -- step 6 clones repositories onto the same drive
+# unelevated.
+#
+# Running elevated is WORSE than unnecessary: every directory vcpkg creates -- buildtrees, packages, installed,
+# downloads -- ends up owned by BUILTIN\Administrators rather than by the person who will build against it.
+if (Test-IsAdministrator)
 {
-    Write-Error "This script must be run as Administrator."
-    Abort-WithError
+    Write-Warn "Running elevated. Nothing in this step needs it, and it leaves the vcpkg tree owned by"
+    Write-Warn "Administrators rather than by you. An ordinary terminal is the better choice for steps 2 to 6."
 }
 
 Write-Info "Checking if Dev Drive exists..."

@@ -139,7 +139,36 @@ REM sets IFS itself (`while IFS= read -r`). The residual exposure is a bootstrap
 REM which is far less likely than one containing a space, and unlike a space it is not silent.
 set "DP_BOOTSTRAP=%BOOTSTRAP_POSIX%"
 
+REM THE SHELL IS HOSTED BY MINTTY, NOT BY THE WINDOWS CONSOLE, and that is a performance decision rather than a
+REM cosmetic one. This line used to pass `-defterm -no-start`, which made msys2_shell.cmd run bash directly in the
+REM cmd window this `start` opens. One window, and pasting was slow enough to notice.
+REM
+REM Why it was slow, measured on this toolchain rather than assumed. Two things compound:
+REM
+REM   * conhost hands an application a paste as a stream of KEY_EVENT records byte-for-byte identical to typing,
+REM     with nothing marking where the paste begins or ends. readline asks for bracketed paste -- `bind -v` reports
+REM     `enable-bracketed-paste on` -- and cannot get it, so it processes the block one character at a time and
+REM     redisplays the whole line after each one.
+REM   * Each of those redisplays costs about a hundred times more on a console than on a pty. Same bash, same
+REM     script, same machine: /dev/cons1 costs 0.085 ms/char at 100 characters and 0.320 ms/char at 1000 -- it is
+REM     superlinear, because a wrapped line is rewritten in full per keystroke. mintty's /dev/pty0 costs
+REM     0.001-0.003 ms/char and stays flat. Redrawing this environment's own prompt 300 times: 190 ms on the
+REM     console, 3.5 ms on the pty.
+REM
+REM cmd.exe and PowerShell do not have the problem because their line editing happens inside conhost itself, which
+REM is exactly why only this terminal felt slow.
+REM
+REM `-no-start` goes too, and it is not optional here. Without it msys2_shell.cmd runs mintty with `start` and
+REM returns at once, so the cmd window closes and only mintty is left. With it, msys2_shell WAITS for mintty and
+REM the cmd window sits behind the session until it exits.
+REM
+REM Ruled out first, all measured: PROMPT_COMMAND (276 microseconds per prompt, and it runs per command, not per
+REM keystroke), bash-completion (not loaded at all in this chain), a leaked `set -e` (SHELLOPTS is not exported),
+REM and conhost's input buffer (2000 records accepted in 4.2 ms).
+REM
+REM TO GO BACK to the console-hosted shell, put `-defterm -no-start` back on the line below. Nothing else depends
+REM on the choice.
 start "Loading env..." cmd /c ^
-""%MSYS2_SHELL%" -%MSYS2_ENV% -defterm -here -no-start ^
+""%MSYS2_SHELL%" -%MSYS2_ENV% -here ^
 -c "bash -lc 'unset COUNT ENV_FILE BOOTSTRAP_SCRIPT PREFIX CAND_ENV CAND_PREFIX CAND_BOOT MSYS2_ROOT SCRIPT_DIR BOOTSTRAP_WIN DRIVE BOOTSTRAP_POSIX; IFS=; . $DP_BOOTSTRAP; unset IFS DP_BOOTSTRAP; exec bash'"
 exit /b 0

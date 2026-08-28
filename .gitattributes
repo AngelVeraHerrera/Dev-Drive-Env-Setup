@@ -14,7 +14,7 @@
 # Shell scripts are checked out with LF, not converted to CRLF like everything else.
 #
 # They survive CRLF here only because MSYS2's bash tolerates it -- verified: a script taken from a fresh clone, with
-# a literal "#!/bin/bash" shebang, still runs. That is a property of the MSYS runtime and not a reason to ship it.
+# a literal "#!/bin/bash" shebang, still runs. That is a property of the MSYS runtime and not a reason to ship it.
 # The same file on a Linux box fails with "bad interpreter: /bin/bash^M: no such file or directory", and a CR that
 # ends up inside a variable turns a string comparison into a puzzle.
 #
@@ -24,3 +24,22 @@
 # NOT applied to *.bat. cmd.exe is the one interpreter that has a real claim on CRLF, and its handling of LF around
 # labels and multi-line blocks is exactly the kind of thing not worth finding out about.
 *.sh text eol=lf
+
+# The controlled triplets are integrity-checked, so git must not rewrite them either.
+#
+# Step 3 verifies each triplet against a .sha256 shipped beside it before installing it on the drive. Under
+# core.autocrlf=true the same committed bytes arrive as CRLF, so a hash taken over the raw bytes measures the
+# developer's git configuration rather than the file, and the check fails on a machine that did nothing wrong.
+# Measured: the static triplet hashes 910B5E89... as LF and 8BAE34F2... as CRLF, and regenerating the hash on the
+# affected machine fixed it there and broke it on the machine that generated it.
+#
+# Two independent guards, because either alone is fragile. Here: -text keeps the bytes identical everywhere, in
+# both directions. In step 3: Get-TextFileHash normalises line endings before hashing, so a clone predating this
+# rule, or a file converted by hand, still verifies.
+# The path is spelled from the REPOSITORY ROOT, where this file lives. A pattern containing a slash is anchored to
+# the directory holding the .gitattributes, so "vcpkg_overlays/triplets/*.cmake" would match nothing at all here --
+# the generator sits one level down, in DrivEnv-Win/. The rules above get away with a bare "*.patch" precisely
+# because a pattern with no slash matches at any depth. Verified with `git check-attr text -- <path>`, which
+# reports "unset" when the rule bites and "unspecified" when it silently does not.
+DrivEnv-Win/vcpkg_overlays/triplets/*.cmake  -text
+DrivEnv-Win/vcpkg_overlays/triplets/*.sha256 -text

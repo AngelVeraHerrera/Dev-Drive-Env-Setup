@@ -624,7 +624,19 @@ if ($useDevDrive)
     if ($LASTEXITCODE -ne 0)
     {
         # Not fatal: the volume is already trusted and usable, only the antivirus exclusion did not take.
-        Write-Info "fsutil devdrv enable /disallowAv reported exit ${LASTEXITCODE}: $avOut"
+        Write-Warn "fsutil devdrv enable /disallowAv reported exit ${LASTEXITCODE}: $avOut"
+    }
+
+    # ASK THE VOLUME WHAT IT ACTUALLY GOT, rather than trusting the exit code above. /disallowAv sets a GLOBAL
+    # policy and it does not always apply to an already-attached volume; a restart is sometimes needed, and the
+    # dismount/reattach in STEP 5 is not a substitute for one. Logging the query means a build failing later on a
+    # scanned volume can be traced from this log instead of guessed at.
+    $devdrvState = & fsutil devdrv query "$driveLetter`:" 2>&1
+    Write-NoFormat ("  fsutil devdrv query: " + ($devdrvState -join " "))
+    if ("$devdrvState" -notmatch 'disallow|not allowed|no permitid')
+    {
+        Write-Warn "Antivirus filters may still be active on this Dev Drive."
+        Write-Warn "A restart can be required for the global /disallowAv policy to take effect."
     }
 }
 else {
@@ -641,19 +653,40 @@ else {
     }
 
     Start-Sleep -Milliseconds 500
+}
 
-    try {
-        if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
-            Write-Info "Adding Microsoft Defender exclusion for ${driveLetter}:\ ..."
-            Add-MpPreference -ExclusionPath "$driveLetter`:\" 2>$null
-        }
-        else {
-            Write-Info "Microsoft Defender cmdlets not found; skipping AV exclusion."
-        }
+# --------------------------------------------------------------------
+# Defender path exclusion, for BOTH branches
+# --------------------------------------------------------------------
+# This used to sit inside the NTFS branch only, which left the Dev Drive path -- the one use_dev_drive selects, and
+# the one sold as the fast option -- with no Defender path exclusion at all. It relied entirely on
+# `fsutil devdrv enable /disallowAv`, and if that did not take effect the whole build volume was scanned.
+#
+# That is not a theoretical gap. A build on a second machine failed with
+#
+#     Trying to rename Makefile-179 -> Makefile: Permission denied
+#
+# out of openssl's own util/add-depends.pl, which is a Win32 rename onto a file some other process holds open
+# without FILE_SHARE_DELETE. An on-access scanner opening the temporary file as perl closes it is the textbook
+# cause; a retry succeeded, which is exactly the signature of a transient handle rather than a build error.
+#
+# The exclusion this script already adds unconditionally is for the HOST folder holding the .vhdx, which stops
+# Defender scanning the container but does nothing for files opened as <letter>:\... So on a Dev Drive there was
+# no protection at the path that matters.
+#
+# Belt and braces on a Dev Drive, and the only protection there is against a third-party product, which
+# /disallowAv does not touch at all -- that one needs an exclusion in its own console.
+try {
+    if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
+        Write-Info "Adding Microsoft Defender exclusion for ${driveLetter}:\ ..."
+        Add-MpPreference -ExclusionPath "$driveLetter`:\" 2>$null
     }
-    catch {
-        Write-Error "Could not add Defender exclusion: $_"
+    else {
+        Write-Info "Microsoft Defender cmdlets not found; skipping AV exclusion."
     }
+}
+catch {
+    Write-Error "Could not add Defender exclusion: $_"
 }
 
 Write-Info "STEP 4: OK"
@@ -707,6 +740,28 @@ Write-Info "STEP 6: Create Workspace Folder Structure."
 
 Write-Info "Creating workspace folder tree inside drive $driveLetter..."
 
+# The workspace directory is NAMED BY THE CONFIGURATION, not fixed. workspace.default_folder decides what gets
+# created here and what DEVSYSTEM_WORKSPACE points at further down, and step 6 clones into it. Absent, it is
+# "workspace", which is what every environment generated before this used.
+#
+# One name, one place: a fixed "workspace" folder created here and a different default_folder in the JSON would
+# leave an empty directory nobody uses beside the one everybody does.
+$workspaceFolder = "workspace"
+if ($Cfg.workspace -and -not [string]::IsNullOrWhiteSpace([string]$Cfg.workspace.default_folder))
+{
+    $workspaceFolder = ([string]$Cfg.workspace.default_folder).Trim().Replace('\', '/')
+    $workspaceFolder = $workspaceFolder.Trim('/')
+
+    # Same rule as environment.custom_folders below, and for the same reason: a hand-edited config must not be able
+    # to make this script create directories outside the drive it owns.
+    if ($workspaceFolder -match '^[A-Za-z]:' -or (($workspaceFolder -split '/') -contains '..') -or
+        [string]::IsNullOrWhiteSpace($workspaceFolder))
+    {
+        Write-Error "workspace.default_folder: '$($Cfg.workspace.default_folder)' must be relative to the drive root, with no drive letter and no '..'."
+        Abort-WithError
+    }
+}
+
 $folders = 
 @(
     "${driveLetter}:/buildtrees",
@@ -716,7 +771,7 @@ $folders =
     "${driveLetter}:/env/launcher",
     "${driveLetter}:/env/settings",
     "${driveLetter}:/testing",
-    "${driveLetter}:/workspace"
+    "${driveLetter}:/$workspaceFolder"
 )
 
 # --------------------------------------------------------------------
@@ -891,7 +946,7 @@ $driveRootUnix   = "${driveLetterNorm}:/"
 
 # Paths (use forward slashes to match your scheme)
 $deploysDir    = "${driveRootUnix}deploys"
-$workspaceDir  = "${driveRootUnix}workspace"
+$workspaceDir  = "${driveRootUnix}$workspaceFolder"
 $buildtreesDir = "${driveRootUnix}buildtrees"
 
 Write-Info "DEVDRIVE_NAME       = $driveLabel"
