@@ -80,7 +80,7 @@ live drive it is hours. This is a change to make at drive generation,
 not by forcing a rebuild in place.
 
 
-gstreamer           (eight deltas, all documented in its portfile head)
+gstreamer            (nine deltas, all documented in its portfile head)
 -----------------------------------------------------------------------
 1. gstfilesink_fix_gcc15-2-Rev11.patch
    gstfilesink.c redefines off_t to guint64 on Win32 but still maps
@@ -194,22 +194,55 @@ gstreamer           (eight deltas, all documented in its portfile head)
    away. DEPENDS ON THE fastfeat OVERLAY ABOVE -- enabling this without it
    brings back a dangling plugin and, through avcodec, a dead ffmpeg.
 
-TWO METADATA DELTAS THE PORTFILE HEAD DOES NOT COUNT. It says "exactly
-EIGHT deltas ... and nothing else", and a full recursive diff finds two
-more, both harmless and neither functional: vcpkg.json gains a
-"[MILETHOS] ..." suffix on the description, and it gains
-"port-version": 7 where the baseline has no port-version field at all.
-Say ten, or say "eight functional deltas plus metadata", but do not
-leave the head claiming an invariant a diff disproves.
+TWO METADATA DELTAS THE PORTFILE HEAD DOES NOT COUNT. It used to claim
+"exactly EIGHT deltas ... and nothing else", and a full recursive diff
+found two beyond the functional ones, both harmless: vcpkg.json gains a
+"[MILETHOS] ..." suffix on the description, and it gains a port-version
+where the baseline port has no port-version field at all. The head now
+says "NINE FUNCTIONAL deltas ... plus two metadata ones", which is a
+claim a diff agrees with.
 
-ONE DEFECT IN THE RESULT, unrelated to any delta and not yet fixed:
-gst/d3d11/gstd3d11config.h is missing from the installed tree, while
-the installed gst/d3d11/gstd3d11.h:28 includes it. Any C++ consumer of
-<gst/d3d11/gstd3d11.h> therefore gets a fatal error. The cause is this
-portfile's own file(REMOVE_RECURSE .../lib/gstreamer-1.0/include). It
-does not affect gst-launch or any plugin -- only code that includes the
-d3d11 helper API directly, which is exactly what a camera streaming
-path would want to do.
+9. gstd3d11config.h relocated out of lib/, and the stale -I dropped
+   from gstreamer-d3d11-1.0.pc.
+
+   THE SYMPTOM: the installed gst/d3d11/gstd3d11.h line 28 does
+   #include <gst/d3d11/gstd3d11config.h>, and that header was not in
+   the installed tree at all. Any C++ consumer of the d3d11 helper API
+   therefore failed on a bare "No such file or directory", naming a
+   header the port had installed and then removed. Nothing notices at
+   build time -- no plugin and no gst-launch pipeline includes it. Only
+   code reaching for the d3d11 API directly does, which is exactly what
+   a camera path wants to do.
+
+   THE CAUSE IS UPSTREAM'S PORT, not this overlay and not MinGW. Two
+   generated headers declare install_dir = libdir/gstreamer-1.0/include:
+   gst/gl/gstglconfig.h and gst/d3d11/gstd3d11config.h. The baseline
+   port relocates the gl one into include/gstreamer-1.0 and strips the
+   matching -I from gstreamer-gl-1.0.pc; it never learned about the
+   d3d11 one, whose config header install is newer. Then its own
+   file(REMOVE_RECURSE .../lib/gstreamer-1.0/include) deletes the
+   directory, taking the d3d11 header with it, and
+   gstreamer-d3d11-1.0.pc is left as the ONE .pc still advertising -I
+   into a directory that no longer exists. Verified in the baseline
+   portfile: zero mentions of gstd3d11config anywhere in it.
+
+   THE FIX mirrors what the port already does for gl -- rename the
+   header into include/gstreamer-1.0/gst/d3d11/ before the removal, and
+   strip the dangling -I from the .pc, release and debug both. Guarded
+   on EXISTS rather than on a feature, because d3d11 comes from
+   plugins-bad and is Windows-only, so a feature test would duplicate
+   the platform logic that produced the file in the first place.
+
+   Worth sending upstream: it affects MSVC identically, and the fix is
+   four lines beside code that already does the same thing one plugin
+   over.
+
+   HOW TO TEST IT, because the first attempt produced a false pass. In
+   classic mode `vcpkg install gstreamer` reports "already installed"
+   from the package NAME and skips the build entirely, ignoring a
+   port-version bump. The port has to be REMOVED from the target install
+   root first or the new portfile never runs and the old artefacts are
+   what gets inspected.
 
 fastfeat                                  (one delta, MinGW only)
 -----------------------------------------------------------------------

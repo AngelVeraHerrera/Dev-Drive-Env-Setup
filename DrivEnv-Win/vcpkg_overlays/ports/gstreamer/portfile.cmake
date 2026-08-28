@@ -1,18 +1,24 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# EIGHT FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
+# NINE FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
 # next version, and nothing else -- everything else here is upstream's and must be taken verbatim.
 #
 # The two metadata deltas, both harmless, listed because this head used to claim "exactly eight ... and nothing
 # else" and a full recursive diff disproved it: vcpkg.json gains the "[MILETHOS] ..." suffix on its description,
 # and it gains "port-version" where the baseline port has no port-version field at all.
 #
-# STATUS OF THE EIGHT, re-verified against the 1.28.6 sources on 2026-08-27 (deltas 4 and 5 by running the build,
-# the rest by reading the sources with the real MinGW toolchain):
-#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8
+# STATUS, re-verified against the 1.28.6 sources on 2026-08-27 (deltas 4 and 5 by running the build, the rest by
+# reading the sources with the real MinGW toolchain):
+#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9
 #   defect gone    : 1 -- see below; kept for now, costs nothing
 #   half inert     : 3 (d3d11 half) -- see below; kept deliberately
+#
+#   9. gstd3d11config.h relocated out of lib/, and the stale -I dropped from gstreamer-d3d11-1.0.pc.
+#      UPSTREAM'S OMISSION, not a MinGW issue and not specific to this environment: the baseline port does the same
+#      relocation for gst/gl/gstglconfig.h and never learned about d3d11's, whose generated config header is
+#      newer. The port installs it, deletes it, and leaves the installed gstd3d11.h including it. Verified in the
+#      baseline portfile: zero mentions of gstd3d11config. Worth sending upstream -- it affects MSVC identically.
 #
 #   1. PATCHES gains gstfilesink_fix_gcc15-2-Rev11.patch.
 #      gstfilesink.c redefines off_t to guint64 on Win32 but still maps ftruncate to _chsize, which takes a long.
@@ -507,6 +513,35 @@ if("gl" IN_LIST FEATURES)
     )
 endif()
 
+# NINTH DELTA. The same relocation for d3d11's generated config header, which upstream's port does for gl (just
+# above) and forgot for d3d11. Two generated headers declare install_dir = libdir/gstreamer-1.0/include:
+# gst/gl/gstglconfig.h and gst/d3d11/gstd3d11config.h. The gl one is moved here and its -I is stripped from the .pc
+# further down; the d3d11 one is left where it is, and then the file(REMOVE_RECURSE) below deletes that whole
+# directory -- while the installed gst/d3d11/gstd3d11.h line 28 still does #include <gst/d3d11/gstd3d11config.h>.
+#
+# Nothing notices at build time. It breaks only a C++ consumer that includes the d3d11 helper API directly, which
+# is exactly what a camera pipeline wants to do, and it breaks with a bare "No such file or directory" naming a
+# header that the port did install and then removed.
+#
+# Guarded on EXISTS rather than on a feature, because d3d11 comes from plugins-bad and is Windows-only, so the
+# feature test would have to duplicate the platform logic that produced the file in the first place.
+# MAKE_DIRECTORY first, because file(RENAME) requires the destination's parent to exist and will hard-error if it
+# does not. On this drive both overlay triplets are VCPKG_BUILD_TYPE release, so the debug branch never runs and the
+# release parent always exists -- but the whole point of writing this to be upstreamable is that neither holds
+# elsewhere. Creating an existing directory is a no-op.
+if(EXISTS "${CURRENT_PACKAGES_DIR}/lib/gstreamer-1.0/include/gst/d3d11/gstd3d11config.h")
+    file(MAKE_DIRECTORY "${CURRENT_PACKAGES_DIR}/include/gstreamer-1.0/gst/d3d11")
+    file(RENAME "${CURRENT_PACKAGES_DIR}/lib/gstreamer-1.0/include/gst/d3d11/gstd3d11config.h"
+                "${CURRENT_PACKAGES_DIR}/include/gstreamer-1.0/gst/d3d11/gstd3d11config.h"
+    )
+endif()
+if(EXISTS "${CURRENT_PACKAGES_DIR}/debug/lib/gstreamer-1.0/include/gst/d3d11/gstd3d11config.h")
+    file(MAKE_DIRECTORY "${CURRENT_PACKAGES_DIR}/debug/include/gstreamer-1.0/gst/d3d11")
+    file(RENAME "${CURRENT_PACKAGES_DIR}/debug/lib/gstreamer-1.0/include/gst/d3d11/gstd3d11config.h"
+                "${CURRENT_PACKAGES_DIR}/debug/include/gstreamer-1.0/gst/d3d11/gstd3d11config.h"
+    )
+endif()
+
 if(NOT VCPKG_LIBRARY_LINKAGE STREQUAL "static") # AND tools
     list(APPEND GST_BIN_TOOLS
         gst-inspect-1.0
@@ -615,6 +650,16 @@ if(EXISTS "${CURRENT_PACKAGES_DIR}/lib/pkgconfig/gstreamer-gl-1.0.pc")
 endif()
 if(EXISTS "${CURRENT_PACKAGES_DIR}/debug/lib/pkgconfig/gstreamer-gl-1.0.pc")
   vcpkg_replace_string("${CURRENT_PACKAGES_DIR}/debug/lib/pkgconfig/gstreamer-gl-1.0.pc" [[-I${libdir}/gstreamer-1.0/include]] "")
+endif()
+
+# NINTH DELTA, second half. gstreamer-d3d11-1.0.pc is the ONE remaining .pc that still asks for
+# -I${libdir}/gstreamer-1.0/include, a directory this portfile deletes. Harmless as a missing include path, but it
+# is also the reason the missing header went unnoticed: the .pc advertises where it used to be.
+if(EXISTS "${CURRENT_PACKAGES_DIR}/lib/pkgconfig/gstreamer-d3d11-1.0.pc")
+  vcpkg_replace_string("${CURRENT_PACKAGES_DIR}/lib/pkgconfig/gstreamer-d3d11-1.0.pc" [[-I${libdir}/gstreamer-1.0/include]] "")
+endif()
+if(EXISTS "${CURRENT_PACKAGES_DIR}/debug/lib/pkgconfig/gstreamer-d3d11-1.0.pc")
+  vcpkg_replace_string("${CURRENT_PACKAGES_DIR}/debug/lib/pkgconfig/gstreamer-d3d11-1.0.pc" [[-I${libdir}/gstreamer-1.0/include]] "")
 endif()
 
 vcpkg_fixup_pkgconfig()
