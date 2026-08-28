@@ -395,40 +395,38 @@ So this overlay currently changes nothing except a port-version bump
 and the rebuild that bump forces. It is insurance for the static
 triplet and should be deleted in the same commit as that triplet.
 
-libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
+RETIRED 2026-08-27: libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
 -----------------------------------------------------------------------
-Forced static linkage. The upstream ports build shared libraries that
-this environment does not want to deploy.
+All four deleted. They forced static linkage and pinned old versions;
+the baseline versions are now installed and used -- utf8proc 2.11.3,
+libbson 2.3.2, mongo-c-driver 2.3.1, mongo-cxx-driver 4.4.0 -- and both
+HelloWorlds build and run against them.
 
-STATUS 2026-08-27: removed from the deployed drive and the baseline
-versions installed in their place -- utf8proc 2.11.3, libbson 2.3.2,
-mongo-c-driver 2.3.1, mongo-cxx-driver 4.4.0. Both HelloWorlds build
-and run against them. Still present in this repository, pending one
-decision, because retiring them is not a pure cleanup.
+WHY IT IS SAFE, which was the only open question: the static linkage
+was never the goal. It was a workaround for older baselines where the
+dynamic build failed, and this environment wants everything DYNAMIC.
+Once that is settled, nothing in these four overlays was still wanted.
 
-WHAT THE OVERLAYS ACTUALLY CARRIED, by the same-version comparison:
+WHAT THEY ACTUALLY CARRIED, by the same-version comparison:
 
     utf8proc          one line: set(VCPKG_LIBRARY_LINKAGE static)
     libbson           the same one line
     mongo-cxx-driver  that line, -DINLINE_VAR=inline, C++17
     mongo-c-driver    that line, a rewritten fix-dependencies.patch,
                       and scrubbing -lutf8proc out of the .pc files and
-                      the exported CMake targets
+                      the exported CMake targets, plus two dead files
+                      referenced by nothing (fix-dependencies.patch_
+                      and patches/fix-dependencies.patch)
 
-The version pins were incidental -- nobody chose 1.30.6 over 2.3.1, it
-is just where the fork was taken. What WAS chosen is the static
-linkage, and dropping the overlays drops that too. "It builds and runs
-dynamically" is not the same as "dynamic was wanted".
+The version pins were incidental. Nobody chose 1.30.6 over 2.3.1; that
+is simply where the fork was taken, and mongo-c-driver had drifted a
+whole major version behind.
 
-THE DECISION: if static mongo is still wanted, the overlay to write now
-is far smaller than the one being retired -- the current baseline port
-plus set(VCPKG_LIBRARY_LINKAGE static), no version pin and no patches,
-because the pins and the patches are what went stale, not the linkage.
-If dynamic is acceptable, delete all four and this section with them.
-
-mongo-c-driver also carries two dead files that are referenced by
-nothing and should go either way: fix-dependencies.patch_ and
-patches/fix-dependencies.patch.
+THE ONE THING THAT DID NOT FOLLOW: fastdds is still forced static, and
+that is NOT a leftover of the same habit. Its MinGW DLL does not export
+the TypeSupport vtable, so a dynamic build cannot be linked by anything
+that defines a DDS type. See its own section above. "Everything
+dynamic" is the policy; fastdds is the one measured exception to it.
 
 vcpkg-qmake                            (one delta, MinGW targets)
 -----------------------------------------------------------------------
