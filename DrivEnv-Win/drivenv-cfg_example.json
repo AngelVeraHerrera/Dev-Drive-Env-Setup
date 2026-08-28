@@ -212,5 +212,12 @@
             { "name": "qtimageformats" },
             { "name": "qt-advanced-docking-system" }
         ]
+    },
+    "workspace": {
+        "default_folder": "workspace",
+        "repositories": [
+            { "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git" },
+            { "url": "https://github.com/DegorasProjectTeam/LibZMQUtils.git", "folder": "workspace/degoras", "ref": "main", "optional": true }
+        ]
     }
 }

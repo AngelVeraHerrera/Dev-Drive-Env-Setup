@@ -166,10 +166,48 @@ function Get-DrivEnvConfigSchema
         }
     }
 
+    # A repository to clone into the generated drive. Only the URL is required; everything else has a default that
+    # lives in step 6, because this file validates shape and the reading script owns behaviour.
+    #
+    #   name     the directory to clone into. Default: the last path segment of the URL, minus any .git.
+    #            Present so two forks of the same project can coexist, and so a repository can be given the name
+    #            the project actually calls it rather than the one its URL happens to carry.
+    #   folder   the destination root, relative to the drive. Default: workspace.default_folder.
+    #   ref      a branch or a tag to check out. Default: the remote's own default branch. A commit id does NOT
+    #            work here: git clone --branch takes a ref name, not a sha.
+    #   depth    a shallow clone of that many commits. Omit for a full clone, which is the default and the right
+    #            choice for anything somebody will commit to.
+    #   optional when true, a failure to clone this one is a warning instead of a fault. For a private repository
+    #            on a machine that may not have credentials, that is the difference between a usable step and one
+    #            everybody learns to ignore.
+    $workspaceRepo = @{
+        type   = 'object'
+        fields = @{
+            url        = $reqString
+            name       = @{ type = 'string'; notEmpty = $true }
+            folder     = @{ type = 'string'; notEmpty = $true }
+            ref        = @{ type = 'string'; notEmpty = $true }
+            depth      = @{ type = 'int'; min = 1 }
+            submodules = $boolNode
+            optional   = $boolNode
+        }
+    }
+
+    # OPTIONAL as a whole: a configuration with no 'workspace' key is valid and step 6 then has nothing to do.
+    # default_folder is likewise optional, and step 6 defaults it to 'workspace', which is the folder step 1
+    # already creates and the launcher already exports as DEVSYSTEM_WORKSPACE.
+    $workspace = @{
+        type   = 'object'
+        fields = @{
+            default_folder = @{ type = 'string'; notEmpty = $true }
+            repositories   = @{ type = 'array'; item = $workspaceRepo }
+        }
+    }
+
     return @{
         type     = 'object'
         required = $true
-        fields   = @{ environment = $environment; msys2 = $msys2; vcpkg = $vcpkg }
+        fields   = @{ environment = $environment; msys2 = $msys2; vcpkg = $vcpkg; workspace = $workspace }
     }
 }
 
@@ -313,7 +351,13 @@ function Test-DrivEnvNode
         'object'
         {
             $fields  = Get-DrivEnvNodeField -Node $Node -Field 'fields'
-            $present = @($Value.PSObject.Properties.Name)
+
+            # Piped rather than @($Value.PSObject.Properties.Name), which looks equivalent and is not. On an object
+            # with NO properties -- a bare {} in the JSON -- the member access yields $null, and @($null) is an
+            # array holding one null, not an empty array. The loop below then ran once with $k = $null and
+            # $fields.ContainsKey($null) threw "Value cannot be null. (Parameter 'key')", so an empty section
+            # crashed the validator instead of validating clean. Piping yields nothing for nothing.
+            $present = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
             $known   = @($fields.Keys)
 
             foreach ($k in $present)

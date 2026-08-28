@@ -260,6 +260,37 @@ function Configure-MSYS2Proxy
 
     Set-Content -Path $dirmngrConf -Encoding ASCII -Value $dirmngrLines
     Write-Info "dirmngr.conf created at: $dirmngrConf"
+
+    # 3) Proxy for GIT, and this one is not redundant with (1).
+    #
+    # The profile.d script above only reaches a shell that sources /etc/profile -- which the launcher does and the
+    # SETUP STEPS DO NOT: they invoke git.exe from PowerShell directly. Step 3 clones vcpkg that way, and step 6
+    # clones the configured repositories the same way, so without this file both of them go straight at the remote
+    # and time out behind a proxy.
+    #
+    # It works today on the developer machine this was written on only by accident: the drive's git falls back to
+    # the personal C:/Users/<user>/.gitconfig, which happens to carry http.proxy. That is exactly the kind of
+    # dependency on the host that this generator exists to remove -- on a clean machine there is nothing there.
+    #
+    # etc/gitconfig is the SYSTEM configuration for every git on the drive; both msys64/usr/bin/git.exe and
+    # msys64/<env>/bin/git.exe read it, and the path is not a guess: an unconfigured drive's git reports
+    # "cannot read config file 'S:/msys64/etc/gitconfig'" when asked for its system settings. A user's own
+    # ~/.gitconfig still overrides it, which is the right precedence -- the drive states a default, the developer
+    # keeps the last word.
+    Write-Info "Configuring git proxy for the drive..."
+
+    $gitConfigPath = Join-Path $Msys2Root "etc\gitconfig"
+
+    $gitConfigLines = @(
+        "# DevSystem - git system configuration for this drive."
+        "# Written by 2-Setup_MSYS2.ps1 from environment.proxy_url. Edit the JSON, not this file:"
+        "# regenerating the environment overwrites it."
+        "[http]"
+        "`tproxy = $Proxy"
+    )
+
+    Set-Content -Path $gitConfigPath -Encoding ASCII -Value $gitConfigLines
+    Write-Info "git system config created at: $gitConfigPath"
 }
 
 # CONFIGURATION

@@ -104,7 +104,11 @@ order, from an **elevated** PowerShell for the first one:
 .\3-Clone_VCPKG.ps1           # clone vcpkg at the baseline, write the environment file
 .\4-Deps_VCPKG.ps1            # install the configured packages, write the installation inventory
 .\5-Verify_Env.ps1            # prove the result works
+.\6-Clone_Repos.ps1           # clone the configured projects into the drive (optional)
 ```
+
+Step 6 is optional in the real sense: a configuration with no `workspace` section is valid, and the step then says so
+and exits 0. It is last because it is the only one that puts *your* code on the drive rather than the environment's.
 
 Step 1 is the only one needing administrator rights. Started without them it asks for elevation, does the work in
 the elevated window, and waits for it -- so the window you started from stays open until that finishes, and then
@@ -219,6 +223,58 @@ hash is missing; an additional one declines to travel with a warning instead.
 > including codecs that cannot work on this toolchain — and one of them took `avcodec` down with it, and `ffmpeg.exe`
 > and GStreamer's whole libav bridge after that. An explicit list is also a statement of intent that a reader can
 > check.
+
+### `workspace`
+
+Optional, and the only section about your projects rather than the environment. Omit it and step 6 has nothing to do.
+
+```json
+"workspace": {
+    "default_folder": "workspace",
+    "repositories": [
+        { "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git" },
+        { "url": "https://github.com/DegorasProjectTeam/LibZMQUtils.git",
+          "folder": "workspace/degoras", "ref": "main", "optional": true }
+    ]
+}
+```
+
+Only `url` is required. `default_folder` defaults to `workspace`, the folder step 1 already creates and the launcher
+already exports as `DEVSYSTEM_WORKSPACE`.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `url` | — | Anything `git clone` accepts: https, ssh, or a local path |
+| `name` | last path segment of the URL, minus `.git` | The directory to clone into, so two forks can coexist |
+| `folder` | `workspace.default_folder` | Destination root, relative to the drive. No drive letter, no `..` |
+| `ref` | the remote's default branch | A branch or a tag. Not a commit id — `clone --branch` takes a name |
+| `depth` | full clone | A shallow clone of N commits |
+| `submodules` | `false` | Clone submodules too |
+| `optional` | `false` | A failure here is a warning instead of a fault |
+
+**What the step does when re-run**, which is the part that decides whether it is safe to leave in a pipeline:
+
+| On disk | What happens |
+| --- | --- |
+| Nothing | Cloned |
+| The same repository, same origin | **Left completely alone.** Not fetched, not reset, not rebased |
+| A git repository with a *different* origin | Refused, and the step fails |
+| Something that is not a git repository | Refused, and the step fails |
+
+It never fetches and never touches a working tree it did not just create. This step puts projects on a drive; it is
+not a synchroniser, and pulling under somebody's uncommitted work is not a thing a setup script should do.
+
+> ⚠️ **Private repositories over HTTPS will not clone here.** The step runs non-interactively with
+> `GIT_TERMINAL_PROMPT=0`, deliberately — otherwise an unattended run hangs forever waiting for a username nobody is
+> there to type. The drive's git has no credential helper of its own. Use a public URL, or an `ssh://` remote with a
+> key the machine already has, or mark that repository `optional` and clone it by hand. The step says exactly this
+> when an HTTPS clone fails, rather than leaving you to work it out.
+
+**What step 6 deliberately does not do: build anything.** A configuration that both names remote repositories and
+names a script to run after fetching them is a way to execute arbitrary code on whoever generates the drive, and
+step 1 self-elevates. Separately, and more mundanely: a project that fails to build is not a broken drive, and a
+step that conflates the two teaches people to ignore its failures. Build from the launcher, where a red build means
+what it says.
 
 ### `environment.verification`
 
