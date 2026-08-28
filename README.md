@@ -124,16 +124,27 @@ than a 50 GB file, a UAC prompt and a failure at the end.
 > thing holds the letter, because "in use by a network drive" and "in use by a mounted volume" call for different
 > fixes.
 
-> **If step 4 fails part-way through, run it again before investigating.** It resumes from where it stopped --
-> vcpkg does not rebuild what is already installed -- so a second run either sails past the failure or stops at the
-> same place. Only the second outcome is worth debugging.
+> **Step 4 retries a failed port once, on its own, and the retry runs with concurrency forced to 1.** Not a plain
+> repeat of the same command: the failures this absorbs are concurrency- and resource-shaped, so serialising is
+> what changes the odds rather than just rolling the dice again. It is safe because vcpkg is per-package -- an
+> attempt costs only the port that failed, never the tree behind it.
 >
-> This is not defensive boilerplate. Two failures seen in the field were transient and both passed on a plain
-> retry: an `openssl` build dying with `Trying to rename Makefile-179 -> Makefile: Permission denied`, which is a
-> file-lock race rather than a build error, and GCC itself segfaulting mid-compile on `mongo-c-driver`
-> (`internal compiler error: Segmentation fault` during the `fre` pass). Both happened on one machine and not
-> another, and neither leaves the drive in a bad state: vcpkg installs package by package, so a package that failed
-> simply is not installed yet.
+> Three failures seen on one machine, none of them a build error, all gone on a re-run:
+>
+> | Port | What it said |
+> | --- | --- |
+> | `openssl` | `Trying to rename Makefile-179 -> Makefile: Permission denied` |
+> | `mongo-c-driver` | `internal compiler error: Segmentation fault`, during the GIMPLE `fre` pass |
+> | `glib` | `Access violation`, out of the meson configure |
+>
+> **Every retry is reported, and the summary names each port that needed one.** That is deliberate. Three unrelated
+> programs -- perl, GCC and meson -- crashing on one machine and none of them on another is a statement about the
+> machine, not about vcpkg, and a retry that quietly succeeded would erase the only evidence of it. One retry is
+> bad luck; several across unrelated ports is worth investigating, and the usual causes are an on-access virus
+> scanner holding files open and memory pressure crashing the compiler.
+>
+> If a port fails on both attempts the step stops, and the second attempt having run serialised means a race
+> between parallel jobs is already ruled out.
 
 Every step takes the same `-ConfigFile` switch and **must be given the same file**: they hand state to each other
 through the generated environment file on the drive.

@@ -695,6 +695,10 @@ $scriptHeader = New-Msys2ScriptHeader -Msys2Env        $msys2Env `
                                       -OverlayTriplets $overlayTripletsDrive `
                                       -BinaryCache     $binaryCacheDrive
 
+# Ports that failed once and then installed unchanged. Reported at the end rather than only in passing, because
+# it is the one number that says something about the machine rather than about the configuration.
+$retriedPorts = @()
+
 $index = 0
 foreach ($port in $portSpecs)
 {
@@ -709,17 +713,73 @@ foreach ($port in $portSpecs)
                     $index, $portSpecs.Count, $port.Spec, $port.Triplet)
     }
 
-    $installScript = $scriptHeader + @"
+    # ONE RETRY, AND THE SECOND ATTEMPT IS SERIALISED. Not a plain repeat of the same command: the failures this
+    # absorbs are concurrency- and resource-shaped, so running the retry with one job is what actually changes the
+    # odds rather than just rolling the dice again.
+    #
+    # Three real failures on one machine, none of them a build error, all of them gone on a manual re-run:
+    #
+    #   openssl          Trying to rename Makefile-179 -> Makefile: Permission denied
+    #                    A Win32 rename onto a file another process holds open without FILE_SHARE_DELETE.
+    #                    openssl's dependmagic macro makes six targets each start with a recursive `make depend`,
+    #                    so at -j>1 several add-depends.pl processes rename onto the same Makefile.
+    #   mongo-c-driver   internal compiler error: Segmentation fault, during the GIMPLE fre pass
+    #   glib             Access violation, out of the meson configure
+    #
+    # Retrying is safe precisely because vcpkg is per-package: everything installed before the failure is left
+    # alone, so an attempt costs only the port that failed and never the tree behind it.
+    #
+    # WHAT THIS DELIBERATELY DOES NOT DO is hide the problem. Every retry is logged loudly and every port that
+    # needed one is named again in the summary, because three unrelated programs crashing on one machine and none
+    # on another is the signature of that machine, not of vcpkg -- and a retry that quietly succeeds would erase
+    # the only evidence of it.
+    $maxAttempts = 2
+    $code = 1
 
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++)
+    {
+        if ($attempt -gt 1)
+        {
+            Write-Warn ("Retrying '{0}', attempt {1} of {2}, with concurrency forced to 1." -f
+                        $port.Spec, $attempt, $maxAttempts)
+        }
+
+        # VCPKG_MAX_CONCURRENCY is read by vcpkg itself and passed down to the port's build system, which is what
+        # makes it reach make and ninja rather than only vcpkg's own scheduling.
+        $concurrencyLine = ""
+        if ($attempt -gt 1) { $concurrencyLine = "export VCPKG_MAX_CONCURRENCY=1" }
+
+        $installScript = $scriptHeader + @"
+
+$concurrencyLine
 ./vcpkg install '$($port.Spec)' --triplet '$($port.Triplet)' --host-triplet '$vcpkgTriplet'
 "@
 
-    $tempName = "vcpkg_install_{0}.sh" -f ($port.Name -replace '[^A-Za-z0-9]', '_')
-    $code = Invoke-Msys2Script -BashPath $msys2BashWin -ScriptBody $installScript -TempName $tempName
+        $tempName = "vcpkg_install_{0}_{1}.sh" -f ($port.Name -replace '[^A-Za-z0-9]', '_'), $attempt
+        $code = Invoke-Msys2Script -BashPath $msys2BashWin -ScriptBody $installScript -TempName $tempName
+
+        if ($code -eq 0)
+        {
+            if ($attempt -gt 1)
+            {
+                Write-Warn ("'{0}' installed on attempt {1}. The first attempt failed and nothing about the port" -f
+                            $port.Spec, $attempt)
+                Write-Warn  "changed in between, so treat this as a symptom of the machine and not of the port."
+                $retriedPorts += $port.Spec
+            }
+            break
+        }
+
+        if ($attempt -lt $maxAttempts)
+        {
+            Write-Warn ("Installation of '{0}' failed (ExitCode={1})." -f $port.Spec, $code)
+        }
+    }
 
     if ($code -ne 0)
     {
-        Write-Error "Installation of '$($port.Spec)' failed (ExitCode=$code)."
+        Write-Error "Installation of '$($port.Spec)' failed on all $maxAttempts attempts (ExitCode=$code)."
+        Write-Error "The second attempt ran with concurrency 1, so a race between parallel jobs is ruled out."
         Write-Error "See the full build output in: $globalLogFile"
         Abort-WithError
     }
@@ -1114,6 +1174,18 @@ $elapsedStr = ("{0:hh\:mm\:ss}" -f $elapsed)
 
 Write-Info "VCPKG dependencies setup completed successfully."
 Write-Info "TOTAL EXECUTION TIME: $($elapsed.TotalSeconds) seconds  ($elapsedStr)"
+
+# Named again here rather than left in the scrollback. A port that failed and then installed with nothing about it
+# changed is not a fact about the port, and the value of the retry is lost if it silently absorbs the evidence.
+if ($retriedPorts.Count -gt 0)
+{
+    Write-NoFormat ""
+    Write-Warn ("{0} port(s) failed once and installed on the retry:" -f $retriedPorts.Count)
+    foreach ($p in $retriedPorts) { Write-Warn ("    {0}" -f $p) }
+    Write-Warn "Nothing about those ports changed between the attempts, so this says something about the MACHINE."
+    Write-Warn "One is bad luck. Several, across unrelated ports, is worth investigating: the causes seen so far are"
+    Write-Warn "an on-access virus scanner holding files open, and memory pressure making the compiler crash."
+}
 
 if ([Environment]::UserInteractive) {
     Write-Host ""
