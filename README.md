@@ -1,13 +1,20 @@
-# DrivEnv-Win
+<a name="readme-top"></a>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)](#requirements)
-[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#requirements)
-[![Toolchain](https://img.shields.io/badge/toolchain-MSYS2%20UCRT64-orange)](#what-you-get)
-[![vcpkg](https://img.shields.io/badge/packages-vcpkg-brightgreen)](#configuration)
+<!-- PROJECT SHIELDS -->
+[![MIT License][license-shield]][license-url]
+[![Platform][platform-shield]][platform-url]
+[![PowerShell][powershell-shield]][powershell-url]
+[![Toolchain][toolchain-shield]][toolchain-url]
+[![vcpkg][vcpkg-shield]][vcpkg-url]
 
-Builds a complete, reproducible C++ development drive on Windows from a single JSON file: VHDX, pinned MSYS2/UCRT64
-toolchain, vcpkg with overlay ports, launchers, and a verification step that checks every library actually loads.
+<!-- PROJECT TITLE -->
+<h1 align="center">DrivEnv-Win</h1>
+
+<p align="center">
+  Builds a complete, reproducible C++ development drive on Windows from a single JSON file: VHDX, pinned
+  MSYS2/UCRT64 toolchain, vcpkg with overlay ports, launchers, and a verification step that checks every
+  library actually loads.
+</p>
 
 ---
 
@@ -312,6 +319,41 @@ drifts. The hand-written ones are hand-written because no tool knows *why* a dec
 
 ---
 
+<!-- LICENSE -->
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
+
+<!-- CONTACT -->
+## Author / Contact
+
+**Degoras Project Team**
+
+Ángel Vera Herrera — Real Instituto y Observatorio de la Armada (ROA) — [avera@roa.es](mailto:avera@roa.es)
+
+Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
+
+<!-- ACKNOWLEDGMENTS -->
+## Acknowledgments
+
+* Real Instituto y Observatorio de la Armada (ROA)
+* [MSYS2][toolchain-url], whose pinned packages this pins in turn
+* [vcpkg][vcpkg-url], and the port maintainers whose work the overlays here only patch
+* The [Qt Project](https://www.qt.io/)
+* [Shields.io](https://shields.io/)
+* [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- MARKDOWN LINKS & IMAGES -->
+[license-shield]: https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge
+[license-url]: https://opensource.org/licenses/MIT
+[platform-shield]: https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?style=for-the-badge
+[platform-url]: #requirements
+[powershell-shield]: https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=for-the-badge&logo=powershell&logoColor=white
+[powershell-url]: #requirements
+[toolchain-shield]: https://img.shields.io/badge/toolchain-MSYS2%20UCRT64-orange?style=for-the-badge
+[toolchain-url]: https://www.msys2.org/
+[vcpkg-shield]: https://img.shields.io/badge/packages-vcpkg-brightgreen?style=for-the-badge
+[vcpkg-url]: https://vcpkg.io/
+[repo-url]: https://github.com/DegorasProjectTeam/DrivEnv-Win
