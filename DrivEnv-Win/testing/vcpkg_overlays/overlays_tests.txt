@@ -1,0 +1,101 @@
+=======================================================================
+OVERLAY CHECKS
+=======================================================================
+Run these from the environment's own launcher. See ../README.txt.
+
+The overlay ports are in vcpkg_overlays/ports and what each one changes
+is written up in installation/vcpkg_overlays.txt. This directory holds
+the two things that keep that write-up honest: one tool for deciding
+whether an overlay is still needed, and one for checking it actually
+did its job.
+
+Neither is automated and neither runs during environment generation.
+They are here for the two moments when the question comes up: after
+bumping the vcpkg baseline, and after generating a drive.
+
+
+1. IS THIS OVERLAY STILL NEEDED?
+-----------------------------------------------------------------------
+# Run at every baseline bump, BEFORE deciding anything.
+python compare_overlay_vs_upstream.py
+
+# One port only.
+python compare_overlay_vs_upstream.py --port gstreamer
+
+WHY IT IS NOT A PLAIN DIFF, which is the whole point. Diffing an overlay
+against TODAY's baseline port mixes two unrelated things: a change made
+here on purpose, and mere version drift. An overlay pinning an older
+version differs from the current port in dozens of lines nobody here
+ever wrote, and the one line that matters is buried in them.
+
+This compares each overlay against the OFFICIAL port at the SAME
+version, recovered from vcpkg's git history. Whatever survives is
+genuinely local.
+
+It earned its place: glib and pango had been documented in this repo for
+months as "purpose unknown" and "a stale fork, no reason recorded". Run
+this way, each turned out to delete exactly one dependency and change
+nothing else, and both were retired.
+
+WHAT IT DOES NOT TELL YOU: whether the surviving delta is still needed.
+A patch can apply cleanly long after upstream fixed the thing it works
+around. Read the current sources for each surviving delta -- that is the
+slow half, and there is no tool for it.
+
+
+2. DID THE OVERLAY ACTUALLY DO ITS JOB?
+-----------------------------------------------------------------------
+# Run after generating a drive. Exit code 0 when everything passed.
+powershell -File verify_overlays.ps1
+
+# Against some other installed tree, e.g. a scratch one.
+powershell -File verify_overlays.ps1 -Root D:/vcpkg/installed/<triplet>
+
+WHY A GREEN BUILD PROVES NOTHING HERE. Every defect the remaining
+overlays fix is invisible to the compiler:
+
+  fastfeat    The import library names fastfeat.dll while MinGW writes
+              libfastfeat.dll. Consumers LINK cleanly and die at LOAD
+              time, and the cascade -- svt-av1, then avcodec, then
+              gstreamer's whole ffmpeg bridge -- never mentions
+              fastfeat once. This is what the load checks are for.
+
+  gstreamer   A plugin that cannot load is reported by gst-inspect as
+              "failed to load plugin" with no reason, long after the
+              build. And gstd3d11config.h is installed under lib/, then
+              deleted by the port, while the installed gstd3d11.h still
+              includes it -- which breaks only a C++ consumer of that
+              API, never a pipeline. Hence the compile probe.
+
+  vcpkg-qmake Has no consumers in the current package set at all. The
+              script says so rather than pretending to test it.
+
+ONE THING THE SCRIPT DOES THAT IS EASY TO GET WRONG, and worth knowing
+if you ever adapt it: it REPLACES PATH instead of prepending to it.
+Prepending leaves another installed tree reachable further down, and a
+DLL missing from the tree under test then gets satisfied from there.
+Caught doing exactly that during development -- a scratch tree with the
+unfixed fastfeat reported its consumer loading fine, because the working
+drive's correctly named fastfeat.dll was still on PATH. Same
+mixed-environment hazard ../README.txt warns about, and a verification
+script is the last place it belongs.
+
+
+3. WHAT A HEALTHY RUN LOOKS LIKE
+-----------------------------------------------------------------------
+Every check either [ OK ] or [skip], and exit code 0. A [skip] is not a
+failure: it means the thing being checked is not installed in that tree,
+e.g. no svt-av1, so nothing imports fastfeat and the name cannot be
+wrong yet.
+
+Both directions were demonstrated when the script was written, which is
+the only reason to trust it:
+
+  a drive with the fastfeat overlay and gstreamer BEFORE the d3d11 fix
+      -> fastfeat checks pass, the three d3d11 checks fail
+
+  a scratch tree with baseline fastfeat and gstreamer AFTER the fix
+      -> the whole fastfeat cascade fails (import name, two LoadLibrary
+         calls, one plugin, and the svtav1enc element), d3d11 passes
+
+A script that only ever passes has not been shown to detect anything.

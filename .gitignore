@@ -30,6 +30,9 @@ drivenv-cfg.json
 
 # User config
 CMakeLists.txt.user
+# Per-developer CMake presets: they hard-code a drive letter and a triplet, so a committed one is wrong
+# for everybody except whoever committed it.
+CMakeUserPresets.json
 .vscode/*
 .qtcreator/*
 

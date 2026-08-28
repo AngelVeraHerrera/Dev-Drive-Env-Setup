@@ -10,6 +10,12 @@ ffmpeg, curl. Not a test suite and not automated -- the point is that
 somebody who has just generated an environment, or who suspects it has
 drifted, can paste a command and see for themselves.
 
+vcpkg_overlays/ is the exception to "paste a command": two scripts, one
+that decides whether an overlay port is still needed after a baseline
+bump, and one that checks the overlays actually did their job. They are
+scripts rather than notes because every defect they cover is invisible
+to the build -- a green compile proves nothing about any of them.
+
 This whole tree is copied to <drive>:/testing when the environment is
 created, so it travels with the drive rather than living only here.
 
