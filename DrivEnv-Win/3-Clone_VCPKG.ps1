@@ -873,10 +873,15 @@ else
 }
 
 # Every OTHER triplet in the overlay directory is installed as well, verified the same way. Only the CONFIGURED one
-# is mandatory; the rest are alternatives, and one of them is not a hypothetical: fastdds has to be built under
-# x64-mingw-ucrt-static-release because its MinGW DLL does not export the vtable of TypeSupport nor the
-# traits<>::make_shared instantiations, so nothing that defines a DDS type can link against the shared build. A
-# static archive has no export table and the problem cannot arise.
+# is mandatory; the rest are alternatives, and installing them costs nothing but makes them usable without copying a
+# file by hand.
+#
+# x64-mingw-ucrt-static-release is the one alternative that exists today. Nothing in vcpkg.packages uses it -- this
+# environment is dynamic throughout -- and it is kept as a capability, for the case where a whole dependency closure
+# has to be static and a separate installed tree is acceptable. It earned its place on a real problem: Fast DDS on
+# MinGW builds a DLL that does not export the vtable of TypeSupport, so nothing defining a DDS type can link it.
+# That turned out to be better solved per-port than per-triplet, and Fast DDS is no longer installed here at all --
+# see installation/vcpkg_overlays.txt, section DEFERRED, which keeps the whole diagnosis for when DDS returns.
 #
 # Before this, a triplet that was not the configured one sat in the repository and never reached the drive, so using
 # it meant copying a file by hand and remembering why.

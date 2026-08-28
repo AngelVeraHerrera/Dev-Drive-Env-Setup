@@ -16,7 +16,7 @@ again from scratch months later, presenting as an error about CUDA.
 Keep this file next to the ports and update it in the same commit.
 
 
-Audit of 2026-08-27: twelve overlays down to five
+Audit of 2026-08-27: twelve overlays down to three
 -----------------------------------------------------------------------
 HOW THE QUESTION WAS SETTLED, because the obvious method gives the wrong
 answer. Diffing an overlay against TODAY's baseline conflates two
@@ -37,12 +37,25 @@ touched.
 
 RESULT
 
-    glib, graphene, pango           RETIRED, see below
+    glib, graphene, pango           RETIRED -- defect fixed upstream
     libbson, mongo-c-driver,
-    mongo-cxx-driver, utf8proc      pending a linkage decision, see below
-    fastcdr                         a no-op for the route in use
-    fastdds, fastfeat, gstreamer,
+    mongo-cxx-driver, utf8proc      RETIRED -- static linkage was never
+                                    the goal, only a workaround for
+                                    older baselines. Dynamic is the
+                                    policy here
+    fastdds, fastcdr                DEFERRED -- defects all still real,
+                                    but DDS is not in use yet and an
+                                    overlay nothing installs is pure
+                                    maintenance cost. Diagnosis kept
+                                    below, ports recoverable from git
+    fastfeat, gstreamer,
     vcpkg-qmake                     KEPT, each defect re-verified
+
+EVERYTHING DYNAMIC is the policy, and it now holds without exception.
+Fast DDS was the one measured exception -- its MinGW DLL cannot be
+linked by anything defining a DDS type -- and deferring it removes even
+that. The static triplet stays available as a CAPABILITY, but nothing
+uses it.
 
 WHAT THE BUILDS PROVED, as opposed to what reading suggested:
 
@@ -236,164 +249,127 @@ Worth sending upstream: a real bug on any non-MSVC Windows toolchain, and
 MSVC is unaffected either way.
 
 
-fastdds         (five deltas, MinGW-only, all invisible to MSVC)
+DEFERRED 2026-08-27: fastdds, fastcdr  (Fast DDS is not in use yet)
 -----------------------------------------------------------------------
-FIVE LOCAL deltas, listed in the portfile head. The five patches the
-portfile also names -- disable-autolink, disable-test, disable-werror,
-fix-deps, pdb-file -- are UPSTREAM's and are not deltas; counting patch
-files instead of local changes is how "four" became "seven" in an earlier
-draft of this file.
+Both overlays deleted, and NOT because their defects went away. Every
+one of them is still present upstream. DDS is simply not being used yet,
+and an overlay that nothing installs is a maintenance cost with no
+return: it has to be re-reconciled at every baseline bump.
 
-The local ones: dllexport on an internal-linkage const, clock_gettime
-redefined where mingw-w64 already has it, the gated tool-copy block,
-MINGW_COMPILER propagated, and static linkage forced -- which is the one
-that matters and is explained below.
+Neither port was ever in vcpkg.packages, so nothing in the normal drive
+build installed them; they were installed by hand for the proof of
+concept work.
 
-THREE ARE LOAD-BEARING, TWO ARE DORMANT. Re-verified against the 3.6.2
-sources on 2026-08-27, and the portfile head does not make this
-distinction:
+RECOVER THEM WITH GIT, do not rewrite them from this text:
 
-  load-bearing   static linkage; clock_gettime; the tool-copy gate.
-                 Without the clock_gettime patch the library does not
-                 compile at all -- TimedConditionVariable.cpp:70 still
-                 defines clock_gettime unguarded inside #if _WIN32,
-                 while mingw-w64 already declares it in
-                 pthread_time.h:112. Without the tool gate the build
-                 finishes and then fails looking for a
-                 fast-discovery-server that upstream never built,
-                 because CMakeLists.txt:406-408 still forces
-                 COMPILE_TOOLS OFF on mingw.
+    git log --diff-filter=D -- DrivEnv-Win/vcpkg_overlays/ports/fastdds
+    git checkout <that commit>~1 -- DrivEnv-Win/vcpkg_overlays/ports/fastdds
+                                    DrivEnv-Win/vcpkg_overlays/ports/fastcdr
 
-  dormant        the QoS dllexport patch; MINGW_COMPILER propagated.
-                 Both defects are still present upstream -- exactly two
-                 of the seven QoS defaults still repeat
-                 FASTDDS_EXPORTED_API on the DEFINITION, in
-                 PublisherQos.cpp:27 and SubscriberQos.cpp:27 -- but
-                 they cannot fire while linkage is static, because
-                 FASTDDS_EXPORTED_API then expands to nothing.
+What follows is the DIAGNOSIS, kept because it is the expensive part and
+because a diff will not tell you any of it.
 
-The operative reason for that dormancy is narrower than "a static
-archive has no export table", and worth writing down because it is what
-would change: src/cpp/CMakeLists.txt:149 emits FASTDDS_DYN_LINK only
-for a SHARED_LIBRARY target, and that generator expression is
-re-evaluated against the STATIC imported target in the consumer's own
-configure step. If upstream ever hardcodes FASTDDS_DYN_LINK, both
-dormant deltas go live on the next rebuild. Keep them; they cost
-nothing and they are the only thing between here and the two errors
-quoted below.
+WHY FAST DDS HAS TO BE STATIC ON MINGW, which is the whole story. The
+DLL does not export:
 
-RE-CHECK ON EVERY VERSION BUMP, in this order: does
-TimedConditionVariable.cpp still define clock_gettime unguarded; does
-CMakeLists.txt still force COMPILE_TOOLS OFF for mingw while this
-portfile still keys the tool copy on VCPKG_TARGET_IS_WINDOWS; has
-TypeSupport.hpp gained a CLASS-level FASTDDS_EXPORTED_API, which would
-retire the static-linkage delta and with it the dormancy of the other
-two.
+  vtable for eprosima::fastdds::dds::TypeSupport
+  traits<TypeDescriptor>::make_shared
+  traits<MemberDescriptor>::make_shared
 
-BUT THE DELTAS ARE NOT THE INTERESTING PART. This port builds a DLL that
-CANNOT BE USED for publish or subscribe on MinGW, and the reason is not in
-any patch:
+so nothing that DEFINES a type can link it -- neither a type from
+fastddsgen nor one built through the XTypes dynamic API. Creating a
+DomainParticipant works, which is why a smoke test passes and hides it.
+Measured, not inferred: all three symbols are PRESENT in the compiled
+objects, and only the export table is short. A real publisher compiles
+with zero errors and then fails to link on exactly those three names.
 
-  the DLL does not export     vtable for eprosima::fastdds::dds::TypeSupport
-  nor                         traits<TypeDescriptor>::make_shared
-  nor                         traits<MemberDescriptor>::make_shared
+The cause is annotation, in two flavours. TypeSupport marks each METHOD
+with FASTDDS_EXPORTED_API but never the CLASS, and GCC only emits the
+vtable, a separate data symbol, when the class itself carries the
+attribute. And make_shared is declared exported INSIDE a template, in
+detail/type_traits.hpp, where GCC ignores the attribute for explicit
+instantiations -- it has to sit on the instantiation directive.
 
-Nothing that DEFINES a type can therefore link against it -- neither a
-type from fastddsgen nor one built through the XTypes dynamic API. Creating
-a DomainParticipant works, which is why a smoke test passes and hides it.
-
-Measured 2026-08-27, not inferred. All three symbols are PRESENT in the
-compiled objects (nm on TypeSupport.cpp.obj and across the 260 objects of
-the release build); only the export table is short. Confirmed from the
-other direction too: a real publisher compiles with zero errors and then
-fails to link on exactly those three names.
-
-The cause is annotation, in two flavours:
-  * TypeSupport marks each METHOD with FASTDDS_EXPORTED_API but not the
-    CLASS. GCC exports the methods; the vtable is a separate data symbol
-    that only comes out when the class itself carries the attribute.
-  * make_shared is declared exported INSIDE a template
-    (detail/type_traits.hpp), where GCC ignores the attribute for explicit
-    instantiations -- it has to sit on the instantiation directive.
-
-WHAT WAS TRIED AND DID NOT WORK: -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON.
-CMake generated no .def at all and the symbol count did not move. Fast DDS
+WHAT DID NOT WORK: -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON. CMake
+generated no .def at all and the symbol count did not move. Fast DDS
 manages its own exports and the property never reached the target.
 
-WHAT WORKS: a static Fast DDS. A static archive has no export table, so
-the linker takes the symbols straight out of it and the problem is
-structurally impossible rather than merely configured away.
+WHAT WORKED: set(VCPKG_LIBRARY_LINKAGE static) in the portfile, NOT the
+static triplet. Both were built and both pass the same 15 checks -- a
+run-time XTypes type, a matched writer and reader, and a sample
+round-tripped with a double, an unsigned and a string intact -- but the
+portfile route keeps the package in the SAME installed tree, so one
+CMAKE_PREFIX_PATH still finds it and its dependencies (fastcdr,
+foonathan-memory, tinyxml2, openssl) stay DYNAMIC. The static triplet
+rebuilds openssl statically too, so an application linking Fast DDS
+alongside Qt or curl ends up with two OpenSSL instances in one process.
+36 MB binary against 44 MB, and only the triplet route needed fastcdr.
 
-There are two ways to get one, and they are NOT equivalent.
+Reached the heavy tool first and the light one second, which is the
+wrong order and worth recording: the question "could the mongo overlays
+be replaced by a static triplet?" is what surfaced it.
 
-  set(VCPKG_LIBRARY_LINKAGE static)   <- in this port's portfile. USED.
+THE OTHER FOUR FASTDDS DELTAS, all MinGW-only and invisible to MSVC.
+Two are load-bearing and two were dormant while linkage stayed static,
+because FASTDDS_EXPORTED_API then expands to nothing:
 
-vcpkg supports per-port linkage for exactly this, and the mongo family in
-this same directory has been doing it for years. The package stays in the
-SAME installed tree, so one CMAKE_PREFIX_PATH still finds it, and its
-dependencies stay DYNAMIC.
+  load-bearing  mingw-no-clock-gettime.patch. TimedConditionVariable.cpp
+                defines clock_gettime unguarded inside #if _WIN32 while
+                mingw-w64 already declares it in pthread_time.h. Fails
+                first, inside the library's own translation unit,
+                whatever the linkage.
 
-  --triplet x64-mingw-ucrt-static-release   <- also works, NOT used here.
+  load-bearing  the tool-copy block, gated off MinGW. Upstream forces
+                COMPILE_TOOLS OFF for mingw, so tools/ is never added
+                and fast-discovery-server never exists -- while the
+                portfile keyed its copy on VCPKG_TARGET_IS_WINDOWS. The
+                library compiles completely and the port then fails
+                looking for a binary that was never built.
 
-That installs into a separate tree and rebuilds fastcdr, foonathan-memory,
-tinyxml2 AND openssl statically. Two consequences: consumers need a second
-prefix path, and an application linking Fast DDS alongside Qt or curl ends
-up with TWO OpenSSL instances in one process -- one static inside this
-library, one from libcrypto-3-x64.dll. Different state, different symbols.
-That is the kind of failure this environment keeps being bitten by, so the
-lighter mechanism wins.
+  dormant       mingw-qos-default-linkage.patch. GCC refuses dllexport
+                on a namespace-scope const definition, which has
+                internal linkage. Exactly two of the seven QoS defaults
+                repeat FASTDDS_EXPORTED_API on the DEFINITION, in
+                PublisherQos.cpp and SubscriberQos.cpp; the other five
+                do not and compile.
 
-Both were built and verified. Same 15 checks pass either way: a run-time
-XTypes type, a matched writer and reader, and a sample round-tripped with
-a double, an unsigned and a string intact. The portfile route produces a
-36 MB binary, the static triplet a 44 MB one, and only the latter needs
-the fastcdr overlay below.
+  dormant       MINGW_COMPILER propagated to consumers, without which
+                every consumer hits dllimport-on-a-definition.
 
-Reached the heavy tool first and the light one second, which is the wrong
-order and worth recording: the question "could the mongo overlays be
-replaced by a static triplet?" is what surfaced it. The answer there is
-no, and for the same reason.
+The dormancy hinges on something narrower than "a static archive has no
+export table": src/cpp/CMakeLists.txt emits FASTDDS_DYN_LINK only for a
+SHARED_LIBRARY target, and that generator expression is re-evaluated
+against the STATIC imported target in the consumer's own configure step.
+If upstream ever hardcodes FASTDDS_DYN_LINK, both go live.
 
-Worth sending upstream: two one-line annotation fixes would remove the
-need for any of this.
-
-
-fastcdr                            (one delta, static builds only)
------------------------------------------------------------------------
-mingw-static-no-resource.patch -- upstream adds FastCdr.rc to the source
-list unconditionally.
-
-A Windows resource script belongs in a DLL or an EXE, never in a static
-archive, and windres does not shrug at it:
+FASTCDR, one delta, and it only ever mattered for a static build.
+Upstream lists FastCdr.rc unconditionally in its sources, and the file
+gates its only real content -- the VS_VERSION_INFO block -- on
+fastcdr_EXPORTS, which CMake defines only for SHARED and MODULE targets.
+A static build therefore preprocesses the .rc to nothing and windres
+treats an empty result as an error:
 
     windres.exe: no resources
     ninja: build stopped: subcommand failed.
 
-With BUILD_SHARED_LIBS=OFF the guarded body of the .rc compiles to
-nothing, windres treats an empty result as an error, and the build dies
-before a single object exists. The patch adds the file only for a shared
-build, so the dynamic triplet behaves exactly as before.
+Reproduced verbatim on the untouched 2.3.6 file: exit 1 without
+-Dfastcdr_EXPORTS, exit 0 with it. Under the portfile-linkage route
+fastcdr stayed dynamic, so the patch was a byte-for-byte no-op there --
+it was insurance for the static triplet alone.
 
-Needed ONLY by a static-triplet build. fastdds itself no longer requires
-it, because forcing linkage in the portfile leaves fastcdr dynamic and
-windres is never asked to compile a resource into an archive. Kept because
-the static triplet is still available and would hit this immediately.
+WHEN DDS COMES BACK, check these in order before assuming the overlays
+are still needed. They were all true on 2026-08-27 against 3.6.2/2.3.6:
+  1. does TimedConditionVariable.cpp still define clock_gettime unguarded
+  2. does CMakeLists.txt still force COMPILE_TOOLS OFF for mingw
+  3. has TypeSupport.hpp gained a CLASS-level FASTDDS_EXPORTED_API --
+     that single change retires the static linkage and the dormancy of
+     the other two with it
+  4. do PublisherQos.cpp and SubscriberQos.cpp still repeat the macro
+  5. does fastcdr still list FastCdr.rc unconditionally
 
-Delete this overlay if the static triplet is ever dropped.
+Worth sending upstream, and it would remove the need for most of this:
+two one-line annotation fixes in Fast DDS, and one guard in Fast CDR.
 
-BOTH HALVES OF THAT VERIFIED 2026-08-27. The defect is real and still
-in 2.3.6: src/cpp/CMakeLists.txt:35 still lists FastCdr.rc
-unconditionally, and running the ucrt64 windres on the untouched file
-gives "windres.exe: no resources" and exit 1 without
--Dfastcdr_EXPORTS, exit 0 with it. And the scoping is real too: on this
-triplet fastcdr is DYNAMIC (libfastcdr.dll plus its import library are
-what is installed, against libfastdds.a for fastdds), so
-BUILD_SHARED_LIBS is ON, fastcdr_EXPORTS is defined, and the patch
-re-adds the .rc it just guarded -- a byte-for-byte no-op.
-
-So this overlay currently changes nothing except a port-version bump
-and the rebuild that bump forces. It is insurance for the static
-triplet and should be deleted in the same commit as that triplet.
 
 RETIRED 2026-08-27: libbson, mongo-c-driver, mongo-cxx-driver, utf8proc
 -----------------------------------------------------------------------

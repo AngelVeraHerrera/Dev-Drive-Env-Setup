@@ -7,16 +7,29 @@
 # provides a FULLY static build: every package installed under it, and all
 # of their dependencies, are static archives in their own installed tree.
 #
-# It is NOT the way Fast DDS is built here, although it was written for
-# that. Forcing linkage in the fastdds portfile turned out to be the
-# better tool: same installed tree, one CMAKE_PREFIX_PATH, and the
-# dependencies stay dynamic so a process linking Fast DDS alongside Qt or
-# curl does not end up with two OpenSSL instances.
+# NOTHING USES IT. This environment is dynamic throughout, by policy, and
+# no entry in vcpkg.packages selects this triplet. It is kept as a
+# CAPABILITY: use it when a whole dependency closure has to be static and
+# a separate installed tree is acceptable.
 #
-# Use this triplet when you want the WHOLE dependency closure static and
-# accept a separate tree for it. Note that it needs the fastcdr overlay:
-# upstream compiles a Windows resource script into the library, and
-# windres refuses that in a static build.
+# It was written for Fast DDS, whose MinGW DLL does not export the vtable
+# of TypeSupport, so nothing defining a DDS type can link it. Forcing
+# linkage in that port's own portfile turned out to be the better tool --
+# same installed tree, one CMAKE_PREFIX_PATH, dependencies left dynamic,
+# so a process linking Fast DDS alongside Qt or curl does not end up with
+# two OpenSSL instances. Fast DDS is no longer installed here in any case.
+#
+# ONE TRAP TO EXPECT, whatever you build under this triplet: a library
+# that unconditionally compiles a Windows resource script will fail here.
+# A .rc typically gates its contents on the <target>_EXPORTS macro, which
+# CMake defines only for SHARED and MODULE targets, so under static
+# linkage it preprocesses to nothing and windres reports
+#
+#     windres.exe: no resources
+#
+# and exits 1 before a single object exists. Fast CDR is a known instance
+# and had an overlay for exactly this; see installation/vcpkg_overlays.txt,
+# section DEFERRED. Expect to need the same one-line guard elsewhere.
 #
 # NOTE the CRT stays DYNAMIC. On MinGW that is the UCRT DLL, which is what
 # every other package here links; a static CRT would give each library its
