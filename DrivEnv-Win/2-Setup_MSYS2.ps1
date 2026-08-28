@@ -209,6 +209,80 @@ function Invoke-Pacman
     return $code
 }
 
+function Configure-MSYS2Terminal
+{
+    # @brief Give the drive's mintty a readable default configuration.
+    #
+    # WHY THIS EXISTS. The launcher hosts the shell in mintty rather than the Windows console, because conhost
+    # cannot deliver a bracketed paste and costs about a hundred times more per redisplayed character. mintty is
+    # the right terminal and its stock configuration is not: MSYS2 ships /etc/minttyrc with three lines
+    # (Columns, Rows, Term) and leaves the font at a default that renders poorly.
+    #
+    # BoldAsFont is the setting that matters most and the least obvious. conhost mostly rendered the bold
+    # attribute as a BRIGHTER COLOUR; mintty renders it as a genuine bold weight, and a synthesised bold at a
+    # small size is exactly the smeared, ill-defined text somebody notices immediately after the switch. Setting
+    # it to "no" restores the behaviour the console had, for the prompt and for every compiler diagnostic that
+    # uses bold as well.
+    #
+    # /etc/minttyrc and not ~/.minttyrc, on purpose: HOME is the Windows profile, shared by every MSYS2
+    # installation on the machine, and this file is a property of THIS drive. mintty reads /etc/minttyrc first and
+    # ~/.minttyrc second, so a developer who wants something else still has the last word.
+    param(
+        [Parameter(Mandatory=$true)][string]$Msys2Root
+    )
+
+    Write-Info "Configuring the terminal..."
+
+    $etcDir = Join-Path $Msys2Root "etc"
+    if (-not (Test-Path $etcDir))
+    {
+        New-Item -ItemType Directory -Path $etcDir | Out-Null
+    }
+
+    $minttyPath = Join-Path $etcDir "minttyrc"
+
+    # Cascadia Mono is Microsoft's terminal face and is markedly better hinted at small sizes, but it only ships
+    # with Windows 11 and with Windows Terminal, so it cannot be assumed. Consolas has been on every Windows since
+    # Vista. Probe for the better one and fall back rather than hard-coding either.
+    $font = "Consolas"
+    $fontDirs = @((Join-Path $env:SystemRoot "Fonts"),
+                  (Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"))
+    foreach ($dir in $fontDirs)
+    {
+        if (Test-Path (Join-Path $dir "CascadiaMono.ttf")) { $font = "Cascadia Mono"; break }
+    }
+    Write-Info "Terminal font: $font"
+
+    # Columns, Rows and Term are MSYS2's own and are kept as they were.
+    $minttyLines = @(
+        "# DevSystem - terminal configuration for this drive."
+        "# Written by 2-Setup_MSYS2.ps1. A personal ~/.minttyrc still overrides everything here."
+        "Columns=100"
+        "Rows=27"
+        "Term=xterm-256color"
+        ""
+        "# Bold as a brighter colour rather than a heavier face. This is what the Windows console did, and a"
+        "# synthesised bold at this size is what makes text look smeared."
+        "BoldAsFont=no"
+        ""
+        "Font=$font"
+        "FontHeight=11"
+        "FontSmoothing=full"
+        ""
+        "# Accented output -- the setup scripts and MSYS2 itself both produce it -- and a scrollback that can hold"
+        "# a build log rather than the tail of one."
+        "Charset=UTF-8"
+        "ScrollbackLines=50000"
+        ""
+        "# Right-click pastes, as it did in the console window this replaces. Selecting already copies in mintty,"
+        "# so between the two there is nothing new to learn."
+        "RightClickAction=paste"
+    )
+
+    Set-Content -Path $minttyPath -Encoding ASCII -Value $minttyLines
+    Write-Info "mintty configuration written at: $minttyPath"
+}
+
 function Configure-MSYS2Proxy
 {
     param(
@@ -683,6 +757,16 @@ try {
 catch {
     Write-Error ("Proxy configuration failed: {0}" -f $_.Exception.Message)
     Abort-WithError
+}
+
+# Terminal config. Unconditional, unlike the proxy above: every drive gets a terminal, whether or not it sits
+# behind one.
+try {
+    Configure-MSYS2Terminal -Msys2Root $msys2Path
+}
+catch {
+    # Not fatal. A drive with an unstyled terminal is still a working drive.
+    Write-Warn ("Terminal configuration failed: {0}" -f $_.Exception.Message)
 }
 
 if (-Not (Test-Path $trustDbPath)) 

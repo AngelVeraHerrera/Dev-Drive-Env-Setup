@@ -250,7 +250,12 @@ fi
 # Title + prompt (dynamic)
 # ---------------------------------------------------------------
 printf "\033]0;%s\007" "${DEVSYSTEM_NAME_UPPER}"
-PS1="\[\033]0;${DEVSYSTEM_NAME_UPPER}\007\]\[\033[1;32m\][${DEVSYSTEM_NAME_UPPER}]\$\[\033[0m\] \[\033[1;35m\]\w\[\033[0m\]\n\$ "
+# 92 and 95 are BRIGHT green and BRIGHT magenta. They used to be "1;32" and "1;35", which ask for bold
+# AND the normal colour, and that is not the same request. The Windows console mostly rendered bold as a
+# brighter colour, so the two looked identical there; mintty renders it as a real bold weight, and a
+# synthesised bold at prompt size looks smeared. Asking for the bright colour directly says what was
+# actually wanted and does not depend on the terminal's BoldAsFont setting to look right.
+PS1="\[\033]0;${DEVSYSTEM_NAME_UPPER}\007\]\[\033[92m\][${DEVSYSTEM_NAME_UPPER}]\$\[\033[0m\] \[\033[95m\]\w\[\033[0m\]\n\$ "
 export PS1
 
 # ---------------------------------------------------------------
