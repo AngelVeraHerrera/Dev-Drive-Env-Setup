@@ -143,8 +143,16 @@ than a 50 GB file, a UAC prompt and a failure at the end.
 > bad luck; several across unrelated ports is worth investigating, and the usual causes are an on-access virus
 > scanner holding files open and memory pressure crashing the compiler.
 >
-> If a port fails on both attempts the step stops, and the second attempt having run serialised means a race
-> between parallel jobs is already ruled out.
+> If a port fails every attempt the step stops, and every attempt after the first having run serialised means a
+> race between parallel jobs is already ruled out.
+>
+> **`vcpkg.max_install_attempts` raises the count**, and it is configurable because it is a property of the machine
+> rather than of the configuration. One machine here needed *five* attempts to get `qtshadertools` through, with
+> GCC segfaulting at a different optimisation pass and inside a different function on each run -- `dep_fusion` in
+> one, `threadfull` in the next. A compiler bug is deterministic, so crashing somewhere different every time is
+> hardware, and the honest fix is a memory test rather than a build flag. Raise this to keep working in the
+> meantime; leave it alone on a machine that does not need it, since a high value on a healthy one only turns a
+> genuine build error into a long wait.
 
 Every step takes the same `-ConfigFile` switch and **must be given the same file**: they hand state to each other
 through the generated environment file on the drive.

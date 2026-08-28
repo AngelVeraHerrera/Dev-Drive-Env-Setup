@@ -699,6 +699,21 @@ $scriptHeader = New-Msys2ScriptHeader -Msys2Env        $msys2Env `
 # it is the one number that says something about the machine rather than about the configuration.
 $retriedPorts = @()
 
+# Configurable because it is a property of the MACHINE and not of the configuration. Two is enough for a healthy
+# one; a machine whose compiler segfaults at a different pass on every run may need more, and raising it there
+# should not mean editing this script. The default matches what a sound machine needs, so nobody has to think
+# about it until they do.
+$maxAttempts = 2
+if ($Cfg.vcpkg.PSObject.Properties.Name -contains "max_install_attempts")
+{
+    $configured = [int]$Cfg.vcpkg.max_install_attempts
+    if ($configured -ge 1)
+    {
+        $maxAttempts = $configured
+        if ($maxAttempts -ne 2) { Write-Info ("Port install attempts set to {0} by the configuration." -f $maxAttempts) }
+    }
+}
+
 $index = 0
 foreach ($port in $portSpecs)
 {
@@ -733,7 +748,6 @@ foreach ($port in $portSpecs)
     # needed one is named again in the summary, because three unrelated programs crashing on one machine and none
     # on another is the signature of that machine, not of vcpkg -- and a retry that quietly succeeds would erase
     # the only evidence of it.
-    $maxAttempts = 2
     $code = 1
 
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++)
@@ -779,7 +793,9 @@ $concurrencyLine
     if ($code -ne 0)
     {
         Write-Error "Installation of '$($port.Spec)' failed on all $maxAttempts attempts (ExitCode=$code)."
-        Write-Error "The second attempt ran with concurrency 1, so a race between parallel jobs is ruled out."
+        Write-Error "Every attempt after the first ran with concurrency 1, so a race between parallel jobs is"
+        Write-Error "already ruled out. If this machine has failed other ports the same way, suspect the machine:"
+        Write-Error "raise vcpkg.max_install_attempts to get past it, and test its memory when you can."
         Write-Error "See the full build output in: $globalLogFile"
         Abort-WithError
     }

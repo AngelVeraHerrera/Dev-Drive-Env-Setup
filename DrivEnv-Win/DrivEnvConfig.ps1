@@ -163,6 +163,17 @@ function Get-DrivEnvConfigSchema
                 fields   = @{ triplet = $reqString }
             }
             packages = @{ type = 'array'; required = $true; item = $vcpkgPackage }
+
+            # How many times step 4 will try a port before giving up. Optional; step 4 defaults it to 2, and the
+            # retry runs with concurrency forced to 1.
+            #
+            # It is configurable because it is a property of the MACHINE, not of the configuration. One machine
+            # here needed FIVE attempts to get qtshadertools through, with GCC segfaulting at a different
+            # optimisation pass and inside a different function on each run -- a compiler bug is deterministic, so
+            # crashing somewhere different every time is hardware. Raise it on a machine like that; leave it alone
+            # on one that does not need it, because a high value on a healthy machine only turns a genuine build
+            # error into a long wait.
+            max_install_attempts = @{ type = 'int'; min = 1 }
         }
     }
 
