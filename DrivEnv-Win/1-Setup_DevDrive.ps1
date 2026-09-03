@@ -689,6 +689,75 @@ catch {
     Write-Error "Could not add Defender exclusion: $_"
 }
 
+# --------------------------------------------------------------------
+# Two more things that cost build performance, and neither needs administrator rights
+# --------------------------------------------------------------------
+# CONTENT INDEXING. Windows Search indexing a build volume is pure waste: it reads every object file and every
+# generated header the moment they are written, and nothing ever searches for them. The switch is the
+# NotContentIndexed attribute on the volume ROOT -- the same bit the drive's own properties dialog toggles with
+# "Allow files on this drive to have contents indexed in addition to file properties".
+#
+# On a real Dev Drive this is close to a no-op, because Windows Search does not index ReFS volumes anyway. It
+# matters for the NTFS branch, which is what use_dev_drive=false selects.
+#
+# THE RECYCLE BIN. A deleted file on a volume with a recycle bin is moved into $RECYCLE.BIN rather than freed,
+# so a build that deletes intermediates keeps paying for them in space, and vcpkg deletes a great many: a
+# buildtree for one port runs to gigabytes and is removed after every package when clean-buildtrees is on.
+# NukeOnDelete makes a delete a delete.
+#
+# Both settings are per-volume and reversible. The recycle bin one lives in HKCU, so it applies to the user
+# running this and needs no elevation; the attribute is a property of a volume this script has just created.
+try {
+    $driveRoot = "$driveLetter`:\"
+
+    if (Test-Path $driveRoot)
+    {
+        Write-Info "Disabling content indexing on $driveRoot ..."
+        $rootItem = Get-Item $driveRoot -Force
+        if ($rootItem.Attributes -band [System.IO.FileAttributes]::NotContentIndexed)
+        {
+            Write-Info "Content indexing was already disabled."
+        }
+        else
+        {
+            $rootItem.Attributes = $rootItem.Attributes -bor [System.IO.FileAttributes]::NotContentIndexed
+            Write-Info "Content indexing disabled."
+        }
+    }
+}
+catch {
+    # Not fatal. A drive that gets indexed is a slower drive, not a broken one.
+    Write-Warn ("Could not disable content indexing: {0}" -f $_.Exception.Message)
+}
+
+try {
+    # The recycle bin is configured per volume, keyed by the volume's own GUID rather than by drive letter --
+    # which is the right key, because the letter can change and the setting should follow the volume.
+    $vol = Get-Volume -DriveLetter $driveLetter -ErrorAction Stop
+    # UniqueId reads like \\?\Volume{a1b2...}\ so the GUID has to be pulled out of it; the registry key is
+    # named by the braced GUID alone.
+    $uniqueId = [string]$vol.UniqueId
+    $m = [regex]::Match($uniqueId, '(\{[0-9A-Fa-f-]+\})')
+
+    if ($m.Success)
+    {
+        $guid = $m.Groups[1].Value
+        $bucket = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\$guid"
+
+        if (-not (Test-Path $bucket)) { New-Item -Path $bucket -Force | Out-Null }
+        New-ItemProperty -Path $bucket -Name "NukeOnDelete" -Value 1 -PropertyType DWord -Force | Out-Null
+
+        Write-Info "Recycle bin disabled for this volume ($guid): deletes free space immediately."
+    }
+    else
+    {
+        Write-Warn "Could not read the volume GUID; leaving the recycle bin as it is."
+    }
+}
+catch {
+    Write-Warn ("Could not disable the recycle bin for this volume: {0}" -f $_.Exception.Message)
+}
+
 Write-Info "STEP 4: OK"
 
 Enable-HWDetection
@@ -762,9 +831,46 @@ if ($Cfg.workspace -and -not [string]::IsNullOrWhiteSpace([string]$Cfg.workspace
     }
 }
 
+# WHERE VCPKG WILL UNPACK AND COMPILE. Created here so that it exists before step 4 needs it, and derived from
+# the configuration so the two cannot disagree about the path.
+#
+# The default is <drive>:/bt, and the shortness is the point rather than a style choice: vcpkg builds under
+# <root>/<port>/<triplet>-rel/, and with a triplet named x64-mingw-ucrt-dynamic-release that prefix plus Qt's
+# autogen filenames reached 261 characters against the 260-character cap Windows applies to any program without
+# a long-path manifest -- which MSYS2's GCC lacks, so LongPathsEnabled=1 does not rescue it. /bt puts that path
+# at 247; the /buildtrees this used to create put it at 255, which worked but with five characters to spare.
+$buildtreesFolder = "bt"
+if ($Cfg.vcpkg -and ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root"))
+{
+    # Accept "S:/bt", "S:\bt", "/s/bt" or a bare "bt" and keep only the part below the drive root: this step
+    # only ever creates directories on the drive it has just mounted.
+    $cfgRoot = ([string]$Cfg.vcpkg.buildtrees_root).Trim().Replace('\', '/')
+    if     ($cfgRoot -match '^[A-Za-z]:/(.+)$') { $cfgRoot = $Matches[1] }
+    elseif ($cfgRoot -match '^/[A-Za-z]/(.+)$') { $cfgRoot = $Matches[1] }
+    $cfgRoot = $cfgRoot.Trim('/')
+
+    # The colon test is not redundant with the two patterns above. A bare drive root, "S:/", matches neither --
+    # they both require something after the slash -- and Trim('/') then leaves "S:", which would have this step
+    # try to create a directory whose name contains a colon. Rejecting anything that still holds one covers that
+    # and every other half-a-path a hand-edited config can produce.
+    if ((-not [string]::IsNullOrWhiteSpace($cfgRoot)) -and ($cfgRoot -notmatch '\.\.') -and ($cfgRoot -notmatch ':'))
+    {
+        $buildtreesFolder = $cfgRoot
+    }
+    else
+    {
+        Write-Warn "vcpkg.buildtrees_root is not a usable path on this drive; falling back to '$buildtreesFolder'."
+    }
+}
+
 $folders = 
 @(
-    "${driveLetter}:/buildtrees",
+    "${driveLetter}:/$buildtreesFolder",
+
+    # Temporaries for vcpkg's builds. The triplets point TMP and TEMP here, but only if the directory exists,
+    # so this line is what actually keeps a port's configure scratch off the system disk.
+    "${driveLetter}:/tmp",
+
     "${driveLetter}:/deploys",
     "${driveLetter}:/installation",
     "${driveLetter}:/logs/env",
