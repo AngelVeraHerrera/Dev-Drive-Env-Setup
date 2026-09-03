@@ -50,6 +50,9 @@
         "source": { "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe", "sha256": "" },
         "target": { "subsystem": "ucrt64", "arch": "x86_64", "base_url": "https://repo.msys2.org" },
         "packages": [
+            { "name": "headers", "mode": "pinned", "version": "14.0.0.r283.ga7cb47123-1" },
+            { "name": "crt", "mode": "pinned", "version": "14.0.0.r283.ga7cb47123-1" },
+            { "name": "winpthreads", "mode": "pinned", "version": "14.0.0.r283.ga7cb47123-1" },
             { "name": "ninja", "mode": "pinned", "version": "1.13.2-1" },
             { "name": "gdb", "mode": "pinned", "version": "17.2-1" },
             { "name": "gcc", "mode": "pinned", "version": "16.2.0-3" },

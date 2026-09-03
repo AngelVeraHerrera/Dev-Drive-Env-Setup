@@ -56,6 +56,9 @@
             "base_url": "https://repo.msys2.org"
         },
         "packages": [
+            { "name": "headers", "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" },
+            { "name": "crt", "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" },
+            { "name": "winpthreads", "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" },
             { "name": "ninja", "mode": "pinned", "version": "1.13.2-1" },
             { "name": "cmake", "mode": "pinned", "version": "4.4.2-2" },
             { "name": "lld", "mode": "pinned", "version": "22.1.8-2" },

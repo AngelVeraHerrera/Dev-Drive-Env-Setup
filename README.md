@@ -257,6 +257,23 @@ package being installed *requires* a newer version of an ignored one, pacman rep
 upgrading it silently — the right outcome, but one you have to resolve — and pinning a package does not pin what it
 links against.
 
+**Pin `headers` and `crt` explicitly, and pin them first.** Neither is something you would think to list: they arrive
+as dependencies of the compiler, so pinning the compiler does not pin them, and `IgnorePkg` covers named packages
+rather than transitive dependencies. Pinning the tools buys reproducibility; pinning these buys *correctness*.
+
+The example configurations lead with them for a reason. Two machines running the same clang 22.1.8 against the same
+sources, with the same features enabled, disagreed about whether GStreamer builds: on `headers`
+`14.0.0.r302.gd7f3c5201-1` the helper `ua_wcscpy_s` sits in `sec_api/stralign_s.h` behind a legacy
+`_WConst_Return` guard and is never compiled, so `stralign.h` has no line 208 at all; on a newer snapshot it lives in
+`stralign.h` itself with nothing gating it, where it collides with a macro GStreamer's bundled Intel dispatcher
+defines — see [One patch to vcpkg itself](#one-patch-to-vcpkg-itself) for that fix. The compiler was identical. The
+headers were not, and nothing in the configuration said so.
+
+One caveat that comes with pinning, and it is not hypothetical: MSYS2's repository serves only current versions.
+A pin has a shelf life, and the day a pinned version is dropped upstream, step 2 fails on a 404 rather than
+silently installing something else. Failing loudly is the right behaviour, but it does mean a pinned configuration
+needs revisiting deliberately rather than never.
+
 #### The three names a subsystem has
 
 `msys2.target` used to carry a single `profile`, and that conflated three different things:
