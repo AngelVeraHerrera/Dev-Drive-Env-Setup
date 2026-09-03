@@ -646,6 +646,46 @@ if ($checkElements.Count -gt 0)
 }
 
 # ====================================================================
+# CHECK 6: the controlled patch to vcpkg's own scripts is still applied
+# ====================================================================
+# Every check above verifies what vcpkg PRODUCED. This one verifies vcpkg itself, because step 3 modifies one file
+# inside the pinned clone and nothing else would notice if that modification stopped taking effect.
+#
+# The patch adds openssl's rename failure to vcpkg's build-retry list, so an install that loses the
+# add-depends.pl race falls back to a serial make instead of failing the port outright. It applies by anchoring on
+# a neighbouring entry in that list, which means a baseline bump that reworks the list leaves the patch silently
+# doing nothing. Step 3 warns at the moment it happens -- and that warning scrolls past, while the consequence
+# turns up hours later, in a different step, on one machine out of two, looking for all the world like a compiler
+# problem. Somebody spent two days on exactly that. This check is what makes the state visible on demand.
+
+Write-Info "CHECK: the controlled vcpkg script patch is in place."
+
+$patchTarget = Join-Path (Join-Path (Join-Path $vcpkgRoot "scripts") "cmake") "vcpkg_execute_build_process.cmake"
+$patchName   = "openssl serial-install retry"
+
+if (-not (Test-Path -LiteralPath $patchTarget))
+{
+    # "skip", not "fail": with no file there is nothing to inspect, and a vcpkg tree missing its own scripts is a
+    # different diagnosis, one the checks above will already have reached. Claiming the patch failed here would
+    # point the reader at the wrong thing.
+    Add-Result -Group "patches" -Name $patchName -State "skip" `
+        -Detail "vcpkg_execute_build_process.cmake not found under $vcpkgRoot, so this cannot be determined"
+}
+# ReadAllText, not Get-Content -Raw. On a zero-byte file Get-Content -Raw emits NOTHING rather than an empty
+# string, and casting that to [string] still leaves null, so .Contains() threw -- outside any try, which would
+# have killed this script before it wrote its report. ReadAllText returns "" and the check simply says "fail".
+elseif ([System.IO.File]::ReadAllText($patchTarget).Contains('"Trying to rename "'))
+{
+    Add-Result -Group "patches" -Name $patchName -State "ok"
+}
+else
+{
+    Add-Result -Group "patches" -Name $patchName -State "fail" `
+        -Detail ("not applied, so openssl may fail during 'make install' with a rename 'Permission denied' on " +
+                 "machines that lose the race. Re-run 3-Clone_VCPKG.ps1, or add the pattern by hand")
+}
+
+# ====================================================================
 # REPORT
 # ====================================================================
 

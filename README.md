@@ -440,11 +440,17 @@ Output is a summary by group, a list of anything that failed, and a report writt
  tools      8 checked, 0 failed
  commands   4 checked, 0 failed
  elements   29 checked, 0 failed
+ patches    1 checked, 0 failed
 ```
 
 Three result states, not two: **ok**, **failed**, and **not checked**. The last one matters — a check that could not
 be carried out, because another vcpkg process held the lock for instance, is not a check that failed. A verification
 tool that cries wolf gets switched off.
+
+The `patches` group is the odd one out: every other check asks whether vcpkg produced the right thing, and that one
+asks whether vcpkg is still patched — see [One patch to vcpkg itself](#one-patch-to-vcpkg-itself). It exists because
+the patch applies by anchoring on a neighbouring line, so a baseline bump can leave it silently doing nothing, and
+the consequence surfaces hours later, in another step, on one machine out of two.
 
 **The load check is the one that earns its keep.** A DLL that built is not a DLL that works: it can be missing a
 dependency or importing a name nothing provides, and neither shows up until something tries to load it. Each library
