@@ -18,87 +18,36 @@
             "GSTREAMER_TEST_HOST_IP": "192.168.8.70",
             "GSTREAMER_TEST_PORT": "5500"
         },
-        "custom_path_entries": [
-            "${CUDA_PATH}"
-        ],
-        "custom_folders": [
-            "logs/gstreamer/dot",
-            "logs/gstreamer/registry",
-            "workspace_vcpkg_patches"
-        ],
+        "custom_path_entries": ["${CUDA_PATH}"],
+        "custom_folders": ["logs/gstreamer/dot", "logs/gstreamer/registry", "workspace_vcpkg_patches"],
         "install_testing_material": true,
         "install_installation_material": true,
         "verification": {
             "check_packages": true,
             "check_dll_load": true,
             "check_tools": [
-                "vcpkg",
-                "gst-inspect-1.0",
-                "gst-launch-1.0",
-                "gst-discoverer-1.0",
-                "ffmpeg",
-                "ffprobe",
-                "curl",
+                "vcpkg", "gst-inspect-1.0", "gst-launch-1.0", "gst-discoverer-1.0", "ffmpeg", "ffprobe", "curl",
                 "pkgconf"
             ],
             "check_commands": [
-                {
-                    "run": "gst-inspect-1.0 --version",
-                    "expect": "GStreamer"
-                },
-                {
-                    "run": "ffmpeg -hide_banner -version",
-                    "expect": "ffmpeg version"
-                },
-                {
-                    "run": "curl --version",
-                    "expect": "OpenSSL"
-                },
-                {
-                    "run": "pkgconf --version",
-                    "expect": ""
-                }
+                { "run": "gst-inspect-1.0 --version", "expect": "GStreamer" },
+                { "run": "ffmpeg -hide_banner -version", "expect": "ffmpeg version" },
+                { "run": "curl --version", "expect": "OpenSSL" },
+                { "run": "pkgconf --version", "expect": "" }
             ],
             "check_gstreamer_elements": [
-                "videotestsrc",
-                "audiotestsrc",
-                "decodebin",
-                "playbin",
-                "matroskademux",
-                "x264enc",
-                "x265enc",
-                "openh264enc",
-                "libde265dec",
-                "d3d11h264dec",
-                "d3d11h265dec",
-                "d3d11videosink",
-                "d3d11screencapturesrc",
-                "nvh264enc",
-                "nvh264dec",
-                "mfh264enc",
-                "rtph264pay",
-                "rtph265pay",
-                "rtpjitterbuffer",
-                "udpsink",
-                "udpsrc",
-                "srtsink",
-                "hlssink2",
-                "fpsdisplaysink",
-                "svtav1enc",
-                "avdec_h264",
-                "avenc_aac",
-                "glupload",
-                "glimagesink"
+                "videotestsrc", "audiotestsrc", "decodebin", "playbin", "matroskademux", "x264enc", "x265enc",
+                "openh264enc", "libde265dec", "d3d11h264dec", "d3d11h265dec", "d3d11videosink",
+                "d3d11screencapturesrc", "nvh264enc", "nvh264dec", "mfh264enc", "rtph264pay", "rtph265pay",
+                "rtpjitterbuffer", "udpsink", "udpsrc", "srtsink", "hlssink2", "fpsdisplaysink", "svtav1enc",
+                "avdec_h264", "avenc_aac", "glupload", "glimagesink"
             ]
         },
         "append_windows_system_path": false,
         "proxy_url": ""
     },
     "msys2": {
-        "source": {
-            "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe",
-            "sha256": ""
-        },
+        "source": { "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe", "sha256": "" },
         "target": {
             "subsystem": "clang64",
             "package_prefix": "mingw-w64-clang-x86_64",
@@ -107,44 +56,13 @@
             "base_url": "https://repo.msys2.org"
         },
         "packages": [
-            {
-                "name": "ninja",
-                "mode": "pinned",
-                "version": "1.13.2-1"
-            },
-            {
-                "name": "cmake",
-                "mode": "pinned",
-                "version": "4.4.2-2"
-            },
-            {
-                "name": "lld",
-                "mode": "pinned",
-                "version": "22.1.8-2"
-            },
-            {
-                "name": "clang",
-                "mode": "pinned",
-                "version": "22.1.8-2"
-            },
-            {
-                "name": "ripgrep",
-                "mode": "latest"
-            },
-            {
-                "name": "make",
-                "mode": "pinned",
-                "version": "4.4.1-3",
-                "repo": "msys",
-                "file_arch": "x86_64"
-            },
-            {
-                "name": "diffutils",
-                "mode": "pinned",
-                "version": "3.12-1",
-                "repo": "msys",
-                "file_arch": "x86_64"
-            }
+            { "name": "ninja", "mode": "pinned", "version": "1.13.2-1" },
+            { "name": "cmake", "mode": "pinned", "version": "4.4.2-2" },
+            { "name": "lld", "mode": "pinned", "version": "22.1.8-2" },
+            { "name": "clang", "mode": "pinned", "version": "22.1.8-2" },
+            { "name": "ripgrep", "mode": "latest" },
+            { "name": "make", "mode": "pinned", "version": "4.4.1-3", "repo": "msys", "file_arch": "x86_64" },
+            { "name": "diffutils", "mode": "pinned", "version": "3.12-1", "repo": "msys", "file_arch": "x86_64" }
         ]
     },
     "vcpkg": {
@@ -153,114 +71,40 @@
             "baseline_mode": "fixed",
             "baseline_commit": "06d00ffa491e4668627728f14b891d22c6fea146"
         },
-        "target": {
-            "triplet": "x64-mingw-clang-dynamic-release"
-        },
+        "target": { "triplet": "x64-mingw-clang-dynamic-release" },
         "buildtrees_root": "L:/bt",
         "max_install_attempts": 3,
-        "install_schedule": [
-            {},
-            {
-                "concurrency": 8
-            },
-            {
-                "concurrency": 1
-            }
-        ],
+        "install_schedule": [{}, { "concurrency": 8 }, { "concurrency": 1 }],
         "overlay_ports": [
-            {
-                "triplet": "x64-mingw-clang-dynamic-release",
-                "layers": [
-                    "ports.clang",
-                    "ports"
-                ]
-            },
-            {
-                "triplet": "x64-mingw-ucrt-dynamic-release",
-                "layers": [
-                    "ports.ucrt",
-                    "ports"
-                ]
-            },
-            {
-                "triplet": "*",
-                "layers": [
-                    "ports"
-                ]
-            }
+            { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
+            { "triplet": "x64-mingw-ucrt-dynamic-release", "layers": ["ports.ucrt", "ports"] },
+            { "triplet": "*", "layers": ["ports"] }
         ],
         "packages": [
-            {
-                "name": "fmt"
-            },
-            {
-                "name": "nlohmann-json"
-            },
-            {
-                "name": "openssl"
-            },
-            {
-                "name": "gstreamer",
-                "features": [
-                    "plugins-base",
-                    "plugins-good",
-                    "plugins-bad",
-                    "gl",
-                    "jpeg",
-                    "png"
-                ]
-            },
+            { "name": "fmt" },
+            { "name": "nlohmann-json" },
+            { "name": "openssl" },
+            { "name": "gstreamer", "features": ["plugins-base", "plugins-good", "plugins-bad", "gl", "jpeg", "png"] },
             {
                 "name": "qtbase",
                 "features": [
-                    "gui",
-                    "widgets",
-                    "network",
-                    "opengl",
-                    "openssl",
-                    "freetype",
-                    "png",
-                    "jpeg",
-                    "windeployqt"
+                    "gui", "widgets", "network", "opengl", "openssl", "freetype", "png", "jpeg", "windeployqt"
                 ],
-                "install_schedule": [
-                    {
-                        "concurrency": 8
-                    }
-                ],
+                "install_schedule": [{ "concurrency": 8 }],
                 "max_install_attempts": 3
             },
             {
                 "name": "opencv4",
-                "features": [
-                    "jpeg",
-                    "png",
-                    "tiff"
-                ],
-                "install_schedule": [
-                    {
-                        "concurrency": 8
-                    },
-                    {
-                        "concurrency": 4
-                    },
-                    {
-                        "concurrency": 1
-                    }
-                ]
+                "features": ["jpeg", "png", "tiff"],
+                "install_schedule": [{ "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 }]
             },
-            {
-                "name": "zlib",
-                "triplet": "x64-mingw-ucrt-static-release"
-            }
+            { "name": "zlib", "triplet": "x64-mingw-ucrt-static-release" }
         ]
     },
     "workspace": {
         "default_folder": "workspace",
         "repositories": [
-            {
-                "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git"
-            },
+            { "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git" },
             {
                 "url": "https://github.com/DegorasProjectTeam/LibZMQUtils.git",
                 "folder": "workspace/degoras",
