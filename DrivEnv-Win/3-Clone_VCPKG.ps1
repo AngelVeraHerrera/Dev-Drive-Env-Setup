@@ -971,62 +971,127 @@ Write-Info "STEP 6: OK"
 
 Write-Info "STEP 7: Install the controlled overlay ports."
 
-$overlayPortsSrc = Join-Path $scriptDir "vcpkg_overlays\ports"
-
-if (-not (Test-Path -LiteralPath $overlayPortsSrc))
+# OVERLAY PORTS ARE LAYERED, and every layer any triplet asks for is installed here.
+#
+# A layer is a directory of ports. vcpkg searches the layers a port's triplet declares IN ORDER and takes the
+# first that contains the port, so a specific layer can override the shared one. The point of that is a future
+# environment holding BOTH a GCC and a clang triplet in one vcpkg tree: the overlay path is not a property of
+# the tree, it is chosen per invocation, and step 4 invokes vcpkg once per port -- so the layers can differ by
+# triplet without the two treading on each other.
+#
+# "ports" is always installed even when no configuration mentions it, because it is the shared layer everything
+# falls back to and an environment without it has no overlays at all.
+$overlayLayerNames = @("ports")
+foreach ($entry in @($Cfg.vcpkg.overlay_ports))
 {
-    Write-Error "Overlay ports source not found: $overlayPortsSrc"
-    Abort-WithError
-}
-
-if (-not (Test-Path -LiteralPath $overlayPortsWin))
-{
-    New-Item -ItemType Directory -Path $overlayPortsWin -Force | Out-Null
-    Write-Info "Created overlay ports directory: $overlayPortsWin"
-}
-
-$srcPortDirs = @(Get-ChildItem -LiteralPath $overlayPortsSrc -Directory)
-
-if ($srcPortDirs.Count -eq 0)
-{
-    Write-Info "No overlay ports to install."
-}
-
-# Reconcile, do not merely add: a port removed from the repository must disappear from the drive too. An overlay port
-# outranks the builtin registry, so a leftover fork silently keeps shadowing upstream for as long as it sits there.
-foreach ($stale in @(Get-ChildItem -LiteralPath $overlayPortsWin -Directory))
-{
-    if ($srcPortDirs.Name -notcontains $stale.Name)
+    foreach ($layer in @($entry.layers))
     {
-        Write-Info "Removing retired overlay port: $($stale.Name)"
-        Remove-Item -LiteralPath $stale.FullName -Recurse -Force -ErrorAction Stop
-    }
-}
+        # -replace rather than a chain of Trim() calls: Trim takes a char array, so trimming both slash kinds
+        # means Trim([char]'/', [char]'\') and getting that wrong throws a conversion error at runtime rather
+        # than quietly doing nothing.
+        $trimmedLayer = ([string]$layer).Trim() -replace '^[\\/]+', '' -replace '[\\/]+$', ''
+        if ([string]::IsNullOrWhiteSpace($trimmedLayer)) { continue }
 
-foreach ($dir in $srcPortDirs)
-{
-    $dstPath = Join-Path $overlayPortsWin $dir.Name
-
-    Write-Info "Installing overlay port: $($dir.Name) -> $dstPath"
-    try
-    {
-        if (Test-Path -LiteralPath $dstPath)
+        # A layer name is a single directory under vcpkg_overlays, not a path: anything else would let a
+        # configuration reach outside the repository, and the reconcile below deletes whatever it finds in the
+        # destination.
+        if ($trimmedLayer -match '[\\/]' -or $trimmedLayer -match '\.\.')
         {
-            Remove-Item -LiteralPath $dstPath -Recurse -Force
+            Write-Error "vcpkg.overlay_ports: '$trimmedLayer' must be a single directory name under vcpkg_overlays."
+            Abort-WithError
         }
-        # -ErrorAction Stop or the catch never fires: Copy-Item's errors are non-terminating by default, so a failed
-        # copy logged "Overlay port installed" right after the destination had already been deleted.
-        Copy-Item -LiteralPath $dir.FullName -Destination $dstPath -Recurse -Force -ErrorAction Stop
-        Write-Info "Overlay port installed: $($dir.Name)"
+
+        if ($overlayLayerNames -notcontains $trimmedLayer) { $overlayLayerNames += $trimmedLayer }
     }
-    catch
+}
+
+Write-Info ("Overlay port layers to install: {0}" -f ($overlayLayerNames -join ', '))
+
+$overlayRootWin = Join-Path $devDrive "overlays"
+if (-not (Test-Path -LiteralPath $overlayRootWin))
+{
+    New-Item -ItemType Directory -Path $overlayRootWin -Force | Out-Null
+}
+
+# A layer directory that no configuration references any more is removed, for the same reason a retired port is:
+# an overlay outranks the builtin registry, so anything left behind keeps shadowing upstream silently. Only
+# directories whose name looks like a ports layer are considered, so "triplets" is never touched.
+foreach ($staleLayer in @(Get-ChildItem -LiteralPath $overlayRootWin -Directory -ErrorAction SilentlyContinue))
+{
+    if ($staleLayer.Name -ne "ports" -and -not $staleLayer.Name.StartsWith("ports.")) { continue }
+    if ($overlayLayerNames -contains $staleLayer.Name) { continue }
+
+    Write-Info "Removing retired overlay layer: $($staleLayer.Name)"
+    Remove-Item -LiteralPath $staleLayer.FullName -Recurse -Force -ErrorAction Stop
+}
+
+$totalPorts = 0
+
+foreach ($layerName in $overlayLayerNames)
+{
+    $layerSrc = Join-Path $scriptDir ("vcpkg_overlays\{0}" -f $layerName)
+    $layerDst = Join-Path $overlayRootWin $layerName
+
+    if (-not (Test-Path -LiteralPath $layerSrc))
     {
-        Write-Error "Failed to install overlay port $($dir.Name): $_"
+        if ($layerName -eq "ports")
+        {
+            Write-Error "Overlay ports source not found: $layerSrc"
+            Abort-WithError
+        }
+
+        # A named layer that does not exist in the repository is a configuration error, not an empty layer:
+        # silently treating it as empty would mean a port the configuration expects to be overridden quietly
+        # comes from upstream instead.
+        Write-Error "vcpkg.overlay_ports names layer '$layerName', but $layerSrc does not exist."
         Abort-WithError
     }
+
+    if (-not (Test-Path -LiteralPath $layerDst))
+    {
+        New-Item -ItemType Directory -Path $layerDst -Force | Out-Null
+        Write-Info "Created overlay layer directory: $layerDst"
+    }
+
+    $srcPortDirs = @(Get-ChildItem -LiteralPath $layerSrc -Directory)
+
+    # Reconcile, do not merely add: a port removed from the repository must disappear from the drive too.
+    foreach ($stale in @(Get-ChildItem -LiteralPath $layerDst -Directory))
+    {
+        if ($srcPortDirs.Name -notcontains $stale.Name)
+        {
+            Write-Info "Removing retired overlay port: $layerName/$($stale.Name)"
+            Remove-Item -LiteralPath $stale.FullName -Recurse -Force -ErrorAction Stop
+        }
+    }
+
+    foreach ($dir in $srcPortDirs)
+    {
+        $dstPath = Join-Path $layerDst $dir.Name
+
+        Write-Info "Installing overlay port: $layerName/$($dir.Name) -> $dstPath"
+        try
+        {
+            if (Test-Path -LiteralPath $dstPath)
+            {
+                Remove-Item -LiteralPath $dstPath -Recurse -Force
+            }
+            # -ErrorAction Stop or the catch never fires: Copy-Item's errors are non-terminating by default, so a
+            # failed copy logged "Overlay port installed" right after the destination had already been deleted.
+            Copy-Item -LiteralPath $dir.FullName -Destination $dstPath -Recurse -Force -ErrorAction Stop
+        }
+        catch
+        {
+            Write-Error "Failed to install overlay port $layerName/$($dir.Name): $_"
+            Abort-WithError
+        }
+    }
+
+    Write-Info ("Layer '{0}': {1} port(s) installed." -f $layerName, $srcPortDirs.Count)
+    $totalPorts += $srcPortDirs.Count
 }
 
-Write-Info ("Installed {0} overlay port(s)." -f $srcPortDirs.Count)
+Write-Info ("Installed {0} overlay port(s) across {1} layer(s)." -f $totalPorts, $overlayLayerNames.Count)
 
 Write-Info "STEP 7: OK"
 
