@@ -18,8 +18,14 @@
             "GSTREAMER_TEST_HOST_IP": "192.168.8.70",
             "GSTREAMER_TEST_PORT": "5500"
         },
-        "custom_path_entries": ["${CUDA_PATH}"],
-        "custom_folders": ["logs/gstreamer/dot", "logs/gstreamer/registry", "workspace_vcpkg_patches"],
+        "custom_path_entries": [
+            "${CUDA_PATH}"
+        ],
+        "custom_folders": [
+            "logs/gstreamer/dot",
+            "logs/gstreamer/registry",
+            "workspace_vcpkg_patches"
+        ],
         "install_testing_material": true,
         "install_installation_material": true,
         "verification": {
@@ -36,10 +42,22 @@
                 "pkgconf"
             ],
             "check_commands": [
-                { "run": "gst-inspect-1.0 --version", "expect": "GStreamer" },
-                { "run": "ffmpeg -hide_banner -version", "expect": "ffmpeg version" },
-                { "run": "curl --version", "expect": "OpenSSL" },
-                { "run": "pkgconf --version", "expect": "" }
+                {
+                    "run": "gst-inspect-1.0 --version",
+                    "expect": "GStreamer"
+                },
+                {
+                    "run": "ffmpeg -hide_banner -version",
+                    "expect": "ffmpeg version"
+                },
+                {
+                    "run": "curl --version",
+                    "expect": "OpenSSL"
+                },
+                {
+                    "run": "pkgconf --version",
+                    "expect": ""
+                }
             ],
             "check_gstreamer_elements": [
                 "videotestsrc",
@@ -77,25 +95,101 @@
         "proxy_url": ""
     },
     "msys2": {
-        "source": { "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe", "sha256": "" },
-        "target": { "profile": "ucrt", "arch": "x86_64", "base_url": "https://repo.msys2.org" },
+        "source": {
+            "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe",
+            "sha256": ""
+        },
+        "target": {
+            "subsystem": "ucrt64",
+            "arch": "x86_64",
+            "base_url": "https://repo.msys2.org"
+        },
         "packages": [
-            { "name": "ninja", "mode": "pinned", "version": "1.13.2-1" },
-            { "name": "gdb", "mode": "pinned", "version": "17.2-1" },
-            { "name": "gcc", "mode": "pinned", "version": "16.2.0-3" },
-            { "name": "gcc-libs", "mode": "pinned", "version": "16.2.0-3" },
-            { "name": "gcc-objc", "mode": "pinned", "version": "16.2.0-3" },
-            { "name": "make", "mode": "pinned", "version": "4.4.1-3" },
-            { "name": "make", "mode": "pinned", "version": "4.4.1-3", "repo": "msys" },
-            { "name": "diffutils", "mode": "pinned", "version": "3.12-1" },
-            { "name": "lld", "mode": "pinned", "version": "22.1.8-2" },
-            { "name": "ripgrep", "mode": "pinned", "version": "15.2.0-1" },
-            { "name": "curl", "mode": "pinned", "version": "8.21.0-2" },
-            { "name": "doxygen", "mode": "pinned", "version": "1.18.0-1" },
-            { "name": "7zip", "mode": "pinned", "version": "26.02-1" },
-            { "name": "ntldd", "mode": "pinned", "version": "r19.7fb9365-4" },
-            { "name": "cmake", "mode": "pinned", "version": "4.4.2-2" },
-            { "name": "qt-creator", "mode": "pinned", "version": "20.0.0-1" }
+            {
+                "name": "ninja",
+                "mode": "pinned",
+                "version": "1.13.2-1"
+            },
+            {
+                "name": "gdb",
+                "mode": "pinned",
+                "version": "17.2-1"
+            },
+            {
+                "name": "gcc",
+                "mode": "pinned",
+                "version": "16.2.0-3"
+            },
+            {
+                "name": "gcc-libs",
+                "mode": "pinned",
+                "version": "16.2.0-3"
+            },
+            {
+                "name": "gcc-objc",
+                "mode": "pinned",
+                "version": "16.2.0-3"
+            },
+            {
+                "name": "make",
+                "mode": "pinned",
+                "version": "4.4.1-3"
+            },
+            {
+                "name": "make",
+                "mode": "pinned",
+                "version": "4.4.1-3",
+                "repo": "msys"
+            },
+            {
+                "name": "diffutils",
+                "mode": "pinned",
+                "version": "3.12-1"
+            },
+            {
+                "name": "lld",
+                "mode": "pinned",
+                "version": "22.1.8-2"
+            },
+            {
+                "name": "ripgrep",
+                "mode": "pinned",
+                "version": "15.2.0-1"
+            },
+            {
+                "name": "curl",
+                "mode": "pinned",
+                "version": "8.21.0-2"
+            },
+            {
+                "name": "doxygen",
+                "mode": "pinned",
+                "version": "1.18.0-1"
+            },
+            {
+                "name": "7zip",
+                "mode": "pinned",
+                "version": "26.02-1"
+            },
+            {
+                "name": "ntldd",
+                "mode": "pinned",
+                "version": "r19.7fb9365-4"
+            },
+            {
+                "name": "cmake",
+                "mode": "pinned",
+                "version": "4.4.2-2"
+            },
+            {
+                "name": "qt-creator",
+                "mode": "pinned",
+                "version": "20.0.0-1"
+            },
+            {
+                "name": "tree",
+                "mode": "latest"
+            }
         ]
     },
     "vcpkg": {
@@ -104,24 +198,88 @@
             "baseline_mode": "fixed",
             "baseline_commit": "06d00ffa491e4668627728f14b891d22c6fea146"
         },
-        "target": { "triplet": "x64-mingw-ucrt-dynamic-release" },
+        "target": {
+            "triplet": "x64-mingw-ucrt-dynamic-release"
+        },
+        "buildtrees_root": "R:/bt",
+        "install_schedule": [
+            {},
+            {
+                "concurrency": 4
+            },
+            {
+                "concurrency": 1
+            }
+        ],
         "packages": [
-            { "name": "fmt" },
-            { "name": "pkgconf" },
-            { "name": "nlohmann-json" },
-            { "name": "openssl" },
-            { "name": "zlib" },
-            { "name": "curl", "features": ["openssl", "ssh", "ssl", "tool", "brotli", "c-ares", "zstd"] },
-            { "name": "spdlog" },
-            { "name": "libbson" },
-            { "name": "mongo-c-driver", "features": ["openssl"] },
-            { "name": "mongo-cxx-driver" },
-            { "name": "xerces-c" },
-            { "name": "sdl2" },
-            { "name": "zeromq", "features": ["curve", "draft", "sodium"] },
-            { "name": "cppzmq" },
-            { "name": "glib" },
-            { "name": "grpc", "features": ["codegen"] },
+            {
+                "name": "fmt"
+            },
+            {
+                "name": "pkgconf"
+            },
+            {
+                "name": "nlohmann-json"
+            },
+            {
+                "name": "openssl"
+            },
+            {
+                "name": "zlib"
+            },
+            {
+                "name": "curl",
+                "features": [
+                    "openssl",
+                    "ssh",
+                    "ssl",
+                    "tool",
+                    "brotli",
+                    "c-ares",
+                    "zstd"
+                ]
+            },
+            {
+                "name": "spdlog"
+            },
+            {
+                "name": "libbson"
+            },
+            {
+                "name": "mongo-c-driver",
+                "features": [
+                    "openssl"
+                ]
+            },
+            {
+                "name": "mongo-cxx-driver"
+            },
+            {
+                "name": "xerces-c"
+            },
+            {
+                "name": "sdl2"
+            },
+            {
+                "name": "zeromq",
+                "features": [
+                    "curve",
+                    "draft",
+                    "sodium"
+                ]
+            },
+            {
+                "name": "cppzmq"
+            },
+            {
+                "name": "glib"
+            },
+            {
+                "name": "grpc",
+                "features": [
+                    "codegen"
+                ]
+            },
             {
                 "name": "ffmpeg",
                 "features": [
@@ -181,7 +339,9 @@
                     "libav"
                 ]
             },
-            { "name": "gst-rtsp-server" },
+            {
+                "name": "gst-rtsp-server"
+            },
             {
                 "name": "qtbase",
                 "features": [
@@ -199,25 +359,77 @@
                     "zstd",
                     "concurrent",
                     "windeployqt"
-                ]
+                ],
+                "install_schedule": [
+                    {
+                        "concurrency": 8
+                    }
+                ],
+                "max_install_attempts": 3
             },
-            { "name": "qt5compat" },
-            { "name": "qtdeclarative" },
+            {
+                "name": "qt5compat"
+            },
+            {
+                "name": "qtdeclarative"
+            },
             {
                 "name": "opencv4",
-                "features": ["tbb", "qt", "gstreamer", "opengl", "contrib", "openjpeg", "jpeg", "png", "tiff", "webp"]
+                "features": [
+                    "tbb",
+                    "qt",
+                    "gstreamer",
+                    "opengl",
+                    "contrib",
+                    "openjpeg",
+                    "jpeg",
+                    "png",
+                    "tiff",
+                    "webp"
+                ],
+                "install_schedule": [
+                    {
+                        "concurrency": 8
+                    },
+                    {
+                        "concurrency": 4
+                    },
+                    {
+                        "concurrency": 1
+                    }
+                ]
             },
-            { "name": "qtmultimedia", "features": ["ffmpeg", "widgets", "qml"] },
-            { "name": "qtcharts" },
-            { "name": "qtimageformats" },
-            { "name": "qt-advanced-docking-system" }
+            {
+                "name": "qtmultimedia",
+                "features": [
+                    "ffmpeg",
+                    "widgets",
+                    "qml"
+                ]
+            },
+            {
+                "name": "qtcharts"
+            },
+            {
+                "name": "qtimageformats"
+            },
+            {
+                "name": "qt-advanced-docking-system"
+            }
         ]
     },
     "workspace": {
         "default_folder": "workspace",
         "repositories": [
-            { "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git" },
-            { "url": "https://github.com/DegorasProjectTeam/LibZMQUtils.git", "folder": "workspace/degoras", "ref": "main", "optional": true }
+            {
+                "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git"
+            },
+            {
+                "url": "https://github.com/DegorasProjectTeam/LibZMQUtils.git",
+                "folder": "workspace/degoras",
+                "ref": "main",
+                "optional": true
+            }
         ]
     }
 }
