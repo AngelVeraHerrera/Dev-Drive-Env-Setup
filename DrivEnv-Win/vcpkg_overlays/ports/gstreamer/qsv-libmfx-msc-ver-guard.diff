@@ -1,0 +1,43 @@
+Only define the wcscpy_s / wcscat_s compatibility macros for genuinely old MSVC.
+
+UPSTREAM BUG, and not a clang or a MinGW concern: the guard is written as a bare comparison,
+so a compiler that does not define _MSC_VER at all satisfies it. The preprocessor evaluates the
+undefined identifier as 0, and 0 is less than 1400, which is how GCC and clang on MinGW end up
+taking a code path meant for Visual Studio 2003.
+
+Intel's dispatcher then defines a macro named wcscpy_s, expanding to TWO statements, one of them
+a cast of the size argument to void. mfx_dispatcher.h pulls that header in before the .cpp
+includes <windows.h>, so the macro is live when windows.h reaches stralign.h. Any use of
+wcscpy_s there as a value-returning expression is then a syntax error:
+
+    stralign.h:208:67: error: expected ')'
+    stralign.h:208:67: error: cannot initialize return object of type 'PUWSTR'
+                              with an rvalue of type 'void'
+    stralign.h:208:150: error: extraneous ')' before ';'
+      note: expanded from macro 'wcscpy_s'
+
+Two translation units fail this way, mfx_dispatcher.cpp and mfx_load_dll.cpp, taking the whole
+qsv plugin and therefore Intel Quick Sync with them.
+
+The macros are unnecessary as well as harmful: mingw-w64 declares the real wcscpy_s in
+sec_api/wchar_s.h, and every call site in libmfx uses the count-based signature it expects --
+verified by compiling all four call shapes against the real function with the macros absent.
+There is no behavioural risk either, because MSVC 2005 and later report 1400 or above, so every
+modern Visual Studio build already compiles this code against the real CRT function.
+
+Whether it bites depends on the mingw-w64 headers rather than on the compiler. In one snapshot
+the offending helper sits in sec_api/stralign_s.h behind a legacy _WConst_Return guard and is
+never compiled; in a newer one it lives in stralign.h itself with nothing gating it. Same clang,
+same feature set, one machine builds and the other does not. Worth sending upstream.
+
+--- a/subprojects/gst-plugins-bad/sys/qsv/libmfx/dispatcher/windows/mfx_dispatcher_defs.h
++++ b/subprojects/gst-plugins-bad/sys/qsv/libmfx/dispatcher/windows/mfx_dispatcher_defs.h
+@@ -17,7 +17,7 @@
+ #define MAX_PLUGIN_PATH 4096
+ #define MAX_PLUGIN_NAME 4096
+ 
+-#if _MSC_VER < 1400
++#if defined(_MSC_VER) && _MSC_VER < 1400
+     #define wcscpy_s(to, to_size, from) \
+         (void)(to_size);                \
+         wcscpy(to, from)

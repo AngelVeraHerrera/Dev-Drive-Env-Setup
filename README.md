@@ -146,14 +146,34 @@ than a 50 GB file, a UAC prompt and a failure at the end.
 > If a port fails every attempt the step stops, and every attempt after the first having run serialised means a
 > race between parallel jobs is already ruled out.
 >
-> **Ctrl-C is safe, and there is nothing to clean up afterwards.** The console sends the signal to the whole process
-> group, so bash and vcpkg receive it directly rather than being orphaned. It costs the port being built at that
-> moment and nothing else: vcpkg stages into `packages/` and only then commits into `installed/`, so an interrupted
-> port is simply not installed, everything already reported as installed stays installed, and re-running step 4
-> resumes from there. The `vcpkg-running.lock` files look alarming and are not — they are zero-byte files that live
-> on disk permanently and carry an OS-level lock only while vcpkg runs, which Windows releases however the process
-> dies. Verified on a drive whose builds had been interrupted repeatedly: all five lock files present, `vcpkg list`
-> ran and listed 102 packages.
+> **Ctrl-C stops the build, and step 4 handles it rather than dying.** An earlier version of this document claimed
+> the console signal reached bash and vcpkg by itself, and that was wrong: PowerShell tore down its own pipeline
+> and returned the prompt while bash, vcpkg, ninja and a dozen compilers carried on building unattended. The run
+> looked stopped and was not. Step 4 now takes over `Ctrl-C`, kills the build, and exits through its normal
+> reporting path — summary, preserved logs, restored console title, exit code `1223`.
+>
+> The build is killed through a **Windows job object**, not by walking parent process ids, and the difference is
+> measurable rather than theoretical. `taskkill /T` kills the outer bash, the inner one dies with it, and any
+> grandchild is left holding a parent id that refers to a dead process, so the rest of the walk cannot see it: a
+> test script with one background and one foreground `sleep` returned in 3.4 s with **two processes still
+> running**. A job object is tracked by the kernel by membership, so terminating it takes everything. The same
+> test with `setsid`-detached, `nohup`-detached and nested `bash -c` branches leaves **zero** survivors.
+>
+> `KILL_ON_JOB_CLOSE` is set as well, so if the script itself dies — a second `Ctrl-C`, a closed console window —
+> Windows tears the build down as the handle closes. `taskkill` still runs as a second sweep, for anything spawned
+> in the microseconds between starting the process and assigning it to the job.
+>
+> A cancelled run costs the port being built at that moment and nothing else: vcpkg stages into `packages/` and
+> only then commits into `installed/`, so an interrupted port is simply not installed, everything already reported
+> as installed stays installed, and re-running step 4 resumes from there. **Steps 5 and 6 are skipped** after a
+> cancellation, because the manifest and the inventory record what the environment *is*, and overwriting an
+> accurate record of the last complete run with a partial one destroys evidence for no gain. Step 4's own
+> verification still runs — "what is installed right now" is exactly the question an interrupted run leaves open.
+>
+> The `vcpkg-running.lock` files look alarming and are not — they are zero-byte files that live on disk
+> permanently and carry an OS-level lock only while vcpkg runs, which Windows releases however the process dies.
+> Verified on a drive whose builds had been interrupted repeatedly: all five lock files present, `vcpkg list` ran
+> and listed 102 packages.
 >
 > **`vcpkg.max_install_attempts` raises the count**, and it is configurable because it is a property of the machine
 > rather than of the configuration. One machine here needed *five* attempts to get `qtshadertools` through, with

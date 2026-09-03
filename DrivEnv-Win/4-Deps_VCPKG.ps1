@@ -215,10 +215,233 @@ echo "[env] VCPKG_DEFAULT_TRIPLET=`$VCPKG_DEFAULT_TRIPLET"
 "@
 }
 
+# --------------------------------------------------------------------
+# CANCELLATION
+# --------------------------------------------------------------------
+# WHY THIS EXISTS. Ctrl-C used to do the worst possible thing here: PowerShell tore down its own pipeline and
+# returned the prompt, while bash and everything below it -- vcpkg, cmake, ninja, a dozen compilers -- carried on
+# building, invisible, writing into the buildtree and holding the vcpkg lock. The run looked stopped and was not.
+#
+# A shared object rather than a plain variable, because the handler runs on a different thread than the loop that
+# reads it. Setting one boolean property is safe; assigning a script-scope variable across threads is the kind of
+# thing that works until it does not.
+$script:cancelState = [pscustomobject]@{ Requested = $false }
+
+function Enable-CancelHandling
+{
+    # @brief Take over Ctrl-C so a cancelled run can stop its own children before it exits.
+    #
+    # $e.Cancel = $true tells the runtime NOT to terminate us. That is the whole point: the default behaviour
+    # kills this script and orphans the build. With the default suppressed, the polling loop in
+    # Invoke-Msys2Script sees the request, kills the process tree, and the script exits through its normal
+    # reporting path -- summary, preserved logs, restored window title, non-zero exit code.
+    #
+    # A SECOND Ctrl-C is deliberately left to the runtime: if the tree-kill itself wedges, the user must still
+    # be able to get out. So this registers once and does not re-arm.
+    if ($script:cancelHandlerRegistered) { return }
+
+    try
+    {
+        $script:cancelHandler = [System.ConsoleCancelEventHandler] {
+            param ($sender, $e)
+            $e.Cancel = $true
+            $script:cancelState.Requested = $true
+            Write-Host ""
+            Write-Host "[CANCEL] Ctrl-C received. Stopping the build and shutting down; this takes a moment."
+        }
+
+        [System.Console]::add_CancelKeyPress($script:cancelHandler)
+        $script:cancelHandlerRegistered = $true
+    }
+    catch
+    {
+        # No console (a scheduled task, a redirected host) means no Ctrl-C to catch. Not a problem, but say so
+        # rather than leaving the user to believe cancellation is armed when it is not.
+        Write-Warn ("Could not install the Ctrl-C handler: {0}" -f $_.Exception.Message)
+        Write-Warn "Cancellation will not be graceful in this host; a Ctrl-C may orphan the build processes."
+    }
+}
+
+function Test-CancelRequested
+{
+    return [bool]$script:cancelState.Requested
+}
+
+function Initialize-JobObjectSupport
+{
+    # @brief Compile the three kernel32 calls needed to kill a build by JOB rather than by parent chain.
+    #
+    # WHY NOT taskkill /T, WHICH WAS THE FIRST ATTEMPT AND MEASURABLY DOES NOT WORK HERE. taskkill walks the
+    # Win32 parent chain. Killing `bash -lc "bash script"` kills the outer bash, the inner bash dies with it,
+    # and any grandchild is left holding a parent pid that now refers to a dead process -- so the rest of the
+    # walk cannot see it. Tested: a script running `sleep 300 &` plus a foreground `sleep 300` returned 1223 in
+    # 3.4 s with TWO sleep processes still running. For a real build that is ninja and a dozen compilers still
+    # writing into the buildtree after the run reported itself stopped, which is the exact failure this feature
+    # exists to prevent.
+    #
+    # A job object is tracked by the kernel by MEMBERSHIP. TerminateJobObject kills every process in the job no
+    # matter what happened to any parent, and KILL_ON_JOB_CLOSE means that if this script dies outright -- a
+    # second Ctrl-C, a closed console window, a crash -- Windows tears the build down as the handle closes.
+    # That is strictly better than what the old code could offer even in principle.
+    if ($script:jobObjectReady) { return $true }
+
+    try
+    {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class DrivEnvJob
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct IO_COUNTERS
+    {
+        public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+        public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass, SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+    }
+
+    const int  JobObjectExtendedLimitInformation  = 9;
+    const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr CreateJobObjectW(IntPtr attrs, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetInformationJobObject(IntPtr job, int infoClass, IntPtr info, uint cbInfo);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr handle);
+
+    public static IntPtr Create()
+    {
+        IntPtr job = CreateJobObjectW(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) { return IntPtr.Zero; }
+
+        var ext = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        ext.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        int  size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+        IntPtr buf = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.StructureToPtr(ext, buf, false);
+            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, buf, (uint)size))
+            {
+                CloseHandle(job);
+                return IntPtr.Zero;
+            }
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+
+        return job;
+    }
+
+    public static bool Assign(IntPtr job, IntPtr process)
+    {
+        if (job == IntPtr.Zero || process == IntPtr.Zero) { return false; }
+        return AssignProcessToJobObject(job, process);
+    }
+
+    public static bool Terminate(IntPtr job)
+    {
+        if (job == IntPtr.Zero) { return false; }
+        return TerminateJobObject(job, 1223);
+    }
+
+    public static void Close(IntPtr job)
+    {
+        if (job != IntPtr.Zero) { CloseHandle(job); }
+    }
+}
+'@
+        $script:jobObjectReady = $true
+        return $true
+    }
+    catch
+    {
+        # Falling back is worth doing rather than refusing to run: taskkill catches the common shapes even if it
+        # loses the races. Say so plainly, because the difference shows up as orphaned compilers.
+        Write-Warn ("Could not compile the job-object helper: {0}" -f $_.Exception.Message)
+        Write-Warn "Cancellation will fall back to taskkill, which can leave grandchild processes running."
+        $script:jobObjectReady = $false
+        return $false
+    }
+}
+
+function Stop-ProcessTree
+{
+    # @brief Kill a build: the job object if there is one, and taskkill as a second sweep.
+    #
+    # BOTH, deliberately. The job object is the reliable mechanism, but a process spawned in the microseconds
+    # between Process.Start and AssignProcessToJobObject is outside the job, and taskkill's parent walk is
+    # exactly what catches that case. They fail in different directions, so running both is cheaper than
+    # choosing.
+    #
+    # BY PID AND JOB HANDLE, NEVER BY IMAGE NAME. This machine routinely has the user's own compilers running
+    # against another drive; a "kill every clang++" would take their work with it.
+    param
+    (
+        [int]   $ProcessId,
+        [IntPtr]$JobHandle = [IntPtr]::Zero
+    )
+
+    if ($JobHandle -ne [IntPtr]::Zero)
+    {
+        try   { $null = [DrivEnvJob]::Terminate($JobHandle) }
+        catch { Write-Warn ("Job-object terminate failed: {0}" -f $_.Exception.Message) }
+    }
+
+    if ($ProcessId -le 0) { return }
+
+    try
+    {
+        $null = & (Join-Path (Join-Path $env:SystemRoot "System32") "taskkill.exe") /T /F /PID $ProcessId 2>&1
+    }
+    catch
+    {
+        Write-Warn ("Could not kill the process tree at pid {0}: {1}" -f $ProcessId, $_.Exception.Message)
+    }
+}
+
 function Invoke-Msys2Script
 {
     # @brief Run a bash script inside the MSYS2 login shell, mirroring its output into the log.
-    #        Returns the exit code of the script itself (no tee, so the code is not masked).
+    #        Returns the exit code of the script itself, or 1223 if the run was cancelled.
+    #
+    # HOW THE OUTPUT GETS HERE, and why it is not a pipe. Reading a child's stdout and stderr through pipes from
+    # PowerShell means either two synchronous readers -- which deadlock the moment one pipe's buffer fills while
+    # we are blocked on the other -- or event handlers that fire on threadpool threads and would need the log
+    # writer to be thread-safe. Instead BASH itself merges the two and redirects them into a file, and this
+    # function tails that file. Same interleaving the old `2>&1` produced, no pipe to deadlock on, and the poll
+    # loop is exactly the place where a cancellation request can be noticed.
+    #
+    # 1223 is ERROR_CANCELLED. Any non-zero code would do, but a caller that logs the number deserves one that
+    # means something.
     param
     (
         [string]$BashPath,
@@ -227,19 +450,98 @@ function Invoke-Msys2Script
     )
 
     $tempScript = Join-Path $env:TEMP $TempName
+    $outFile    = Join-Path $env:TEMP ($TempName + ".out")
     $utf8NoBom  = New-Object System.Text.UTF8Encoding($false)
+
     [System.IO.File]::WriteAllText($tempScript, ($ScriptBody -replace "`r`n", "`n"), $utf8NoBom)
+    [System.IO.File]::WriteAllText($outFile, "", $utf8NoBom)
 
     $tempScriptUnix = Convert-ToMSYSPath $tempScript
+    $outFileUnix    = Convert-ToMSYSPath $outFile
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName        = $BashPath
+    $psi.Arguments       = "-lc ""bash '$tempScriptUnix' > '$outFileUnix' 2>&1"""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow  = $true
+
+    $proc   = $null
+    $reader = $null
+    $job    = [IntPtr]::Zero
+    $code   = 1
 
     try
     {
-        & $BashPath -lc "bash '$tempScriptUnix'" 2>&1 | ForEach-Object { Write-NoFormat ("    | " + $_) }
-        return $LASTEXITCODE
+        $proc = [System.Diagnostics.Process]::Start($psi)
+
+        # Into a job object immediately, so a cancellation can kill the whole build by membership rather than by
+        # chasing parent pids. Assigned right after Start and not before, because there is no supported way to
+        # start a process suspended from PowerShell; the gap is microseconds, and taskkill covers what escapes.
+        if (Initialize-JobObjectSupport)
+        {
+            $job = [DrivEnvJob]::Create()
+            if ($job -eq [IntPtr]::Zero)
+            {
+                Write-Warn "Could not create a job object; cancellation falls back to taskkill alone."
+            }
+            elseif (-not [DrivEnvJob]::Assign($job, $proc.Handle))
+            {
+                Write-Warn "Could not assign the build to its job object; falling back to taskkill alone."
+                [DrivEnvJob]::Close($job)
+                $job = [IntPtr]::Zero
+            }
+        }
+
+        # FileShare.ReadWrite, because bash is writing this file while we read it. Anything narrower fails with
+        # a sharing violation on the first poll.
+        $stream = New-Object System.IO.FileStream($outFile, [System.IO.FileMode]::Open,
+                                                  [System.IO.FileAccess]::Read,
+                                                  [System.IO.FileShare]::ReadWrite)
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+
+        $cancelled = $false
+
+        while (-not $proc.HasExited)
+        {
+            while ($null -ne ($line = $reader.ReadLine())) { Write-NoFormat ("    | " + $line) }
+
+            if ((Test-CancelRequested) -and -not $cancelled)
+            {
+                $cancelled = $true
+                Write-Warn ("Cancelling '{0}': killing the build (pid {1})." -f $TempName, $proc.Id)
+                Stop-ProcessTree -ProcessId $proc.Id -JobHandle $job
+            }
+
+            Start-Sleep -Milliseconds 200
+        }
+
+        # Whatever bash wrote between the last poll and its exit. Skipping this loses the actual error message
+        # roughly one run in three, since a failing build tends to die shortly after printing why.
+        while ($null -ne ($line = $reader.ReadLine())) { Write-NoFormat ("    | " + $line) }
+
+        $code = if ($cancelled -or (Test-CancelRequested)) { 1223 } else { $proc.ExitCode }
+        return $code
+    }
+    catch
+    {
+        Write-Error ("Failed to run the MSYS2 script '{0}': {1}" -f $TempName, $_.Exception.Message)
+        return 1
     }
     finally
     {
+        if ($reader) { $reader.Dispose() }
+
+        # A cancelled run may still have a live tree if taskkill lost a race with a process that had not been
+        # created yet when it walked the chain. One more sweep, by pid, costs nothing.
+        if ($proc -and -not $proc.HasExited) { Stop-ProcessTree -ProcessId $proc.Id -JobHandle $job }
+
+        # Closing the handle is itself a kill, because the job carries KILL_ON_JOB_CLOSE. Harmless on the
+        # success path -- the build has already exited -- and a safety net on every other path.
+        if ($job -ne [IntPtr]::Zero) { [DrivEnvJob]::Close($job) }
+        if ($proc) { $proc.Dispose() }
+
         Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $outFile    -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -630,6 +932,10 @@ Write-NoFormat "================================================================
 
 Write-Info "STEP 1: Initial checks and preparations."
 
+# Armed before anything long-running starts, so a Ctrl-C during the very first port is handled the same way
+# as one during the last. See Enable-CancelHandling for what it takes over and why.
+Enable-CancelHandling
+
 Write-Info "Checking permissions..."
 # NO ELEVATION IS REQUIRED HERE, and demanding it was a mistake inherited from step 1. This block used to abort
 # unless the shell was already elevated, which sent people to reopen an Administrator terminal for no reason.
@@ -904,9 +1210,21 @@ if ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root")
 }
 
 $index = 0
+$cancelledRun = $false
 foreach ($port in $portSpecs)
 {
     $index++
+
+    # A cancelled run stops entering ports, but does NOT jump out of the script: the remaining steps write
+    # the summary, preserve the logs and restore the console, and those are worth more after an interrupted
+    # run than after a clean one.
+    if (Test-CancelRequested)
+    {
+        $cancelledRun = $true
+        Write-Warn ("Cancelled: skipping '{0}' and the {1} port(s) after it." -f
+                    $port.Spec, ($portSpecs.Count - $index))
+        break
+    }
     if ($port.Triplet -eq $vcpkgTriplet)
     {
         Write-Info ("Installing port {0}/{1}: '{2}'..." -f $index, $portSpecs.Count, $port.Spec)
@@ -982,6 +1300,9 @@ foreach ($port in $portSpecs)
 
     for ($attempt = 1; $attempt -le $portAttempts; $attempt++)
     {
+        # Retrying a port the user just interrupted would be the opposite of what they asked for.
+        if (Test-CancelRequested) { $cancelledRun = $true; break }
+
         $concurrency = $portSchedule[$attempt - 1]
 
         if ($attempt -gt 1)
@@ -1038,6 +1359,15 @@ $concurrencyLine
         }
     }
 
+    # A cancelled port did not fail to build; it was stopped. Reporting it as a failure and then quoting a
+    # non-existent error log would be actively misleading about what happened.
+    if (Test-CancelRequested)
+    {
+        $cancelledRun = $true
+        Write-Warn ("'{0}' was interrupted, not failed. Its buildtree is left as it is." -f $port.Spec)
+        break
+    }
+
     if ($code -ne 0)
     {
         Write-Error ("Installation of '{0}' failed on all {1} attempts, at concurrency {2} (ExitCode={3})." -f
@@ -1091,7 +1421,14 @@ $concurrencyLine
     Write-Info "'$($port.Spec)' installed successfully."
 }
 
-Write-Info "STEP 3: OK"
+if ($cancelledRun)
+{
+    Write-Warn "STEP 3: CANCELLED by the user."
+}
+else
+{
+    Write-Info "STEP 3: OK"
+}
 
 # STEP 4: Verify the installed ports.
 # --------------------------------------------------------------------
@@ -1244,6 +1581,19 @@ Write-Info "STEP 4: OK"
 
 # STEP 5: Emit the reference manifest.
 # --------------------------------------------------------------------
+
+# SKIPPED AFTER A CANCELLATION, and this is about not destroying evidence rather than about tidiness. This
+# step and the next write "what this environment IS" -- the manifest and the inventory. After an interrupt
+# the environment is half-built, and writing those files would replace an accurate record of the last
+# complete run with an inaccurate record of an interrupted one. Step 4 still runs: "what is installed right
+# now" is precisely the question a cancelled run leaves open.
+if ($cancelledRun)
+{
+    Write-Warn "STEP 5 and STEP 6 skipped: the run was cancelled, so the manifest and the inventory are"
+    Write-Warn "left as the last complete run wrote them rather than overwritten with a partial state."
+}
+else
+{
 
 Write-Info "STEP 5: Emit the reference manifest."
 
@@ -1469,6 +1819,8 @@ catch
 
 Write-Info "STEP 6: OK"
 
+}   # end of the "not cancelled" block guarding steps 5 and 6
+
 # FINALIZATION
 # --------------------------------------------------------------------
 
@@ -1476,7 +1828,16 @@ $scriptEnd = Get-Date
 $elapsed = $scriptEnd - $scriptStart
 $elapsedStr = ("{0:hh\:mm\:ss}" -f $elapsed)
 
-Write-Info "VCPKG dependencies setup completed successfully."
+# "completed successfully" must not be printed over a run the user stopped. The first version of the
+# verification script cheerfully reported OK under thirty-nine failures; the same mistake is available here.
+if ($cancelledRun)
+{
+    Write-Warn "VCPKG dependencies setup was CANCELLED before it finished."
+}
+else
+{
+    Write-Info "VCPKG dependencies setup completed successfully."
+}
 Write-Info "TOTAL EXECUTION TIME: $($elapsed.TotalSeconds) seconds  ($elapsedStr)"
 
 # Named again here rather than left in the scrollback. A port that failed and then installed with nothing about it
@@ -1502,5 +1863,9 @@ if ([Environment]::UserInteractive) {
     [void][System.Console]::ReadKey($true)
 }
 $host.UI.RawUI.WindowTitle = $originalTitle
+
+# A cancelled run exits non-zero. Anything driving these scripts in sequence has to be able to tell "the
+# ports are installed" from "the user stopped me", and the console message alone does not survive a pipe.
+if ($cancelledRun) { exit 1223 }
 
 # --------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# TEN FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
+# ELEVEN FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
 # next version, and nothing else -- everything else here is upstream's and must be taken verbatim.
 #
 # The two metadata deltas, both harmless, listed because this head used to claim "exactly eight ... and nothing
@@ -10,9 +10,31 @@
 #
 # STATUS, re-verified against the 1.28.6 sources on 2026-08-27 (deltas 4 and 5 by running the build, the rest by
 # reading the sources with the real MinGW toolchain):
-#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9, 10
+#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9, 10, 11
 #   defect gone    : 1 -- see below; kept for now, costs nothing
 #   half inert     : 3 (d3d11 half) -- see below; kept deliberately
+#
+#  11. PATCHES gains qsv-libmfx-msc-ver-guard.diff.
+#      Intel's bundled libmfx dispatcher guards its wcscpy_s / wcscat_s compatibility macros with a BARE
+#      comparison, '#if _MSC_VER < 1400'. A compiler that does not define _MSC_VER at all satisfies it: the
+#      preprocessor reads the undefined identifier as 0, and 0 < 1400, so GCC and clang on MinGW both take a
+#      path written for Visual Studio 2003. mfx_dispatcher.h pulls that header in before the .cpp includes
+#      <windows.h>, so the macro is live when windows.h reaches stralign.h, and any use of wcscpy_s there as a
+#      value-returning expression is a syntax error:
+#          stralign.h:208:67: error: expected ')'
+#          stralign.h:208:67: error: cannot initialize return object of type 'PUWSTR' with an rvalue of type
+#                                    'void'   [note: expanded from macro 'wcscpy_s']
+#      mfx_dispatcher.cpp and mfx_load_dll.cpp both fail, taking the qsv plugin -- Intel Quick Sync -- with
+#      them. UPSTREAM BUG, correct to fix for GCC too, hence unconditional and not in a clang-only layer.
+#
+#      WHY IT ONLY BIT ONE OF TWO MACHINES, which is the part worth remembering: it depends on the mingw-w64
+#      HEADERS, not on the compiler. Both machines run clang 22.1.8 and both build qsv. On headers
+#      14.0.0.r302.gd7f3c5201-1 the offending helper sits in sec_api/stralign_s.h behind a legacy
+#      _WConst_Return guard and is never compiled, so stralign.h has no line 208 at all; on a newer snapshot
+#      it lives in stralign.h itself with nothing gating it. The macros are also unnecessary: mingw-w64
+#      declares the real wcscpy_s in sec_api/wchar_s.h, all four call shapes in libmfx compile against it,
+#      and MSVC 2005+ reports 1400 or more, so every modern Visual Studio build already uses the real
+#      function. Worth sending upstream.
 #
 #  10. PATCHES gains mediafoundation-const-operator-libcxx.diff.
 #      GstMFDShowPinInfo::operator< in gstmfcapturedshow.cpp is not const, and line 993 sorts a vector of them
@@ -206,6 +228,7 @@ vcpkg_from_gitlab(
         d3d11-winrt-probe-mingw.diff
         mediafoundation-winrt-optional-mingw.diff          # LOCAL, see header
         mediafoundation-const-operator-libcxx.diff         # LOCAL, see header (delta 10)
+        qsv-libmfx-msc-ver-guard.diff                      # LOCAL, see header (delta 11)
 )
 
 # subprojects that do their own downloads
