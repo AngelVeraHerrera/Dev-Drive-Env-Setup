@@ -146,6 +146,15 @@ than a 50 GB file, a UAC prompt and a failure at the end.
 > If a port fails every attempt the step stops, and every attempt after the first having run serialised means a
 > race between parallel jobs is already ruled out.
 >
+> **Ctrl-C is safe, and there is nothing to clean up afterwards.** The console sends the signal to the whole process
+> group, so bash and vcpkg receive it directly rather than being orphaned. It costs the port being built at that
+> moment and nothing else: vcpkg stages into `packages/` and only then commits into `installed/`, so an interrupted
+> port is simply not installed, everything already reported as installed stays installed, and re-running step 4
+> resumes from there. The `vcpkg-running.lock` files look alarming and are not — they are zero-byte files that live
+> on disk permanently and carry an OS-level lock only while vcpkg runs, which Windows releases however the process
+> dies. Verified on a drive whose builds had been interrupted repeatedly: all five lock files present, `vcpkg list`
+> ran and listed 102 packages.
+>
 > **`vcpkg.max_install_attempts` raises the count**, and it is configurable because it is a property of the machine
 > rather than of the configuration. One machine here needed *five* attempts to get `qtshadertools` through, with
 > GCC segfaulting at a different optimisation pass and inside a different function on each run -- `dep_fusion` in
@@ -215,12 +224,54 @@ an edited file, and worth considerably more before a step that takes an hour tha
 
 ### `msys2`
 
-Where to fetch the installer from, which profile and architecture to target, and the package list. Each package may
+Where to fetch the installer from, which subsystem and architecture to target, and the package list. Each package may
 be `pinned` to an exact version, which is what makes the toolchain reproducible rather than "whatever was current".
 
 ```json
 { "name": "gcc", "mode": "pinned", "version": "16.2.0-3" }
 ```
+
+A pinned package is also added to pacman's `IgnorePkg`, so a later `pacman -Syu` inside the environment leaves it
+alone. Pacman prints `warning: <pkg>: ignoring package upgrade` and skips it. Two limits worth knowing: if some other
+package being installed *requires* a newer version of an ignored one, pacman reports a dependency error instead of
+upgrading it silently — the right outcome, but one you have to resolve — and pinning a package does not pin what it
+links against.
+
+#### The three names a subsystem has
+
+`msys2.target` used to carry a single `profile`, and that conflated three different things:
+
+| | | |
+| --- | --- | --- |
+| `subsystem` | the `MSYSTEM` value and the install directory | `clang64` → `/clang64` |
+| `repo_subpath` | where the packages live on repo.msys2.org | `mingw/clang64` |
+| `package_prefix` | what a package is actually called | `mingw-w64-clang-x86_64-<name>` |
+
+Normally you write only `subsystem` and the other two come from a table verified against repo.msys2.org:
+
+| `subsystem` | `package_prefix` | `repo_subpath` | default `arch` |
+| --- | --- | --- | --- |
+| `ucrt64` | `mingw-w64-ucrt-x86_64` | `mingw/ucrt64` | `x86_64` |
+| `clang64` | `mingw-w64-clang-x86_64` | `mingw/clang64` | `x86_64` |
+| `mingw64` | `mingw-w64-x86_64` | `mingw/mingw64` | `x86_64` |
+| `clangarm64` | `mingw-w64-clang-aarch64` | `mingw/clangarm64` | `aarch64` |
+| `mingw32` | `mingw-w64-i686` | `mingw/mingw32` | `i686` |
+| `clang32` | `mingw-w64-clang-i686` | `mingw/clang32` | `i686` |
+
+Two rows are why the table exists rather than a string rule. **`mingw64` carries no infix at all**, so deriving the
+prefix from the subsystem name asks for `mingw-w64-mingw-x86_64-<name>`, which does not exist. And **`clangarm64`'s
+sub-path is not `<infix>64`**, so the same derivation looks for its packages in another architecture's repository.
+
+`package_prefix` and `repo_subpath` are overrides, for a subsystem MSYS2 adds after that table was written. Setting
+them for a subsystem the table already knows is redundant, and leaving stale values behind after changing `subsystem`
+is the obvious way to get it wrong — so prefer naming only `subsystem`.
+
+`profile` still works and means `subsystem = "<profile>64"`, so a configuration written before this change behaves
+exactly as it did. `arch` is now optional: every subsystem in the table carries its own.
+
+`file_arch` on a package is the architecture tag in the package **file name**, which is not always the target
+architecture: most `mingw` packages are published as `any`, and a handful of scripted `msys` ones are too. Leave it
+out unless a package's file name disagrees with the default.
 
 ### `vcpkg`
 
@@ -240,6 +291,53 @@ own, for the case where one library has to be built differently from the rest:
 Every triplet in `DrivEnv-Win/vcpkg_overlays/triplets/` is installed to the drive, each verified against its
 `.sha256`, so an override only needs the triplet to exist there. The configured triplet still aborts the run if its
 hash is missing; an additional one declines to travel with a warning instead.
+
+#### `install_schedule` — attempts and concurrency as one list
+
+An install schedule is one entry per attempt, in order, each carrying the build concurrency that attempt runs with.
+The **length of the list is the attempt count**, so the two things a difficult machine needs tuning for cannot
+contradict each other:
+
+```json
+"install_schedule": [ {}, { "concurrency": 4 }, { "concurrency": 1 } ]
+```
+
+That reads: first attempt at whatever vcpkg picks from the hardware, second throttled to four parallel jobs, third
+serialised. An empty entry, or `"concurrency": 0`, exports nothing and leaves vcpkg to size the build itself.
+
+The point is that the failures worth retrying are **resource-shaped**, so repeating the same command just rolls the
+same dice. Measured on one machine building opencv4: GCC's `cc1plus` peaks at **928 MB**, and it runs up to **four
+linkers of 969 MB** alongside it, for a combined peak of **6.6 GB** at seventeen parallel jobs. Scale that to
+thirty-two threads and it is about 12 GB — which on a 16 GB machine is the edge, and past the edge the compiler dies
+in ways that look like compiler bugs: a segmentation fault at a different optimisation pass on every run.
+
+A package may declare its own, because the ports that need throttling are not the ports that need retrying:
+
+```json
+{ "name": "opencv4", "install_schedule": [ { "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 } ] }
+{ "name": "qtbase",  "install_schedule": [ { "concurrency": 8 } ], "max_install_attempts": 3 }
+```
+
+`max_install_attempts` still works and now sets the **length** of the schedule, at either level: it truncates a
+longer one, and extends a shorter one by repeating its last entry, which is the careful one. With neither key the
+behaviour is what it always was — first attempt at vcpkg's concurrency, every attempt after it serialised.
+
+#### `buildtrees_root` — a hard limit, not a preference
+
+vcpkg builds each port under `<root>/<port>/<triplet>-rel/`, and with a name like `x64-mingw-ucrt-dynamic-release`
+that prefix alone is 69 characters. Qt's autogen filenames are long enough that `qtdeclarative` reached **261
+characters** and the build failed with `error: opening dependency file ...: No such file or directory`.
+
+Windows applies a 260-character cap to any program that has not opted into long paths through its application
+manifest, and **MSYS2's GCC has not**, so `LongPathsEnabled=1` in the registry does not rescue it.
+
+```json
+"buildtrees_root": "R:/bt"
+```
+
+The default is `<drive>:/bt`, which puts that same path at 247. Nothing is lost by moving it: buildtrees is scratch,
+it is not part of any package ABI, and it is deleted after each port when clean-buildtrees is in effect. Step 1
+creates whatever you configure here.
 
 > ⚠️ **A different triplet means a different installed tree.** Everything built under it, dependencies included,
 > lands in `vcpkg/installed/<that-triplet>/`, so consumers need a second `CMAKE_PREFIX_PATH` — and a library built
@@ -405,6 +503,44 @@ presenting, that time, as an error message about CUDA.
 
 Several of these are genuine upstream bugs on non-MSVC Windows toolchains and are worth reporting upstream rather
 than carried forever. The notes say which.
+
+### Layers
+
+Overlay ports are **layered**, and each triplet says which layers it searches:
+
+```json
+"overlay_ports": [
+  { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
+  { "triplet": "x64-mingw-ucrt-dynamic-release",  "layers": ["ports.ucrt",  "ports"] },
+  { "triplet": "*",                               "layers": ["ports"] }
+]
+```
+
+`triplet` is matched exactly, `"*"` covers anything no other entry names, and the layers are searched **in order** —
+vcpkg takes the first that contains the port, so a specific layer overrides the shared one. Layer names are single
+directory names under `vcpkg_overlays/`; a name that does not exist there is a hard error rather than an empty layer,
+because treating it as empty would mean a port you expect to be overridden quietly comes from upstream instead.
+
+Omit the key and every triplet gets `["ports"]`, which is what this generator did before layers existed.
+
+The resolution happens **per port**, not once per run. That is what will let one vcpkg tree hold a GCC triplet and a
+clang triplet with different overlays: the overlay path is not a property of the tree, it is an argument to each
+vcpkg invocation, and step 4 invokes vcpkg once per port.
+
+> ⚠️ **A layer is usually the wrong tool.** It holds a whole portfile, so two copies then have to be kept in step
+> through every baseline bump — and they will not be; the copy nobody is currently debugging goes stale silently and
+> the failure surfaces months later as "it works on the other triplet". For a delta of a line or two, put a
+> conditional **inside** the shared port instead. The `gstreamer` overlay does exactly that:
+> `if(VCPKG_C_COMPILER MATCHES "clang" OR TARGET_TRIPLET MATCHES "clang")`. Note `TARGET_TRIPLET` — the
+> project-side `VCPKG_TARGET_TRIPLET` does not exist in portfile scope, and a test against it reads empty and takes
+> the `else` branch without complaining.
+
+Bringing up a CLANG64 environment is the case this was built for, and it argues the same way. Eight
+incompatibilities turned up. Five were settings and live in the triplet. Three were source-level, and **two of those
+were upstream bugs whose fixes are correct for GCC as well** — a comparison operator that should have been `const`,
+and a cast that GCC accepts unchanged — so they sit in the shared `ports` layer with nothing to keep in step. Only
+`libffi`'s ELF symbol versioning was genuinely clang-specific, and even that is an option in the shared overlay
+rather than a second copy of the port. `ports.clang` and `ports.ucrt` ship empty, and their READMEs say why.
 
 ---
 
