@@ -48,6 +48,22 @@ function Write-Info
     if ($globalLogFile) {Add-Content -Path $globalLogFile -Value $line}
 }
 
+function Write-Warn
+{
+    # @brief A warning line, in the same shape as Write-Info and Write-Error and mirrored into the log.
+    #
+    # This script called Write-Warn in seven places and defined it in none, so every one of them was a
+    # CommandNotFoundException instead of a warning. It stayed hidden because the three original call sites
+    # are all inside the Dev Drive branch, which only runs on Windows 11 with use_dev_drive true -- a
+    # Windows 10 machine never reached them. The four added later, around content indexing and the recycle
+    # bin, are on the normal path and would have surfaced it anywhere.
+    param ($msg)
+    $ts = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
+    $line = "[$ts][WARN][$msg]"
+    Write-Host $line
+    if ($globalLogFile) {Add-Content -Path $globalLogFile -Value $line}
+}
+
 function Write-Error 
 {
     param ($msg)
