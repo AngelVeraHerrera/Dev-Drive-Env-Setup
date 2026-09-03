@@ -32,6 +32,28 @@ pause_if_interactive() {
 }
 die() { log_e "$*"; pause_if_interactive; exit 1; }
 
+# THESE FUNCTIONS RETURN THROUGH DP_REPLY, NOT THROUGH STDOUT, and that is a performance decision
+# rather than a style one.
+#
+# Every $( ) is a subshell. On MSYS2 there is no real fork -- it is emulated on top of Windows
+# process creation -- so a command substitution costs on the order of nine milliseconds instead of
+# the microseconds it costs on Linux. The .env loop ran four of them per variable, and
+# expand_env_vars_recursive ran up to ten more inside itself, so twenty-eight variables came to
+# roughly a hundred and thirty forks.
+#
+# Measured on a generated drive, best of three runs each:
+#
+#   130 command substitutions calling a shell function      1176 ms
+#   the same work through parameter expansion                  16 ms
+#   the shape this loop actually had (28 x 5)                1264 ms
+#
+# and the bootstrap's own overhead over a plain login shell was 1490 ms. So the forks were
+# essentially all of it -- not bash-completion, which costs 11 ms, and not the vcpkg tool directory
+# scan, which costs 17 ms. Both were measured before being ruled out.
+#
+# DP_REPLY rather than the conventional REPLY: a bare `read` clobbers REPLY, and this file both
+# reads the .env line by line and calls `read` in pause_if_interactive. A dedicated name cannot be
+# caught out by that later.
 expand_env_vars_once() {
   local s="$1" name val
 
@@ -49,7 +71,7 @@ expand_env_vars_once() {
     s="${s//\$$name/$val}"
   done
 
-  printf '%s' "$s"
+  DP_REPLY="$s"
 }
 
 
@@ -57,13 +79,33 @@ expand_env_vars_recursive() {
   local s="$1" prev="" iter=0
 
   # Iterate until stable or max iterations (prevents infinite loops)
+  #
+  # iter=$((iter + 1)) and NOT ((iter++)), which is a latent bug this file carried for a long time.
+  # An arithmetic command returns the truth value of its expression, so ((iter++)) evaluates to the
+  # value BEFORE the increment -- zero on the first pass -- and therefore returns status 1. Under
+  # the `set -Eeuo pipefail` at the top of this file that aborts the shell.
+  #
+  # It never showed because the caller used to invoke this function inside $( ), and `set -e` kills
+  # a SUBSHELL without touching its parent: the subshell died at the end of the first iteration,
+  # printed what it had, and the caller carried on unaware. So this loop never actually iterated --
+  # it expanded once and stopped. Removing the command substitution for performance is what exposed
+  # it, with bash reporting the abort as
+  #     pop_scope: head of shell_variables is not a temporary environment scope
+  # because the shell was exiting from inside a function while `VAR=x source` had a temporary
+  # environment scope on the stack.
+  #
+  # An assignment always returns 0, so the loop now runs to its own termination condition. The
+  # behaviour barely changes in practice, because expand_env_vars_once already loops internally
+  # until no ${...} remains -- but "barely" is not "does not", and a value needing two passes was
+  # silently getting one.
   while [[ "$s" != "$prev" && $iter -lt 10 ]]; do
     prev="$s"
-    s="$(expand_env_vars_once "$s")"
-    ((iter++))
+    expand_env_vars_once "$s"
+    s="$DP_REPLY"
+    iter=$((iter + 1))
   done
 
-  printf '%s' "$s"
+  DP_REPLY="$s"
 }
 
 # ---------------------------------------------------------------
@@ -96,31 +138,40 @@ log_i "Env file       : ${ENV_FILE}"
 # ---------------------------------------------------------------
 # Helpers: sanitize and path conversions
 # ---------------------------------------------------------------
-strip_cr()      { printf '%s' "${1%$'\r'}"; }
-norm_slashes()  { printf '%s' "${1//\\//}"; }
+strip_cr()      { DP_REPLY="${1%$'\r'}"; }
+norm_slashes()  { DP_REPLY="${1//\\//}"; }
 looks_win_path(){ [[ "$1" =~ ^[A-Za-z]:($|/) ]]; }
 
 to_posix() {
-  local v="$1"
-  if command -v cygpath >/dev/null 2>&1; then
-    cygpath -u "$v" 2>/dev/null || printf '%s' "$v"
-  else
-    printf '%s' "$v"
-  fi
+  # Pure parameter expansion, and cygpath is not called at all any more.
+  #
+  # The only shape that reaches here is a drive-letter path, because looks_win_path gates the call,
+  # and "X:/foo" -> "/x/foo" is exact for that shape -- there is nothing cygpath knows about it that
+  # bash does not. Calling out was one more emulated fork per value, for a substitution costing
+  # nothing. cygpath is still the right tool for the shapes bash cannot do, UNC paths and mount
+  # prefixes, and none of them can appear in a drive-letter value.
+  #
+  # ${1:0:1} is the letter, ${1:2} everything past the colon, and ${d,} lower-cases the letter to
+  # match cygpath's canonical form. MSYS2 resolves /C/ and /c/ alike, so that is consistency.
+  local d="${1:0:1}"
+  DP_REPLY="/${d,}${1:2}"
 }
 
 export_env_kv() {
   # @brief Export key=value. If value is Windows drive path -> convert to POSIX in-place.
+  #
+  # Four command substitutions became four plain calls. See the note above expand_env_vars_once for
+  # what that was costing and how it was measured.
   local k="$1" v="$2"
 
-  v="$(strip_cr "$v")"
-  v="$(norm_slashes "$v")"
+  strip_cr "$v";     v="$DP_REPLY"
+  norm_slashes "$v"; v="$DP_REPLY"
 
   if looks_win_path "$v"; then
-    v="$(to_posix "$v")"
+    to_posix "$v";   v="$DP_REPLY"
   fi
-  
-  v="$(expand_env_vars_recursive "$v")"
+
+  expand_env_vars_recursive "$v"; v="$DP_REPLY"
   export "$k=$v"
 }
 
@@ -130,7 +181,7 @@ export_env_kv() {
 log_i "Loading variables from .env (POSIX in-place)..."
 
 while IFS= read -r raw || [[ -n "$raw" ]]; do
-  raw="$(strip_cr "$raw")"
+  strip_cr "$raw"; raw="$DP_REPLY"
   [[ -z "$raw" ]] && continue
   [[ "$raw" =~ ^[[:space:]]*# ]] && continue
   [[ "$raw" != *"="* ]] && { log_w "Skipping invalid line (no '='): $raw"; continue; }
@@ -231,9 +282,14 @@ add_vcpkg_tool_dirs
 # ---------------------------------------------------------------
 [[ -n "${DEVSYSTEM_NAME:-}" ]] || die "DEVSYSTEM_NAME not set in env file"
 
-DEVSYSTEM_NAME_UPPER="$(printf '%s' "$DEVSYSTEM_NAME" | tr '[:lower:]' '[:upper:]')"
-DEVSYSTEM_NAME_TOKEN="$(printf '%s' "$DEVSYSTEM_NAME_UPPER" | tr -c 'A-Z0-9_' '_')"
-MSYS2_ENV_LOWER="$(printf '%s' "${MSYS2_ENV:-ucrt64}" | tr '[:upper:]' '[:lower:]')"
+# Case folding and sanitising in bash rather than through printf | tr. Each of these was two
+# processes -- six emulated forks for three assignments -- and ${v^^}, ${v,,} and a pattern
+# substitution do exactly the same job. tr -c 'A-Z0-9_' '_' replaces every character OUTSIDE that
+# set, which is what the negated character class below does.
+DEVSYSTEM_NAME_UPPER="${DEVSYSTEM_NAME^^}"
+DEVSYSTEM_NAME_TOKEN="${DEVSYSTEM_NAME_UPPER//[^A-Z0-9_]/_}"
+MSYS2_ENV_LOWER="${MSYS2_ENV:-ucrt64}"
+MSYS2_ENV_LOWER="${MSYS2_ENV_LOWER,,}"
 
 log_i "DEVSYSTEM_NAME  : ${DEVSYSTEM_NAME_UPPER}"
 log_i "MSYS2_ENV : ${MSYS2_ENV_LOWER}"
@@ -270,11 +326,11 @@ if [[ -z "$DEVDRIVE_VAL" ]]; then
   DEVDRIVE_VAL="$HOME"
 fi
 
-DEVDRIVE_VAL="$(strip_cr "$DEVDRIVE_VAL")"
-DEVDRIVE_VAL="$(norm_slashes "$DEVDRIVE_VAL")"
+strip_cr "$DEVDRIVE_VAL";     DEVDRIVE_VAL="$DP_REPLY"
+norm_slashes "$DEVDRIVE_VAL"; DEVDRIVE_VAL="$DP_REPLY"
 # If it is still a Windows-like path, convert; otherwise keep it
 if looks_win_path "$DEVDRIVE_VAL"; then
-  DEVDRIVE_VAL="$(to_posix "$DEVDRIVE_VAL")"
+  to_posix "$DEVDRIVE_VAL";   DEVDRIVE_VAL="$DP_REPLY"
 fi
 DEVDRIVE_VAL="${DEVDRIVE_VAL%/}"
 

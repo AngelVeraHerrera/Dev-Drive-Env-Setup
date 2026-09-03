@@ -60,10 +60,20 @@ expand_env_vars_recursive() {
   local s="$1" prev="" iter=0
 
   # Iterate until stable or max iterations (prevents infinite loops)
+  #
+  # iter=$((iter + 1)) and NOT ((iter++)). An arithmetic command returns the truth value of its
+  # expression, and a post-increment evaluates to the value BEFORE incrementing -- zero on the
+  # first pass -- so ((iter++)) returns status 1 and the `set -Eeuo pipefail` above aborts.
+  #
+  # It stayed invisible because the caller invokes this inside $( ): `set -e` kills a subshell
+  # without touching its parent, so the subshell died at the end of the first iteration, printed
+  # what it had, and the caller never knew. This loop therefore never iterated. The same bug was
+  # found and fixed in env_launcher_bootstrap.sh, where removing the command substitution for
+  # performance is what finally surfaced it.
   while [[ "$s" != "$prev" && $iter -lt 10 ]]; do
     prev="$s"
     s="$(expand_env_vars_once "$s")"
-    ((iter++))
+    iter=$((iter + 1))
   done
 
   printf '%s' "$s"
