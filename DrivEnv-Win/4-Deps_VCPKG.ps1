@@ -696,6 +696,24 @@ Write-Info "STEP 2: OK"
 # STEP 3: Install the configured ports.
 # --------------------------------------------------------------------
 
+# INTERRUPTING THIS STEP IS SAFE, and no cancellation machinery is needed to make it so.
+#
+# Ctrl-C in the console sends CTRL_C_EVENT to the whole process group, and the MSYS2 child is started with
+# the call operator in that same group, so bash and vcpkg receive it directly rather than being orphaned.
+#
+# What it costs is the port being built at that moment and nothing else. vcpkg installs package by package:
+# it stages into packages/<port>_<triplet>/ and only then commits into installed/ and writes the status
+# record, so an interrupted port is simply not installed. Everything already reported as installed above
+# stays installed, and re-running this step resumes from there -- vcpkg does not rebuild what the status
+# database already accounts for.
+#
+# The vcpkg-running.lock files are not a hazard either, which is the part that looks alarming. They are
+# zero-byte files that stay on disk permanently and carry an OS-level exclusive lock while vcpkg runs;
+# Windows releases that lock when the process dies, however it dies. Verified on a drive whose builds had
+# been interrupted repeatedly: all five lock files present, and "vcpkg list" ran and listed 102 packages.
+#
+# So there is nothing to clean up and nothing to unwind. The only thing an interruption needs is for
+# somebody to know that, which is why it is written here rather than implemented.
 Write-Info "STEP 3: Install the configured ports with triplet '$vcpkgTriplet'."
 
 $vcpkgRootDrive       = Convert-ToDriveStylePath $vcpkgRootWin
