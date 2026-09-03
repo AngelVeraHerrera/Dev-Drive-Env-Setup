@@ -48,6 +48,20 @@ function Write-Info
     if ($globalLogFile) {Add-Content -Path $globalLogFile -Value $line}
 }
 
+function Write-Warn
+{
+    # @brief A warning line, in the same shape as Write-Info and Write-Error and mirrored into the log.
+    #
+    # This script called Write-Warn in three places and defined it in none, so each was a
+    # CommandNotFoundException instead of a warning. Same omission as 1-Setup_DevDrive.ps1 had; steps 3
+    # through 6 all define it.
+    param ($msg)
+    $ts = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
+    $line = "[$ts][WARN][$msg]"
+    Write-Host $line
+    if ($globalLogFile) {Add-Content -Path $globalLogFile -Value $line}
+}
+
 function Write-Error 
 {
     param ($msg)
@@ -100,33 +114,6 @@ function Convert-ToMSYSPath($winPath)
     return $winPath -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
 }
 
-# Resolves the MSYS2 target into the THREE DIFFERENT NAMES a subsystem has, which the configuration used to
-# conflate into one "profile" value.
-#
-# They are genuinely three things, and only two of them can be derived from each other:
-#
-#   SUBSYSTEM       the MSYSTEM value and the install directory      CLANG64  -> /clang64
-#   REPO SUBPATH    where the packages live on repo.msys2.org        mingw/clang64
-#   PACKAGE PREFIX  what a package is actually called                mingw-w64-clang-x86_64-<name>
-#
-# The old derivation was PkgName = "mingw-w64-<profile>-<arch>-" and RepoPath = "mingw/<profile>64". That is
-# correct for exactly the two subsystems in use and wrong for the others, which is the kind of bug that only
-# shows up the day somebody targets one. Verified against repo.msys2.org, one HTTP request per subsystem:
-#
-#   ucrt64       mingw-w64-ucrt-x86_64      mingw/ucrt64
-#   clang64      mingw-w64-clang-x86_64     mingw/clang64
-#   mingw64      mingw-w64-x86_64           mingw/mingw64        <- NO infix at all
-#   clangarm64   mingw-w64-clang-aarch64    mingw/clangarm64     <- subpath is not <infix>64
-#   mingw32      mingw-w64-i686             mingw/mingw32
-#   clang32      mingw-w64-clang-i686       mingw/clang32
-#
-# So mingw64 would have been asked for "mingw-w64-mingw-x86_64-<name>", which does not exist, and clangarm64
-# would have been looked for under mingw/clang64, which is the wrong architecture's repository.
-#
-# The configuration normally names ONE thing, msys2.target.subsystem, and the rest comes from this table.
-# msys2.target.profile still works and means what it always did -- subsystem = "<profile>64" -- so no existing
-# configuration changes behaviour. package_prefix and repo_subpath are there as explicit overrides for a
-# subsystem MSYS2 adds after this table was written.
 function Set-Msys2IgnorePkg
 {
     # @brief Record the pinned packages in pacman's IgnorePkg, so a later "pacman -Syu" leaves them alone.
@@ -218,6 +205,33 @@ function Set-Msys2IgnorePkg
     Write-Info ("IgnorePkg set for {0} pinned package(s): {1}" -f $Packages.Count, $wanted)
 }
 
+# Resolves the MSYS2 target into the THREE DIFFERENT NAMES a subsystem has, which the configuration used to
+# conflate into one "profile" value.
+#
+# They are genuinely three things, and only two of them can be derived from each other:
+#
+#   SUBSYSTEM       the MSYSTEM value and the install directory      CLANG64  -> /clang64
+#   REPO SUBPATH    where the packages live on repo.msys2.org        mingw/clang64
+#   PACKAGE PREFIX  what a package is actually called                mingw-w64-clang-x86_64-<name>
+#
+# The old derivation was PkgName = "mingw-w64-<profile>-<arch>-" and RepoPath = "mingw/<profile>64". That is
+# correct for exactly the two subsystems in use and wrong for the others, which is the kind of bug that only
+# shows up the day somebody targets one. Verified against repo.msys2.org, one HTTP request per subsystem:
+#
+#   ucrt64       mingw-w64-ucrt-x86_64      mingw/ucrt64
+#   clang64      mingw-w64-clang-x86_64     mingw/clang64
+#   mingw64      mingw-w64-x86_64           mingw/mingw64        <- NO infix at all
+#   clangarm64   mingw-w64-clang-aarch64    mingw/clangarm64     <- subpath is not <infix>64
+#   mingw32      mingw-w64-i686             mingw/mingw32
+#   clang32      mingw-w64-clang-i686       mingw/clang32
+#
+# So mingw64 would have been asked for "mingw-w64-mingw-x86_64-<name>", which does not exist, and clangarm64
+# would have been looked for under mingw/clang64, which is the wrong architecture's repository.
+#
+# The configuration normally names ONE thing, msys2.target.subsystem, and the rest comes from this table.
+# msys2.target.profile still works and means what it always did -- subsystem = "<profile>64" -- so no existing
+# configuration changes behaviour. package_prefix and repo_subpath are there as explicit overrides for a
+# subsystem MSYS2 adds after this table was written.
 function Resolve-Msys2Subsystem($Target)
 {
     $keys = @()
@@ -1129,6 +1143,58 @@ if ($latestPkgs.Count -gt 0)
 else
 {
     Write-Info "No latest packages configured."
+}
+
+# GCC AND G++ DRIVER ALIASES, on a clang subsystem only.
+#
+# Plenty of build systems have "gcc" written into them rather than asking $CC, and MSYS2's clang package does
+# not provide it. ffmpeg is the one that found this: libswscale/x86/Makefile generates an .asm file with
+# $(HOSTCC), ffmpeg's configure defaults HOSTCC to "gcc" because vcpkg's port passes --cc but never --host-cc,
+# and the build dies with
+#     make: gcc: No such file or directory
+#     make: *** [libswscale/x86/Makefile:35: libswscale/x86/uops_macros.gen.asm] Error 127
+# after several minutes of successful compiling. It fails identically at concurrency 1, so it reads like a
+# resource problem and is not: a binary is simply missing.
+#
+# COPIES OF THE CLANG DRIVER, and that works because clang chooses its personality from argv[0] -- exactly the
+# mechanism by which the clang package itself ships cc.exe and c++.exe, three independent copies of the same
+# 164 KB driver. (pacman -Qo denies owning them, which is misleading: it does not resolve paths under a mingw
+# prefix. pacman -Ql on the clang package lists them.)
+#
+# Recreated on EVERY run, unconditionally, because a copy goes stale: a later pacman upgrade replaces
+# clang.exe and leaves any copy of it behind at the old version. Copying each time is cheap and self-healing.
+#
+# The honest caveat: naming clang "gcc" does not fool a configure test that asks for a version -- it answers
+# "clang version ..." -- but it can mislead a build system that assumes GCC-specific flags after finding a
+# binary by that name. ffmpeg only needed a compiler that compiles. A port that needs more than that is better
+# served by an overlay passing --host-cc explicitly.
+if ($msysSub.Subsystem -like "clang*")
+{
+    $clangBin = Join-Path (Join-Path $msys2Path $msysSub.Subsystem) "bin"
+
+    foreach ($pair in @(@{ From = "clang.exe"; To = "gcc.exe" }, @{ From = "clang++.exe"; To = "g++.exe" }))
+    {
+        $src = Join-Path $clangBin $pair.From
+        $dst = Join-Path $clangBin $pair.To
+
+        if (-not (Test-Path -LiteralPath $src))
+        {
+            Write-Warn ("{0} not found in {1}; skipping the {2} alias." -f $pair.From, $clangBin, $pair.To)
+            continue
+        }
+
+        try
+        {
+            Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+            Write-Info ("Driver alias: {0} -> {1}" -f $pair.To, $pair.From)
+        }
+        catch
+        {
+            # Not fatal on its own, but say so loudly: the ports that need it fail much later and much less
+            # legibly than this line does.
+            Write-Warn ("Could not create the {0} alias: {1}" -f $pair.To, $_.Exception.Message)
+        }
+    }
 }
 
 # A make.exe -> mingw32-make.exe symlink used to be created here, so that plain `make` existed in the mingw prefix.
