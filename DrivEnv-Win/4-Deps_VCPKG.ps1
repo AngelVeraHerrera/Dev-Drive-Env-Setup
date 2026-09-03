@@ -449,7 +449,24 @@ foreach ($p in $vcpkgPackages)
     }
 
     $portNames += $pName
-    $portSpecs += @{ Name = $pName; Features = $pFeatures; Spec = $spec; Triplet = $pTriplet }
+    # OPTIONAL per-port overrides, resolved later against the global default rather than here, because the
+    # default they override is not read until the install phase.
+    #
+    # Kept as $null and 0 for "not given". A one-attempt schedule is @(0), and PowerShell collapses a
+    # one-element array to the truthiness of its single element, so `if ($pSchedule)` would be FALSE for a
+    # perfectly valid schedule. Every test on these two is therefore explicit.
+    $pSchedule = $null
+    if ($p.PSObject.Properties.Name -contains "install_schedule")
+    {
+        $pSchedule = ConvertTo-InstallSchedule -Entries $p.install_schedule
+        if ($pSchedule.Count -eq 0) { $pSchedule = $null }
+    }
+
+    $pAttempts = 0
+    if ($p.PSObject.Properties.Name -contains "max_install_attempts") { $pAttempts = [int]$p.max_install_attempts }
+
+    $portSpecs += @{ Name = $pName; Features = $pFeatures; Spec = $spec; Triplet = $pTriplet
+                     Schedule = $pSchedule; Attempts = $pAttempts }
 }
 
 # Dev drive layout (must match the layout written by 3-Clone_VCPKG.ps1)
@@ -695,22 +712,163 @@ $scriptHeader = New-Msys2ScriptHeader -Msys2Env        $msys2Env `
                                       -OverlayTriplets $overlayTripletsDrive `
                                       -BinaryCache     $binaryCacheDrive
 
+function Resolve-OverlayLayers
+{
+    # @brief The overlay port layers one triplet should search, in order. Returns layer NAMES, not paths.
+    #
+    # Matched exactly on the triplet, then on "*", then falling back to the single shared layer. The order of
+    # the returned list is the search order vcpkg is given, and vcpkg takes the first layer that contains the
+    # port -- so a specific layer earlier in the list overrides the shared one later in it.
+    #
+    # Why this is resolved PER PORT rather than once for the whole run: it is what lets one vcpkg tree hold two
+    # triplets with different overlays, which is the shape a dual GCC/clang environment needs. The overlay path
+    # is not a property of the tree; it is an argument to each invocation, and step 3 of this script invokes
+    # vcpkg once per port.
+    param ($OverlayConfig, [string]$Triplet)
+
+    $fallback = $null
+
+    foreach ($entry in @($OverlayConfig))
+    {
+        if ($null -eq $entry) { continue }
+
+        $entryTriplet = ([string]$entry.triplet).Trim()
+        $layers = @()
+        foreach ($layer in @($entry.layers))
+        {
+            $name = ([string]$layer).Trim() -replace '^[\/]+', '' -replace '[\/]+$', ''
+            if (-not [string]::IsNullOrWhiteSpace($name)) { $layers += $name }
+        }
+        if ($layers.Count -eq 0) { continue }
+
+        if ($entryTriplet -eq $Triplet) { return ,([string[]]$layers) }
+        if ($entryTriplet -eq '*' -and $null -eq $fallback) { $fallback = [string[]]$layers }
+    }
+
+    if ($null -ne $fallback) { return ,([string[]]$fallback) }
+
+    return ,([string[]]@("ports"))
+}
+
+function ConvertTo-InstallSchedule
+{
+    # @brief Turn a JSON install_schedule array into the list of concurrencies the retry loop uses: entry N is
+    #        what attempt N runs with, and 0 means "export nothing and let vcpkg size the build".
+    #
+    # No validation here on purpose. DrivEnvConfig.ps1 has already checked the shape -- an array of objects whose
+    # only key is an optional non-negative int -- and a second copy of that check would only give the two
+    # something to disagree about. An entry with no 'concurrency' is 0, which is the documented meaning of {}.
+    param ($Entries)
+
+    $out = @()
+    foreach ($entry in @($Entries))
+    {
+        # Piped rather than $entry.PSObject.Properties.Name, for the reason DrivEnvConfig.ps1 documents at
+        # length: on a bare {} the member access yields $null, and @($null) is an array holding one null.
+        $keys = @()
+        if ($null -ne $entry) { $keys = @($entry.PSObject.Properties | ForEach-Object { $_.Name }) }
+
+        if ($keys -contains 'concurrency') { $out += [int]$entry.concurrency } else { $out += 0 }
+    }
+
+    # Comma-wrapped so a ONE-attempt schedule comes back as an array of one rather than as a bare int:
+    # PowerShell unrolls an array returned from a function, and a single element then arrives as a scalar.
+    return ,([int[]]$out)
+}
+
+function Resize-InstallSchedule
+{
+    # @brief Force a schedule to exactly $Count attempts. Longer is truncated; shorter is extended by REPEATING
+    #        THE LAST entry, because the last entry is the careful one -- a schedule ends at whatever concurrency
+    #        was chosen for the worst case, so extra attempts should inherit it rather than invent one.
+    param ([int[]]$Schedule, [int]$Count)
+
+    if ($Schedule.Count -eq 0) { $Schedule = [int[]]@(0) }
+    if ($Count -lt 1)          { $Count = 1 }
+
+    $out = @()
+    for ($i = 0; $i -lt $Count; $i++)
+    {
+        if ($i -lt $Schedule.Count) { $out += $Schedule[$i] } else { $out += $Schedule[$Schedule.Count - 1] }
+    }
+
+    return ,([int[]]$out)
+}
+
+function Format-InstallSchedule
+{
+    # @brief The readable form of a schedule: "auto, 4, 1". Zero prints as 'auto' because that is what it means.
+    param ([int[]]$Schedule)
+
+    return ((@($Schedule) | ForEach-Object { if ($_ -le 0) { 'auto' } else { [string]$_ } }) -join ', ')
+}
+
 # Ports that failed once and then installed unchanged. Reported at the end rather than only in passing, because
 # it is the one number that says something about the machine rather than about the configuration.
 $retriedPorts = @()
 
-# Configurable because it is a property of the MACHINE and not of the configuration. Two is enough for a healthy
-# one; a machine whose compiler segfaults at a different pass on every run may need more, and raising it there
-# should not mean editing this script. The default matches what a sound machine needs, so nobody has to think
-# about it until they do.
-$maxAttempts = 2
+# THE DEFAULT INSTALL SCHEDULE: one entry per attempt, each the build concurrency that attempt runs with, and
+# 0 meaning "export nothing and let vcpkg size the build from the hardware".
+#
+# Configurable because it is a property of the MACHINE and not of the configuration. A machine whose compiler
+# segfaults at a different pass on every run needs more attempts; one that only falls over under load needs a
+# lower concurrency; neither should mean editing this script.
+#
+# The built-in default reproduces exactly what this step has always done -- first attempt at vcpkg's own
+# concurrency, every attempt after it serialised -- so a configuration written before schedules existed behaves
+# identically. Four attempts because one machine here needed five to get qtshadertools through.
+$DEFAULT_ATTEMPTS = 4
+$installSchedule  = @(0) + (1..($DEFAULT_ATTEMPTS - 1) | ForEach-Object { 1 })
+$installSchedule  = [int[]]$installSchedule
+
+if ($Cfg.vcpkg.PSObject.Properties.Name -contains "install_schedule")
+{
+    $configuredSchedule = ConvertTo-InstallSchedule -Entries $Cfg.vcpkg.install_schedule
+    if ($configuredSchedule.Count -ge 1)
+    {
+        $installSchedule = $configuredSchedule
+        Write-Info ("Install schedule from the configuration: {0}." -f (Format-InstallSchedule $installSchedule))
+    }
+}
+
+# max_install_attempts still works, and now means the LENGTH of the schedule. Applied on top, so the two keys
+# compose instead of competing: the schedule says the shape, this says how many attempts of it to run.
 if ($Cfg.vcpkg.PSObject.Properties.Name -contains "max_install_attempts")
 {
     $configured = [int]$Cfg.vcpkg.max_install_attempts
-    if ($configured -ge 1)
+    if ($configured -ge 1 -and $configured -ne $installSchedule.Count)
     {
-        $maxAttempts = $configured
-        if ($maxAttempts -ne 2) { Write-Info ("Port install attempts set to {0} by the configuration." -f $maxAttempts) }
+        $installSchedule = Resize-InstallSchedule -Schedule $installSchedule -Count $configured
+        Write-Info ("Port install attempts set to {0} by the configuration: {1}." -f
+                    $configured, (Format-InstallSchedule $installSchedule))
+    }
+}
+
+# WHERE VCPKG UNPACKS AND COMPILES, and why it is not left at vcpkg's default.
+#
+# vcpkg builds under <root>/buildtrees/<port>/<triplet>-rel/. With this triplet name that prefix is 69
+# characters, and Qt's autogen filenames are long enough that qtdeclarative reached 261 against the
+# 260-character cap Windows applies to programs without a long-path manifest -- which MSYS2's GCC lacks, so
+# LongPathsEnabled=1 in the registry does not help. The build failed with
+# "error: opening dependency file ...: No such file or directory".
+#
+# A short root is the whole fix, and it is free: buildtrees is scratch and is not part of any package ABI.
+# <drive>:/bt puts that same path at 247 and leaves room for Qt to grow; /buildtrees would put it at 255.
+$buildtreesRoot = "/{0}/bt" -f $driveLetter.TrimEnd(':')
+if ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root")
+{
+    $configuredRoot = ([string]$Cfg.vcpkg.buildtrees_root).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($configuredRoot))
+    {
+        # Accept either form and hand bash the POSIX one, since the install script runs under MSYS2:
+        # "S:/bt" and "S:t" both become "/s/bt".
+        $normalised = $configuredRoot.Replace('', '/')
+        if ($normalised -match '^([A-Za-z]):/(.*)$')
+        {
+            $normalised = "/{0}/{1}" -f $Matches[1].ToLowerInvariant(), $Matches[2].TrimEnd('/')
+        }
+        $buildtreesRoot = $normalised.TrimEnd('/')
+        Write-Info "Buildtrees root from the configuration: $buildtreesRoot"
     }
 }
 
@@ -750,23 +908,69 @@ foreach ($port in $portSpecs)
     # the only evidence of it.
     $code = 1
 
-    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++)
+    # THIS PORT'S SCHEDULE: the global default, unless the port asked for something else.
+    #
+    # A port-level install_schedule replaces the shape; a port-level max_install_attempts sets the length. Both
+    # are optional and they compose the same way they do globally. This exists because the ports that need
+    # throttling are not the ports that need retrying: qtbase and opencv4 have translation units that take
+    # gigabytes on their own and want a low concurrency from the FIRST attempt, while a small port that failed
+    # once is worth simply trying again at full speed.
+    $portSchedule = $installSchedule
+    if ($null -ne $port.Schedule -and $port.Schedule.Count -ge 1)
     {
+        $portSchedule = [int[]]$port.Schedule
+    }
+    if ($port.Attempts -ge 1 -and $port.Attempts -ne $portSchedule.Count)
+    {
+        $portSchedule = Resize-InstallSchedule -Schedule $portSchedule -Count $port.Attempts
+    }
+
+    if (($portSchedule -join ',') -ne ($installSchedule -join ','))
+    {
+        Write-Info ("'{0}' has its own schedule: {1}." -f $port.Spec, (Format-InstallSchedule $portSchedule))
+    }
+
+    $portAttempts = $portSchedule.Count
+
+    # THIS PORT'S OVERLAY LAYERS, from its own triplet. Passed on the command line rather than left to the
+    # VCPKG_OVERLAY_PORTS the header exports: the flag overrides the variable, it is repeatable, and it puts the
+    # search order in the logged command where it can be read afterwards.
+    $portLayers = Resolve-OverlayLayers -OverlayConfig $Cfg.vcpkg.overlay_ports -Triplet $port.Triplet
+    $overlayFlags = ""
+    foreach ($layerName in $portLayers)
+    {
+        # Drive style with forward slashes, which is the form vcpkg.exe wants -- the same form
+        # Convert-ToDriveStylePath produces for the header's VCPKG_OVERLAY_PORTS.
+        $overlayFlags += " --overlay-ports='{0}:/overlays/{1}'" -f $driveLetter, $layerName
+    }
+
+    if ($portLayers.Count -gt 1 -or $portLayers[0] -ne "ports")
+    {
+        Write-Info ("'{0}' overlay layers: {1}" -f $port.Spec, ($portLayers -join ' then '))
+    }
+
+    for ($attempt = 1; $attempt -le $portAttempts; $attempt++)
+    {
+        $concurrency = $portSchedule[$attempt - 1]
+
         if ($attempt -gt 1)
         {
-            Write-Warn ("Retrying '{0}', attempt {1} of {2}, with concurrency forced to 1." -f
-                        $port.Spec, $attempt, $maxAttempts)
+            Write-Warn ("Retrying '{0}', attempt {1} of {2}, at concurrency {3}." -f
+                        $port.Spec, $attempt, $portAttempts, (Format-InstallSchedule $concurrency))
         }
 
         # VCPKG_MAX_CONCURRENCY is read by vcpkg itself and passed down to the port's build system, which is what
         # makes it reach make and ninja rather than only vcpkg's own scheduling.
+        #
+        # Zero exports NOTHING rather than exporting 0: an explicit 0 is not documented to mean "unlimited", and
+        # leaving the variable unset is the only way to get vcpkg's own sizing back.
         $concurrencyLine = ""
-        if ($attempt -gt 1) { $concurrencyLine = "export VCPKG_MAX_CONCURRENCY=1" }
+        if ($concurrency -ge 1) { $concurrencyLine = "export VCPKG_MAX_CONCURRENCY=$concurrency" }
 
         $installScript = $scriptHeader + @"
 
 $concurrencyLine
-./vcpkg install '$($port.Spec)' --triplet '$($port.Triplet)' --host-triplet '$vcpkgTriplet'
+./vcpkg install '$($port.Spec)' --triplet '$($port.Triplet)' --host-triplet '$vcpkgTriplet' --x-buildtrees-root='$buildtreesRoot'$overlayFlags
 "@
 
         $tempName = "vcpkg_install_{0}_{1}.sh" -f ($port.Name -replace '[^A-Za-z0-9]', '_'), $attempt
@@ -784,7 +988,7 @@ $concurrencyLine
             break
         }
 
-        if ($attempt -lt $maxAttempts)
+        if ($attempt -lt $portAttempts)
         {
             Write-Warn ("Installation of '{0}' failed (ExitCode={1})." -f $port.Spec, $code)
         }
@@ -792,10 +996,11 @@ $concurrencyLine
 
     if ($code -ne 0)
     {
-        Write-Error "Installation of '$($port.Spec)' failed on all $maxAttempts attempts (ExitCode=$code)."
-        Write-Error "Every attempt after the first ran with concurrency 1, so a race between parallel jobs is"
-        Write-Error "already ruled out. If this machine has failed other ports the same way, suspect the machine:"
-        Write-Error "raise vcpkg.max_install_attempts to get past it, and test its memory when you can."
+        Write-Error ("Installation of '{0}' failed on all {1} attempts, at concurrency {2} (ExitCode={3})." -f
+                     $port.Spec, $portAttempts, (Format-InstallSchedule $portSchedule), $code)
+        Write-Error "If the last attempt ran serialised, a race between parallel jobs is already ruled out."
+        Write-Error "If this machine has failed other ports the same way, suspect the machine: lengthen"
+        Write-Error "vcpkg.install_schedule or give this port its own, and test the memory when you can."
         Write-Error "See the full build output in: $globalLogFile"
         Abort-WithError
     }
