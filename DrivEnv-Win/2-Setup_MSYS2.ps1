@@ -100,12 +100,200 @@ function Convert-ToMSYSPath($winPath)
     return $winPath -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
 }
 
+# Resolves the MSYS2 target into the THREE DIFFERENT NAMES a subsystem has, which the configuration used to
+# conflate into one "profile" value.
+#
+# They are genuinely three things, and only two of them can be derived from each other:
+#
+#   SUBSYSTEM       the MSYSTEM value and the install directory      CLANG64  -> /clang64
+#   REPO SUBPATH    where the packages live on repo.msys2.org        mingw/clang64
+#   PACKAGE PREFIX  what a package is actually called                mingw-w64-clang-x86_64-<name>
+#
+# The old derivation was PkgName = "mingw-w64-<profile>-<arch>-" and RepoPath = "mingw/<profile>64". That is
+# correct for exactly the two subsystems in use and wrong for the others, which is the kind of bug that only
+# shows up the day somebody targets one. Verified against repo.msys2.org, one HTTP request per subsystem:
+#
+#   ucrt64       mingw-w64-ucrt-x86_64      mingw/ucrt64
+#   clang64      mingw-w64-clang-x86_64     mingw/clang64
+#   mingw64      mingw-w64-x86_64           mingw/mingw64        <- NO infix at all
+#   clangarm64   mingw-w64-clang-aarch64    mingw/clangarm64     <- subpath is not <infix>64
+#   mingw32      mingw-w64-i686             mingw/mingw32
+#   clang32      mingw-w64-clang-i686       mingw/clang32
+#
+# So mingw64 would have been asked for "mingw-w64-mingw-x86_64-<name>", which does not exist, and clangarm64
+# would have been looked for under mingw/clang64, which is the wrong architecture's repository.
+#
+# The configuration normally names ONE thing, msys2.target.subsystem, and the rest comes from this table.
+# msys2.target.profile still works and means what it always did -- subsystem = "<profile>64" -- so no existing
+# configuration changes behaviour. package_prefix and repo_subpath are there as explicit overrides for a
+# subsystem MSYS2 adds after this table was written.
+function Set-Msys2IgnorePkg
+{
+    # @brief Record the pinned packages in pacman's IgnorePkg, so a later "pacman -Syu" leaves them alone.
+    #
+    # Pinning without this is only half a pin. The configuration installs an exact version from a downloaded
+    # .pkg.tar.zst with pacman -U, and nothing then stops the next routine upgrade from replacing it with
+    # whatever is current -- which is precisely the situation that pinning exists to avoid. A developer running
+    # "pacman -Syu" inside the environment is a normal thing to do, not a mistake to guard against.
+    #
+    # WHAT PACMAN ACTUALLY DOES with an ignored package, because the behaviour is easy to over-promise:
+    #   - a plain upgrade prints "warning: <pkg>: ignoring package upgrade" and skips it. That is the case
+    #     this exists for, and it works.
+    #   - if some OTHER package being installed requires a newer version of an ignored one, pacman reports a
+    #     dependency error instead of silently upgrading it. Refusing to proceed is the right outcome, but it
+    #     is an error the developer has to resolve rather than something this can prevent.
+    #   - IgnorePkg does not survive being edited away by hand, and it does not pin transitive dependencies.
+    #     Pinning a package does not freeze what it links against.
+    #
+    # Written by REPLACING the IgnorePkg line pacman.conf already ships commented out, rather than appending,
+    # so re-running the generator cannot accumulate duplicates and the file keeps the layout pacman expects
+    # (IgnorePkg has to live inside [options]).
+    param(
+        [Parameter(Mandatory=$true)][string]$Msys2Root,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$Packages
+    )
+
+    $confPath = Join-Path $Msys2Root "etc\pacman.conf"
+    if (-not (Test-Path $confPath))
+    {
+        Write-Warn "pacman.conf not found at '$confPath'; pinned packages will not be protected from upgrades."
+        return
+    }
+
+    if ($Packages.Count -eq 0)
+    {
+        Write-Info "No pinned packages, so IgnorePkg is left as it is."
+        return
+    }
+
+    $wanted = ($Packages | Sort-Object -Unique) -join " "
+    $marker = "# DrivEnv: pinned by the configuration, kept from being upgraded by pacman -Syu."
+    $newLine = "IgnorePkg   = $wanted"
+
+    $lines = @(Get-Content $confPath)
+    $out = @()
+    $done = $false
+
+    foreach ($line in $lines)
+    {
+        # Our own marker from a previous run: drop it, the replacement below re-adds it.
+        if ($line -eq $marker) { continue }
+
+        if (-not $done -and $line -match '^\s*#?\s*IgnorePkg\s*=')
+        {
+            $out += $marker
+            $out += $newLine
+            $done = $true
+            continue
+        }
+
+        $out += $line
+    }
+
+    if (-not $done)
+    {
+        # No IgnorePkg line at all, commented or otherwise. Put one directly under [options], which is the
+        # only section where pacman reads it.
+        $out = @()
+        foreach ($line in $lines)
+        {
+            if ($line -eq $marker) { continue }
+            $out += $line
+            if (-not $done -and $line -match '^\s*\[options\]\s*$')
+            {
+                $out += $marker
+                $out += $newLine
+                $done = $true
+            }
+        }
+    }
+
+    if (-not $done)
+    {
+        Write-Warn "pacman.conf has no [options] section; pinned packages will not be protected from upgrades."
+        return
+    }
+
+    Set-Content -Path $confPath -Value $out -Encoding ASCII
+    Write-Info ("IgnorePkg set for {0} pinned package(s): {1}" -f $Packages.Count, $wanted)
+}
+
+function Resolve-Msys2Subsystem($Target)
+{
+    $keys = @()
+    if ($null -ne $Target) { $keys = @($Target.PSObject.Properties | ForEach-Object { $_.Name }) }
+
+    $subsystem = ""
+    if ($keys -contains 'subsystem') { $subsystem = ([string]$Target.subsystem).Trim().ToLowerInvariant() }
+
+    if ([string]::IsNullOrWhiteSpace($subsystem))
+    {
+        # Legacy shape. "clang" meant clang64, "ucrt" meant ucrt64, and both are still spelled that way in
+        # configurations written before this function existed.
+        $profile = ""
+        if ($keys -contains 'profile') { $profile = ([string]$Target.profile).Trim().ToLowerInvariant() }
+        if ([string]::IsNullOrWhiteSpace($profile))
+        {
+            Write-Error "Missing msys2.target.subsystem (or the legacy msys2.target.profile)"
+            Abort-WithError
+        }
+        $subsystem = "{0}64" -f $profile
+    }
+
+    $table = @{
+        'ucrt64'     = @{ Prefix = 'mingw-w64-ucrt-x86_64';   Subpath = 'mingw/ucrt64';     Arch = 'x86_64'  }
+        'clang64'    = @{ Prefix = 'mingw-w64-clang-x86_64';  Subpath = 'mingw/clang64';    Arch = 'x86_64'  }
+        'mingw64'    = @{ Prefix = 'mingw-w64-x86_64';        Subpath = 'mingw/mingw64';    Arch = 'x86_64'  }
+        'clangarm64' = @{ Prefix = 'mingw-w64-clang-aarch64'; Subpath = 'mingw/clangarm64'; Arch = 'aarch64' }
+        'mingw32'    = @{ Prefix = 'mingw-w64-i686';          Subpath = 'mingw/mingw32';    Arch = 'i686'    }
+        'clang32'    = @{ Prefix = 'mingw-w64-clang-i686';    Subpath = 'mingw/clang32';    Arch = 'i686'    }
+    }
+
+    $prefix  = ""
+    $subpath = ""
+    $arch    = ""
+
+    if ($table.ContainsKey($subsystem))
+    {
+        $prefix  = $table[$subsystem].Prefix
+        $subpath = $table[$subsystem].Subpath
+        $arch    = $table[$subsystem].Arch
+    }
+
+    # Explicit overrides win over the table, and are the only way to reach a subsystem it does not list.
+    if ($keys -contains 'package_prefix')
+    {
+        $v = ([string]$Target.package_prefix).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($v)) { $prefix = $v }
+    }
+    if ($keys -contains 'repo_subpath')
+    {
+        $v = ([string]$Target.repo_subpath).Trim().Trim('/')
+        if (-not [string]::IsNullOrWhiteSpace($v)) { $subpath = $v }
+    }
+    if ($keys -contains 'arch')
+    {
+        $v = ([string]$Target.arch).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($v)) { $arch = $v }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($prefix) -or [string]::IsNullOrWhiteSpace($subpath))
+    {
+        Write-Error "msys2.target.subsystem '$subsystem' is not one this script knows, and neither"
+        Write-Error "msys2.target.package_prefix nor msys2.target.repo_subpath was given to describe it."
+        Write-Error "Known subsystems: $(($table.Keys | Sort-Object) -join ', ')."
+        Abort-WithError
+    }
+
+    return @{ Subsystem = $subsystem; Prefix = $prefix; Subpath = $subpath; Arch = $arch }
+}
+
 # Resolves one JSON package entry into the three things pacman and the downloader need: the real package name, the
 # repository sub-path, and the architecture tag its file name carries.
 #
 # MSYS2 ships TWO kinds of package and they are not interchangeable:
 #
-#   mingw  (default) -> mingw-w64-<profile>-<arch>-<name>, native Windows binaries, land in /<profile>64/bin.
+#   mingw  (default) -> <package_prefix>-<name>, native Windows binaries, land in /<subsystem>/bin.
 #   msys             -> <name> verbatim, built against the MSYS2 POSIX runtime, land in /usr/bin.
 #
 # The distinction matters beyond naming. A tool that has to understand POSIX paths -- notably `make`, which reads
@@ -114,7 +302,7 @@ function Convert-ToMSYSPath($winPath)
 # missing, which is far harder to diagnose.
 #
 # Absent "repo" means "mingw", so every existing configuration keeps its exact behaviour.
-function Resolve-Msys2Package($pkg, $profile, $arch)
+function Resolve-Msys2Package($pkg, $sub)
 {
     $repo = ([string]$pkg.repo).Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($repo)) { $repo = "mingw" }
@@ -128,12 +316,12 @@ function Resolve-Msys2Package($pkg, $profile, $arch)
             # msys packages are arch-specific, except the handful of scripted ones published as "any". The file_arch
             # field covers those without needing a table of exceptions here.
             $fileArch = ([string]$pkg.file_arch).Trim()
-            if ([string]::IsNullOrWhiteSpace($fileArch)) { $fileArch = $arch }
+            if ([string]::IsNullOrWhiteSpace($fileArch)) { $fileArch = $sub.Arch }
 
             return @{
                 Repo     = "msys"
                 PkgName  = $name
-                RepoPath = "msys/{0}" -f $arch
+                RepoPath = "msys/{0}" -f $sub.Arch
                 FileArch = $fileArch
             }
         }
@@ -144,8 +332,8 @@ function Resolve-Msys2Package($pkg, $profile, $arch)
 
             return @{
                 Repo     = "mingw"
-                PkgName  = "mingw-w64-{0}-{1}-{2}" -f $profile, $arch, $name
-                RepoPath = "mingw/{0}64" -f $profile
+                PkgName  = "{0}-{1}" -f $sub.Prefix, $name
+                RepoPath = $sub.Subpath
                 FileArch = $fileArch
             }
         }
@@ -468,21 +656,21 @@ if ($Cfg.msys2.source.PSObject.Properties.Name -contains "sha256")
     $msys2Sha256 = [string]$Cfg.msys2.source.sha256
 }
 
-$msysProfile = [string]$Cfg.msys2.target.profile   
-$msysArch    = [string]$Cfg.msys2.target.arch     
+# Resolved ONCE, here, and passed around afterwards. The three names a subsystem has -- MSYSTEM value,
+# repository sub-path and package prefix -- were previously rebuilt by string concatenation at four separate
+# places in this file, each of which had to be right independently. See Resolve-Msys2Subsystem.
+$msysSub  = Resolve-Msys2Subsystem $Cfg.msys2.target
+$msysEnv  = $msysSub.Subsystem
+$msysArch = $msysSub.Arch
 
-if ([string]::IsNullOrWhiteSpace($msysProfile))
-{
-    Write-Error "Missing msys2.target.profile"
-    Abort-WithError
-}
 if ([string]::IsNullOrWhiteSpace($msysArch))
 {
-    Write-Error "Missing msys2.target.arch"
+    Write-Error "Missing msys2.target.arch, and subsystem '$msysEnv' has no default architecture in the table."
     Abort-WithError
 }
 
-$msysEnv = "{0}64" -f $msysProfile
+Write-Info ("MSYS2 target: subsystem {0}, packages {1}-*, repository {2}" -f
+            $msysSub.Subsystem, $msysSub.Prefix, $msysSub.Subpath)
 
 $msysPackages = @($Cfg.msys2.packages)
 
@@ -622,11 +810,13 @@ $msys2Installer = Join-Path $localPkgDir (Get-FileNameFromUrl $msys2Url)
 
 # Build pinned download list from JSON
 # URL pattern, per package, depending on its "repo" (see Resolve-Msys2Package):
-#   mingw -> {base_url}/mingw/{profile}64/mingw-w64-{profile}-{arch}-{name}-{version}-any.pkg.tar.zst
+#   mingw -> {base_url}/{repo_subpath}/{package_prefix}-{name}-{version}-any.pkg.tar.zst
 #   msys  -> {base_url}/msys/{arch}/{name}-{version}-{arch}.pkg.tar.zst
+#
+# repo_subpath and package_prefix both come from $msysSub, resolved once near the top of this script, rather
+# than being rebuilt from the profile here. They are not interchangeable: mingw64's packages carry no infix at
+# all and clangarm64's sub-path is not "<infix>64".
 $baseUrl   = [string]$Cfg.msys2.target.base_url
-$profile   = [string]$Cfg.msys2.target.profile
-$arch      = [string]$Cfg.msys2.target.arch
 
 if ([string]::IsNullOrWhiteSpace($baseUrl)) 
 {
@@ -646,7 +836,7 @@ foreach ($p in $msysPackages)
     $name    = [string]$p.name
     $version = [string]$p.version
 
-    $res      = Resolve-Msys2Package $p $profile $arch
+    $res      = Resolve-Msys2Package $p $msysSub
     $fileName = "{0}-{1}-{2}.pkg.tar.zst" -f $res.PkgName, $version, $res.FileArch
     $url      = "{0}/{1}/{2}" -f $baseUrl.TrimEnd('/'), $res.RepoPath, $fileName
     $path     = Join-Path $localPkgDir $fileName
@@ -847,7 +1037,7 @@ Write-Info "STEP 4: OK"
 Write-Info "STEP 5: Install toolchain and utilities (JSON-driven)."
 
 # Always install git (needed for vcpkg, common workflows)
-$gitPkgName = "mingw-w64-{0}-{1}-git" -f $msysProfile, $msysArch
+$gitPkgName = "{0}-git" -f $msysSub.Prefix
 Write-Info "Installing git (latest): $gitPkgName"
 $code = Invoke-Pacman -BashPath $bashPath -Arguments "-S --noconfirm --needed $gitPkgName"
 if ($code -ne 0)
@@ -868,7 +1058,7 @@ foreach ($p in $msysPackages)
 
     # Must name the file exactly as the download step above did, or the pinned install looks for something that was
     # never fetched: mingw packages are published as "-any", msys ones per architecture.
-    $res      = Resolve-Msys2Package $p $msysProfile $msysArch
+    $res      = Resolve-Msys2Package $p $msysSub
     $fileName = "{0}-{1}-{2}.pkg.tar.zst" -f $res.PkgName, $version, $res.FileArch
     $filePath = Join-Path $localPkgDir $fileName
 
@@ -900,6 +1090,21 @@ else
     Write-Info "No pinned packages configured."
 }
 
+# IgnorePkg goes in HERE, between the two installs, and the order is deliberate.
+#
+# pacman -Sy and -Su ran earlier in this script, so the pinned versions installed just above are current as of
+# this run. What follows is "pacman -S" for the latest-mode packages, and that resolves dependencies: without
+# IgnorePkg already in place, installing one of those could pull an upgrade of a package this configuration
+# just pinned, inside the very same run. Setting it before that command closes the window as well as
+# protecting the developer's later upgrades.
+$pinnedNames = @()
+foreach ($p in $msysPackages)
+{
+    if (([string]$p.mode).Trim().ToLowerInvariant() -ne "pinned") { continue }
+    $pinnedNames += (Resolve-Msys2Package $p $msysSub).PkgName
+}
+Set-Msys2IgnorePkg -Msys2Root $msys2Path -Packages $pinnedNames
+
 # Install LATEST packages via pacman -S (from JSON)
 $latestPkgs = @()
 foreach ($p in $msysPackages)
@@ -907,7 +1112,7 @@ foreach ($p in $msysPackages)
     $mode = ([string]$p.mode).Trim().ToLowerInvariant()
     if ($mode -ne "latest") { continue }
 
-    $res = Resolve-Msys2Package $p $msysProfile $msysArch
+    $res = Resolve-Msys2Package $p $msysSub
     $latestPkgs += $res.PkgName
 }
 
@@ -1019,7 +1224,40 @@ Write-Info "MSYS2_ENV=${msysEnv}"
 # environment has already been bitten by once, with make.exe.
 $basePath = "/{0}/bin:/usr/local/bin:/usr/bin:/bin" -f $msysEnv
 
-$appendWindowsPath = $true
+# THE FOUR WINDOWS SYSTEM DIRECTORIES ARE NOT OPTIONAL, and this used to be controlled by
+# environment.append_windows_system_path, which is why they were sometimes missing.
+#
+# The tools in them are not conveniences, they are things the build system reaches for:
+#
+#   powershell.exe   vcpkg's own bootstrap-vcpkg.bat downloads the vcpkg tool with it, and several ports
+#                    invoke it during their build
+#   cmd.exe          shelled out to by makefiles and by ninja rules more often than anyone would like
+#   where.exe        used by configure scripts to locate tools
+#
+# With the flag set to false, NONE of them was reachable from the environment's terminal. Verified on a
+# generated drive: with the PATH the .env imposes, "command -v powershell.exe" and the same for cmd.exe and
+# where.exe all report nothing. An environment that cannot run vcpkg by hand is not hermetic, it is broken --
+# and the failure surfaces as "powershell is not recognised" halfway through a vcpkg bootstrap, which points
+# nowhere near this file.
+#
+# They still go at the TAIL, which is what makes this safe: nothing in System32 can shadow the toolchain. That
+# ordering is the reason the flag existed at all, and it is preserved -- the make.exe incident this file warns
+# about above was a shadowing problem, not a presence problem.
+#
+# Lower-cased drive letter to match cygpath's canonical form and the rest of this file. MSYS2 resolves /C/ and
+# /c/ alike -- verified -- so this is consistency, not correctness.
+$sysRootPosix = (Convert-ToMSYSPath ([string]$env:SystemRoot)) -replace '/$', ''
+$sysRootPosix = [regex]::Replace($sysRootPosix, '^/([A-Za-z])/', { param($m) "/" + $m.Groups[1].Value.ToLowerInvariant() + "/" })
+if ([string]::IsNullOrWhiteSpace($sysRootPosix)) { $sysRootPosix = "/c/Windows" }
+
+$basePath = "{0}:{1}/System32:{1}:{1}/System32/Wbem:{1}/System32/WindowsPowerShell/v1.0" -f $basePath, $sysRootPosix
+Write-Info "Windows system directories appended to BASE_PATH (System32, Wbem, WindowsPowerShell)."
+
+# environment.append_windows_system_path now governs the REST of the machine's PATH -- everything a developer
+# happens to have installed -- which is the part that is genuinely a matter of taste. Off by default, because
+# an environment that inherits whatever is on the host stops being reproducible, and because an inherited entry
+# ahead of nothing is still one more place a stray tool of the same name can come from.
+$appendWindowsPath = $false
 if ($Cfg.environment.PSObject.Properties.Name -contains "append_windows_system_path")
 {
     $appendWindowsPath = [bool]$Cfg.environment.append_windows_system_path
@@ -1027,17 +1265,37 @@ if ($Cfg.environment.PSObject.Properties.Name -contains "append_windows_system_p
 
 if ($appendWindowsPath)
 {
-    # Lower-cased drive letter to match cygpath's canonical form and the rest of this file. MSYS2 resolves /C/ and
-    # /c/ alike -- verified -- so this is consistency, not correctness.
-    $sysRootPosix = (Convert-ToMSYSPath ([string]$env:SystemRoot)) -replace '/$', ''
-    $sysRootPosix = [regex]::Replace($sysRootPosix, '^/([A-Za-z])/', { param($m) "/" + $m.Groups[1].Value.ToLowerInvariant() + "/" })
-    if ([string]::IsNullOrWhiteSpace($sysRootPosix)) { $sysRootPosix = "/c/Windows" }
-    $basePath = "{0}:{1}/System32:{1}:{1}/System32/Wbem:{1}/System32/WindowsPowerShell/v1.0" -f $basePath, $sysRootPosix
-    Write-Info "Windows system directories appended to BASE_PATH (environment.append_windows_system_path)."
+    # Only entries that are not already present, and only ones that still exist, so a stale user PATH does not
+    # fill BASE_PATH with directories that are not there.
+    $extra = @()
+    foreach ($winEntry in (([string]$env:PATH) -split ';'))
+    {
+        $trimmed = $winEntry.Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+        if (-not (Test-Path -LiteralPath $trimmed -ErrorAction SilentlyContinue)) { continue }
+
+        $posix = (Convert-ToMSYSPath $trimmed) -replace '/$', ''
+        $posix = [regex]::Replace($posix, '^/([A-Za-z])/', { param($m) "/" + $m.Groups[1].Value.ToLowerInvariant() + "/" })
+        if ([string]::IsNullOrWhiteSpace($posix)) { continue }
+        if (($basePath -split ':') -contains $posix) { continue }
+        if ($extra -contains $posix) { continue }
+
+        $extra += $posix
+    }
+
+    if ($extra.Count -gt 0)
+    {
+        $basePath = "{0}:{1}" -f $basePath, ($extra -join ':')
+        Write-Info ("The rest of the host PATH appended too: {0} entries (environment.append_windows_system_path)." -f $extra.Count)
+    }
+    else
+    {
+        Write-Info "environment.append_windows_system_path is true, but the host PATH added nothing new."
+    }
 }
 else
 {
-    Write-Info "Windows system directories NOT appended (environment.append_windows_system_path = false)."
+    Write-Info "The rest of the host PATH was NOT appended (environment.append_windows_system_path = false)."
 }
 
 Write-Info ("BASE_PATH={0}" -f $basePath)
