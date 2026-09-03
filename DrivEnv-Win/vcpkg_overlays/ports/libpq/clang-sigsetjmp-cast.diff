@@ -1,0 +1,53 @@
+Cast the sigjmp_buf through void ** so clang accepts __builtin_setjmp / __builtin_longjmp.
+
+THE FAILURE
+
+    src/common/pg_get_line.c:129:30: error: incompatible pointer types passing
+        'sigjmp_buf' (aka 'long long[5]') to parameter of type 'void **'
+      129 |   if (prompt_ctx && sigsetjmp(*((sigjmp_buf *) prompt_ctx->jmpbuf), 1) != 0)
+    src/include/c.h:1343:41: note: expanded from macro 'sigsetjmp'
+     1343 | #define sigsetjmp(x,y) __builtin_setjmp(x)
+
+WHY
+
+c.h selects its setjmp mechanism on __MINGW64__, which the mingw-w64 HEADERS define rather than
+the compiler, so a clang build follows the same branch as a GCC build. GCC's __builtin_setjmp
+takes void *, and an intptr_t[5] decays to a pointer it accepts; clang's signature is void **,
+so the same call is rejected.
+
+WHY A CAST AND NOT THE OTHER BRANCH
+
+The tempting alternative is to send clang down the #else branch, where sigjmp_buf becomes the
+platform jmp_buf and sigsetjmp becomes the platform setjmp. Upstream rules that out in the
+comment three lines above this hunk:
+
+     * that MinGW-64 has some longstanding issues in its setjmp support,
+     * so on that toolchain we cheat and use gcc's builtins.
+
+Using the builtins is a deliberate choice for this toolchain, not an accident, so the patch keeps
+it and fixes only the argument type.
+
+VERIFIED, not assumed. The concern with the builtins under clang is that __builtin_setjmp lowers
+to llvm.eh.sjlj.setjmp, and SJLJ is not the exception model of Windows x86_64. A standalone probe
+settles it: with this cast, clang 22.1.8 targeting x86_64-w64-windows-gnu compiles the pair, and
+the resulting binary takes the longjmp path and exits 0. The same probe under GCC 15.2.0 behaves
+identically, with and without the cast -- intptr_t[5] converts to void ** and then to void *
+without complaint -- so the cast is unconditional rather than guarded on __clang__, and the GCC
+build is unaffected.
+
+siglongjmp becomes function-like for the same reason: as a bare alias it would hit the identical
+argument-type error at its first use.
+
+--- a/src/include/c.h
++++ b/src/include/c.h
+@@ -1340,8 +1340,8 @@
+ #ifdef WIN32
+ #ifdef __MINGW64__
+ typedef intptr_t sigjmp_buf[5];
+-#define sigsetjmp(x,y) __builtin_setjmp(x)
+-#define siglongjmp __builtin_longjmp
++#define sigsetjmp(x,y) __builtin_setjmp((void **) (x))
++#define siglongjmp(x,y) __builtin_longjmp((void **) (x), (y))
+ #else							/* !__MINGW64__ */
+ #define sigjmp_buf jmp_buf
+ #define sigsetjmp(x,y) setjmp(x)

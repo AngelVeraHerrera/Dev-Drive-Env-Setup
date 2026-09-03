@@ -1,0 +1,30 @@
+Make GstMFDShowPinInfo::operator< const, so std::sort works under libc++.
+
+UPSTREAM BUG, not a MinGW or a clang concern: a comparison operator that does not modify its
+operand should be const, whatever standard library is in use.
+
+gstmfcapturedshow.cpp sorts a std::vector<GstMFDShowPinInfo> with std::sort and no explicit
+comparator, so the sort reaches for the type's own operator<. libc++'s default comparator,
+std::__less<>, invokes it through const references:
+
+    __algorithm/comp.h:42:18: error: invalid operands to binary expression
+                              ('const GstMFDShowPinInfo' and 'const GstMFDShowPinInfo')
+       42 |     return __lhs < __rhs;
+
+A non-const member operator is not callable on a const object, so the instantiation fails.
+libstdc++ happens to accept the same source because its sort instantiates paths in which the
+left operand is not const -- which is luck, not correctness.
+
+One word. Worth sending upstream: it costs nothing on GCC and unbreaks the plugin on clang.
+
+--- a/subprojects/gst-plugins-bad/sys/mediafoundation/gstmfcapturedshow.cpp
++++ b/subprojects/gst-plugins-bad/sys/mediafoundation/gstmfcapturedshow.cpp
+@@ -312,7 +312,7 @@
+       gst_caps_unref (caps);
+   }
+
+-  bool operator< (const GstMFDShowPinInfo & other)
++  bool operator< (const GstMFDShowPinInfo & other) const
+   {
+     return gst_mf_source_object_caps_compare (caps, other.caps) < 0;
+   }

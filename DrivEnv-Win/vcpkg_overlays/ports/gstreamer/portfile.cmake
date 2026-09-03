@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # LOCAL OVERLAY of the upstream gstreamer port, rebased on upstream 1.28.6.
 #
-# NINE FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
+# TEN FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
 # next version, and nothing else -- everything else here is upstream's and must be taken verbatim.
 #
 # The two metadata deltas, both harmless, listed because this head used to claim "exactly eight ... and nothing
@@ -10,9 +10,22 @@
 #
 # STATUS, re-verified against the 1.28.6 sources on 2026-08-27 (deltas 4 and 5 by running the build, the rest by
 # reading the sources with the real MinGW toolchain):
-#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9
+#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9, 10
 #   defect gone    : 1 -- see below; kept for now, costs nothing
 #   half inert     : 3 (d3d11 half) -- see below; kept deliberately
+#
+#  10. PATCHES gains mediafoundation-const-operator-libcxx.diff.
+#      GstMFDShowPinInfo::operator< in gstmfcapturedshow.cpp is not const, and line 993 sorts a vector of them
+#      with std::sort and no comparator. libc++'s default comparator, std::__less<>, calls it through const
+#      references, and a non-const member operator is not callable on a const object:
+#          comp.h:42:18: error: invalid operands to binary expression
+#                        ('const GstMFDShowPinInfo' and 'const GstMFDShowPinInfo')
+#      libstdc++ accepts the same source because its sort instantiates paths where the left operand is not
+#      const, which is luck rather than correctness -- so this is an UPSTREAM BUG and the one-word fix is right
+#      for GCC as well. It is therefore unconditional and lives here rather than in a clang-only overlay layer.
+#      Found while bringing up a CLANG64 environment, where it is the difference between having the
+#      mediafoundation plugin and not: with the patch the plugin builds and registers ten elements, including
+#      mfvideosrc and an mfh264enc that discovered the NVIDIA encoder by itself. Worth sending upstream.
 #
 #   9. gstd3d11config.h relocated out of lib/, and the stale -I dropped from gstreamer-d3d11-1.0.pc.
 #      UPSTREAM'S OMISSION, not a MinGW issue and not specific to this environment: the baseline port does the same
@@ -192,6 +205,7 @@ vcpkg_from_gitlab(
         gstfilesink_fix_gcc15-2-Rev11.patch   # LOCAL, see header
         d3d11-winrt-probe-mingw.diff
         mediafoundation-winrt-optional-mingw.diff          # LOCAL, see header
+        mediafoundation-const-operator-libcxx.diff         # LOCAL, see header (delta 10)
 )
 
 # subprojects that do their own downloads
