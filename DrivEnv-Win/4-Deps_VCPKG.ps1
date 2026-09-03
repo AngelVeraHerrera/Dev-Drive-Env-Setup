@@ -1025,6 +1025,45 @@ $concurrencyLine
     {
         Write-Error ("Installation of '{0}' failed on all {1} attempts, at concurrency {2} (ExitCode={3})." -f
                      $port.Spec, $portAttempts, (Format-InstallSchedule $portSchedule), $code)
+
+        # THE PORT'S OWN ERROR LOG, QUOTED HERE, because without it this run log does not contain the reason.
+        #
+        # vcpkg prints "See logs for more information:" and a list of paths on the dev drive, and that is where
+        # the cause actually is -- the run log ends up with the CMake wrapper's complaint and nothing else. An
+        # ffmpeg failure read as four attempts dying identically at every concurrency, which looks exactly like
+        # a resource problem; the reason was one line in the port's own stderr:
+        #     make: gcc: No such file or directory
+        # a missing binary, invariant under concurrency, and invisible in the log that was being read. Quoting
+        # the tail here costs nothing and puts the cause next to the failure.
+        $portLogDir = Convert-ToWinPath ($buildtreesRoot -replace '^/([A-Za-z])/', '$1:/')
+        $portLogDir = Join-Path $portLogDir $port.Name
+
+        if (Test-Path -LiteralPath $portLogDir)
+        {
+            # Newest first: a retried port leaves several, and the last attempt is the interesting one.
+            $errLogs = @(Get-ChildItem -LiteralPath $portLogDir -Filter "*-err.log" -ErrorAction SilentlyContinue |
+                         Sort-Object LastWriteTime -Descending)
+
+            foreach ($errLog in ($errLogs | Select-Object -First 2))
+            {
+                $tail = @(Get-Content -LiteralPath $errLog.FullName -Tail 25 -ErrorAction SilentlyContinue |
+                          Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                if ($tail.Count -eq 0) { continue }
+
+                Write-Error ("--- tail of {0} ---" -f $errLog.Name)
+                foreach ($tailLine in $tail) { Write-NoFormat ("    | " + $tailLine) }
+            }
+
+            if ($errLogs.Count -eq 0)
+            {
+                Write-Error "The port left no *-err.log; look under $portLogDir for its other logs."
+            }
+        }
+        else
+        {
+            Write-Error "No buildtree found at $portLogDir, so there is no port log to quote."
+        }
+
         Write-Error "If the last attempt ran serialised, a race between parallel jobs is already ruled out."
         Write-Error "If this machine has failed other ports the same way, suspect the machine: lengthen"
         Write-Error "vcpkg.install_schedule or give this port its own, and test the memory when you can."
