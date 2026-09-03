@@ -687,8 +687,15 @@ else {
 #     Trying to rename Makefile-179 -> Makefile: Permission denied
 #
 # out of openssl's own util/add-depends.pl, which is a Win32 rename onto a file some other process holds open
-# without FILE_SHARE_DELETE. An on-access scanner opening the temporary file as perl closes it is the textbook
-# cause; a retry succeeded, which is exactly the signature of a transient handle rather than a build error.
+# without FILE_SHARE_DELETE.
+#
+# CORRECTION, after the same failure was traced properly on a second machine: an on-access scanner is NOT the
+# root cause, only an aggravating one. openssl's 'make install' runs THREE concurrent copies of add-depends.pl
+# -- build_libs, build_modules and build_inst_programs each sub-make 'depend' -- and they race on Makefile
+# between themselves, with no third party involved. A machine with this exclusion in place still runs the race
+# and simply wins it. So this exclusion is worth having, and it is not the fix: that lives in step 3, in
+# Update-VcpkgScriptPatches, which makes vcpkg retry the install serially. Do not let a passing build here
+# convince anyone the race is gone.
 #
 # The exclusion this script already adds unconditionally is for the HOST folder holding the .vhdx, which stops
 # Defender scanning the container but does nothing for files opened as <letter>:\... So on a Dev Drive there was
@@ -699,14 +706,38 @@ else {
 try {
     if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
         Write-Info "Adding Microsoft Defender exclusion for ${driveLetter}:\ ..."
-        Add-MpPreference -ExclusionPath "$driveLetter`:\" 2>$null
+
+        # No `2>$null` here any more, and -ErrorAction Stop so the catch below actually sees a failure. The
+        # previous version discarded stderr, which made every way this can fail look exactly like success.
+        Add-MpPreference -ExclusionPath "${driveLetter}:\" -ErrorAction Stop
+
+        # AND THEN READ IT BACK, because Add-MpPreference can return quietly having changed nothing at all:
+        # Tamper Protection blocks it, and on a managed machine a policy owns the exclusion list outright. On
+        # the W11 box where openssl kept failing, whether the exclusion had actually taken was the first thing
+        # worth knowing and the one thing the log could not say.
+        $exclusions = @((Get-MpPreference).ExclusionPath)
+
+        if ($exclusions -contains "${driveLetter}:\") {
+            Write-Info "Defender exclusion confirmed for ${driveLetter}:\"
+        }
+        else {
+            Write-Warn "Defender accepted the call, but ${driveLetter}:\ is NOT in the exclusion list."
+            Write-Warn "Tamper Protection or a managed policy is the usual reason. Check with:"
+            Write-Warn "    (Get-MpComputerStatus).IsTamperProtected"
+            Write-Warn "Builds still work without it. On-access scanning widens the window for file-locking"
+            Write-Warn "races during builds, so expect the occasional transient failure and a retry that passes."
+        }
     }
     else {
         Write-Info "Microsoft Defender cmdlets not found; skipping AV exclusion."
     }
 }
 catch {
-    Write-Error "Could not add Defender exclusion: $_"
+    # Not fatal: an environment without the exclusion builds correctly, only slower and slightly more prone to
+    # transient file-locking failures. Failing the whole drive setup over it would be out of proportion.
+    Write-Warn "Could not add the Defender exclusion: $_"
+    Write-Warn "Continuing. Builds work without it; on-access scanning costs speed and can cause transient"
+    Write-Warn "file-locking failures. Add ${driveLetter}:\ by hand in Windows Security if you want it."
 }
 
 # --------------------------------------------------------------------

@@ -542,6 +542,41 @@ and a cast that GCC accepts unchanged — so they sit in the shared `ports` laye
 `libffi`'s ELF symbol versioning was genuinely clang-specific, and even that is an option in the shared overlay
 rather than a second copy of the port. `ports.clang` and `ports.ucrt` ship empty, and their READMEs say why.
 
+### One patch to vcpkg itself
+
+An overlay replaces a port. Step 5 of `3-Clone_VCPKG.ps1` patches something an overlay cannot reach: vcpkg's own
+`scripts/cmake/vcpkg_execute_build_process.cmake`, adding one string to the list of build failures that vcpkg
+retries with parallelism disabled.
+
+OpenSSL's generated Makefile gives `build_libs`, `build_modules` and `build_inst_programs` a recipe each, and every
+one of them is its own sub-make: `"$(MAKE)" depend && "$(MAKE)" _build_libs`. `make install` reaches all three
+through `install_sw`, so at any `-j` above 1 three copies of `util/add-depends.pl` run at once in the same
+directory. That script writes `Makefile-<pid>`, reads `Makefile` to compare against it, then renames its temporary
+over it — and on Windows a rename onto a file another process holds open without `FILE_SHARE_DELETE` fails:
+
+```
+Trying to rename Makefile-1301 -> Makefile: Permission denied
+make[2]: *** [Makefile:3566: depend] Error 13
+```
+
+On POSIX that rename succeeds, which is why upstream never sees it. **Lowering the concurrency does not help** —
+the three sub-makes are prerequisites of one target, so they overlap at `-j 8` exactly as at `-j 12`, and an
+`install_schedule` that stops above 1 spends its attempts for nothing. Two machines here run the identical race:
+one wins it every time, the other loses it every time. That is what a microsecond window looks like across
+different hardware, and it is why this is not reproducible on the machine that happens to win.
+
+vcpkg already passes a hard-coded `-j 1` alongside the parallel install command and re-runs it when the log
+matches its retry list — a list that already carries `"Cannot write file"` and `"mkdir [^:]*: File exists"` for
+this very class, with its own comments reading *"Multiple threads using the same directory at the same time cause
+conflicts"*. The mechanism is there; only OpenSSL's wording was missing. Adding it costs nothing: the retry runs
+inside the same call, on the same buildtree, with every object already compiled. Letting step 4 retry the whole
+port instead re-extracts and rebuilds from scratch — measured at 2189 compiler invocations per attempt.
+
+The patch is idempotent and never fatal. If a baseline bump moves the anchor it warns loudly and carries on,
+because an environment that builds on any machine winning the race is still a working environment. Step 4's
+dirty-tree check knows about the file, so a re-run reports it as expected rather than warning about a change the
+generator made itself.
+
 ---
 
 ## Logs

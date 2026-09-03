@@ -285,6 +285,109 @@ function Get-TextFileHash
     return ([System.BitConverter]::ToString($hash) -replace '-', '').ToUpperInvariant()
 }
 
+function Update-VcpkgScriptPatches
+{
+    # @brief Teach vcpkg's build-retry list about openssl's concurrent-rename failure. Returns $true on success.
+    #
+    # WHAT IT FIXES. openssl's generated Makefile gives build_libs, build_modules and build_inst_programs a
+    # recipe each, and every one of them is its own sub-make:
+    #
+    #     "$(MAKE)" depend && "$(MAKE)" _build_libs
+    #
+    # 'make install' reaches all three through install_sw, so at any -j above 1 three copies of
+    # util/add-depends.pl run at once in the same directory. That script writes Makefile-<pid>, reads Makefile
+    # to compare against it, then renames its temporary over it. On Windows a rename onto a file another
+    # process holds open without FILE_SHARE_DELETE fails with EACCES, and Perl does not ask for it:
+    #
+    #     Trying to rename Makefile-1301 -> Makefile: Permission denied
+    #     make[2]: *** [Makefile:3566: depend] Error 13
+    #
+    # On POSIX that rename succeeds, which is why upstream never sees it.
+    #
+    # LOWERING THE CONCURRENCY DOES NOT HELP, and this is the part worth remembering: the three sub-makes are
+    # prerequisites of one target, so they overlap at -j 8 exactly as they do at -j 12. Only -j 1 serialises
+    # them, so an install_schedule that stops above 1 cannot recover from this no matter how many attempts it
+    # spends. Two machines here run the identical three-way race; one wins it every time and the other loses it
+    # every time, which is what a microsecond window looks like across different hardware.
+    #
+    # WHY PATCH THIS FILE. vcpkg already passes a NO_PARALLEL_COMMAND -- a hard-coded -j 1 -- alongside the
+    # parallel install command, and vcpkg_execute_build_process re-runs the serial one when the log matches
+    # Z_VCPKG_EXECUTE_BUILD_PROCESS_RETRY_ERROR_MESSAGES. That list already carries "Cannot write file" and
+    # "mkdir [^:]*: File exists" for exactly this class of problem; its own comments read "Multiple threads
+    # using the same directory at the same time cause conflicts" and "make install may stumble over
+    # concurrency". The whole mechanism is there. Only openssl's wording is missing from the list.
+    #
+    # The retry is nearly free because it happens INSIDE that one call: same buildtree, nothing deleted, every
+    # object already compiled -- the failing log says "Nothing to be done for '_build_libs'". Compare the
+    # alternative of letting step 4 retry the port, which re-extracts and rebuilds from scratch: measured at
+    # 2189 clang invocations per attempt for openssl.
+    #
+    # NOT FATAL, DELIBERATELY. A missing anchor means the pinned baseline moved and this patch needs
+    # revisiting. That deserves a loud warning, not a refusal to build an environment which works fine on any
+    # machine that wins the race. Idempotent: an already-patched tree, or an upstream that adopted the pattern
+    # itself, is a no-op.
+    param ([string]$VcpkgRoot)
+
+    $target = Join-Path (Join-Path (Join-Path $VcpkgRoot "scripts") "cmake") "vcpkg_execute_build_process.cmake"
+
+    if (-not (Test-Path -LiteralPath $target))
+    {
+        Write-Warn "vcpkg_execute_build_process.cmake not found, so the openssl retry patch was not applied."
+        return $false
+    }
+
+    $content = Get-Content -LiteralPath $target -Raw
+    $marker  = '"Trying to rename "'
+
+    if ($content.Contains($marker))
+    {
+        Write-Info "vcpkg's retry list already covers openssl's rename race; nothing to patch."
+        return $true
+    }
+
+    # The last entry of the existing concurrency group, so the addition lands with its own kind.
+    $anchor = '    "mkdir [^:]*: File exists"'
+
+    if (-not $content.Contains($anchor))
+    {
+        Write-Warn "Could not find the anchor in vcpkg_execute_build_process.cmake, so the openssl rename patch"
+        Write-Warn "was NOT applied. The pinned baseline has most likely moved. openssl can then fail during"
+        Write-Warn "'make install' on machines that lose the add-depends.pl race, with 'Permission denied' on a"
+        Write-Warn "rename; see the comment on Update-VcpkgScriptPatches in this script for the full mechanism."
+        return $false
+    }
+
+    $additionLines = @(
+        "    # openssl's util/add-depends.pl writes Makefile-<pid> and renames it over Makefile. 'make install'",
+        "    # reaches build_libs, build_modules and build_inst_programs, each of which runs its own sub-make of",
+        "    # 'depend', so three copies of that script race on the same file at any -j above 1. Windows fails",
+        "    # that rename with EACCES. The serial retry cannot lose the race: it never runs two of them at once.",
+        '    "Trying to rename "'
+    )
+
+    # Match the file's own line endings rather than imposing ours. A git clone on Windows may hold either,
+    # depending on core.autocrlf, and a file with mixed endings is a needless thing to hand to a diff.
+    $newline = "`n"
+    if ($content.Contains("`r`n")) { $newline = "`r`n" }
+
+    $patched = $content.Replace($anchor, ($anchor + $newline + ($additionLines -join $newline)))
+
+    # WriteAllText, not Set-Content: PowerShell 5.1's -Encoding UTF8 prepends a BOM, and .NET's default here is
+    # UTF-8 without one, which is what the file already is.
+    [System.IO.File]::WriteAllText($target, $patched)
+
+    # Read it back. This is a file inside a pinned clone that nothing else verifies, and a patch which silently
+    # failed to apply is precisely the failure mode that had somebody chasing a compiler bug for two days.
+    if ((Get-Content -LiteralPath $target -Raw).Contains($marker))
+    {
+        Write-Info "Patched vcpkg's build-retry list: an openssl rename race now falls back to a serial install."
+        return $true
+    }
+
+    Write-Warn "Wrote the openssl retry patch but could not read it back; check $target by hand."
+    return $false
+}
+
 function Resolve-GitExecutable
 {
     # @brief Locate git.exe inside the generated MSYS2 installation.
@@ -749,11 +852,31 @@ if ($revBefore.ExitCode -eq 0 -and $revBefore.Output.Count -gt 0)
     Write-Info "Current HEAD: $headBefore"
 }
 
+# Files this script modifies inside the vcpkg clone on purpose. Without this list every re-run would warn
+# that the work tree is dirty and that "the checkout may fail", pointing at a change we made ourselves two
+# steps later -- which trains the reader to ignore the one warning that would matter if it named another file.
+$managedVcpkgFiles = @("scripts/cmake/vcpkg_execute_build_process.cmake")
+
 $dirty = Get-NativeOutput $gitExe @("-C", $vcpkgRootWin, "status", "--porcelain")
 if ($dirty.ExitCode -eq 0 -and $dirty.Output.Count -gt 0)
 {
-    Write-Warn "The vcpkg work tree has local modifications; the checkout may fail."
-    foreach ($line in $dirty.Output) { Write-Warn ("    | " + $line) }
+    $unexpected = @()
+
+    foreach ($line in $dirty.Output)
+    {
+        # Porcelain format is two status characters, a space, then the path.
+        $entry = ([string]$line)
+        $path  = if ($entry.Length -gt 3) { $entry.Substring(3).Trim().Trim('"') } else { "" }
+
+        if ($managedVcpkgFiles -contains $path) { Write-Info ("Expected local change, applied by this script: " + $path) }
+        else { $unexpected += $entry }
+    }
+
+    if ($unexpected.Count -gt 0)
+    {
+        Write-Warn "The vcpkg work tree has unexpected local modifications; the checkout may fail."
+        foreach ($line in $unexpected) { Write-Warn ("    | " + $line) }
+    }
 }
 
 # Fetch only when the requested commit is not already present locally.
@@ -804,10 +927,24 @@ Write-Info "vcpkg checked out to baseline $headAfter"
 
 Write-Info "STEP 4: OK"
 
-# STEP 5: Bootstrap vcpkg.
+# STEP 5: Apply the controlled patches to the checked-out vcpkg scripts.
 # --------------------------------------------------------------------
 
-Write-Info "STEP 5: Bootstrap vcpkg."
+Write-Info "STEP 5: Apply the controlled patches to the vcpkg scripts."
+
+# Here, between the checkout and the bootstrap, because the tree is now at the pinned baseline and no port
+# has had a chance to build yet. The function reports its own outcome and is never fatal, so its return
+# value is discarded; see the comment on Update-VcpkgScriptPatches for what this fixes and why it has to
+# live in a vcpkg script rather than in an overlay port.
+[void](Update-VcpkgScriptPatches -VcpkgRoot $vcpkgRootWin)
+
+Write-Info "STEP 5: OK"
+
+
+# STEP 6: Bootstrap vcpkg.
+# --------------------------------------------------------------------
+
+Write-Info "STEP 6: Bootstrap vcpkg."
 
 $bootstrapNeeded = $true
 
@@ -858,12 +995,12 @@ if ($code -ne 0)
     Abort-WithError
 }
 
-Write-Info "STEP 5: OK"
+Write-Info "STEP 6: OK"
 
-# STEP 6: Install the controlled overlay triplet.
+# STEP 7: Install the controlled overlay triplet.
 # --------------------------------------------------------------------
 
-Write-Info "STEP 6: Install the controlled overlay triplet '$vcpkgTriplet'."
+Write-Info "STEP 7: Install the controlled overlay triplet '$vcpkgTriplet'."
 
 $tripletFileName = "{0}.cmake"  -f $vcpkgTriplet
 $tripletHashName = "{0}.sha256" -f $vcpkgTriplet
@@ -968,12 +1105,12 @@ foreach ($extraTriplet in $extraTriplets)
     Write-Info ("Additional triplet installed: {0}" -f $extraDst)
 }
 
-Write-Info "STEP 6: OK"
+Write-Info "STEP 7: OK"
 
-# STEP 7: Install the controlled overlay ports.
+# STEP 8: Install the controlled overlay ports.
 # --------------------------------------------------------------------
 
-Write-Info "STEP 7: Install the controlled overlay ports."
+Write-Info "STEP 8: Install the controlled overlay ports."
 
 # OVERLAY PORTS ARE LAYERED, and every layer any triplet asks for is installed here.
 #
@@ -1097,12 +1234,12 @@ foreach ($layerName in $overlayLayerNames)
 
 Write-Info ("Installed {0} overlay port(s) across {1} layer(s)." -f $totalPorts, $overlayLayerNames.Count)
 
-Write-Info "STEP 7: OK"
+Write-Info "STEP 8: OK"
 
-# STEP 8: Setup environment variables.
+# STEP 9: Setup environment variables.
 # --------------------------------------------------------------------
 
-Write-Info "STEP 8: Setup environment variables."
+Write-Info "STEP 9: Setup environment variables."
 
 if (-not (Test-Path -LiteralPath $binaryCacheWin))
 {
@@ -1229,7 +1366,7 @@ foreach ($key in $vcpkgEnvValues.Keys)
 Write-Info "Updating environment variables in $envFilePath"
 Set-EnvFileValues -Path $envFilePath -Values $vcpkgEnvValues
 
-Write-Info "STEP 8: OK"
+Write-Info "STEP 9: OK"
 
 # FINALIZATION
 # --------------------------------------------------------------------
