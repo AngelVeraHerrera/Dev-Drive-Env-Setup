@@ -68,18 +68,88 @@ function Get-DrivEnvConfigSchema
             mode    = @{ type = 'string'; required = $true; allowed = @('pinned', 'latest') }
             version = @{ type = 'string' }
             repo    = @{ type = 'string'; allowed = @('mingw', 'msys') }
+
+            # The architecture tag in the package FILE name, which is not always the target architecture: most
+            # mingw packages are published as "any", and a handful of scripted msys ones are too. Step 2 has
+            # read this key since it was written; the schema did not declare it, so any configuration that
+            # actually used it was rejected as having an unknown key. Declaring it is the fix.
+            file_arch = @{ type = 'string'; notEmpty = $true }
         }
     }
 
     # triplet is OPTIONAL and overrides vcpkg.target.triplet for this package alone. Fast DDS is why it
     # exists: its MinGW DLL does not export what a publisher needs, so it must be built statically inside an
     # otherwise dynamic environment. No separate "default triplet" key: target.triplet already is the default.
+    # AN INSTALL SCHEDULE: one entry per attempt, in order, each saying what build concurrency that attempt
+    # gets. The LENGTH of the list is the attempt count, so the two things a difficult machine needs tuning for
+    # are one list rather than two keys that can disagree with each other.
+    #
+    # concurrency 0, or an entry with no fields at all, means "let vcpkg size the build from the hardware" --
+    # nothing is exported and the behaviour is vcpkg's default. A value of N exports VCPKG_MAX_CONCURRENCY=N,
+    # which vcpkg passes down to make and ninja, so it reaches the compiler processes and not just vcpkg's own
+    # scheduling.
+    #
+    # Why this shape at all: the failures worth retrying are resource-shaped. A machine with 32 hardware threads
+    # and 16 GB of RAM exhausts memory long before it exhausts cores, and the compiler then dies in ways that
+    # look like compiler bugs -- a segfault at a different optimisation pass on every run. Retrying identically
+    # just rolls the same dice; retrying with fewer parallel jobs changes the odds.
+    $installAttempt = @{
+        type   = 'object'
+        fields = @{
+            concurrency = @{ type = 'int'; min = 0 }
+        }
+    }
+
+    $installSchedule = @{ type = 'array'; item = $installAttempt }
+
+    # LAYERED OVERLAY PORTS, resolved per port from that port's triplet.
+    #
+    # Shaped as an ordered ARRAY rather than a map from triplet to layers, because the validator has no node
+    # type for an object with arbitrary keys and inventing one to save a few characters of JSON would be the
+    # wrong trade. The array reads well anyway: the specific entries first, the catch-all last.
+    #
+    #   "overlay_ports": [
+    #     { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
+    #     { "triplet": "*",                               "layers": ["ports"] }
+    #   ]
+    #
+    # 'triplet' is matched EXACTLY; "*" matches any triplet no other entry names. 'layers' are directory names
+    # under vcpkg_overlays/ in the repository, and under <drive>:/overlays/ once installed, searched IN ORDER --
+    # vcpkg takes the first layer that contains the port, which is what makes a specific layer able to override
+    # the shared one. Verified with a real vcpkg invocation: two repeated --overlay-ports flags, the first an
+    # empty directory, still resolved a port out of the second.
+    #
+    # Absent entirely, every triplet gets ["ports"], which is exactly what this generator did before layers
+    # existed.
+    #
+    # WHEN TO USE A LAYER AND WHEN NOT TO. A layer copies a whole portfile, so two copies then have to be kept
+    # in step through every baseline bump -- and they will not be. Prefer a conditional INSIDE the shared port
+    # for a delta of a line or two; the gstreamer overlay does exactly that, branching on VCPKG_C_COMPILER.
+    # Reach for a layer only when a port needs wholesale different treatment. Note also that of the three
+    # compiler-specific problems found while bringing up a clang environment, TWO were upstream bugs whose
+    # fixes are correct for GCC as well, so they belong in the shared layer and need no separation at all.
+    $overlayLayerSet = @{
+        type   = 'object'
+        fields = @{
+            triplet = @{ type = 'string'; required = $true; notEmpty = $true }
+            layers  = @{ type = 'array';  required = $true; item = @{ type = 'string'; notEmpty = $true } }
+        }
+    }
+
     $vcpkgPackage = @{
         type   = 'object'
         fields = @{
             name     = $reqString
             features = @{ type = 'array'; item = $stringNode }
             triplet  = @{ type = 'string'; notEmpty = $true }
+
+            # Both OPTIONAL, and both mean for this one port what the same-named keys under vcpkg mean for all of
+            # them. They exist because the ports that need throttling are not the ports that need retrying:
+            # qtbase and opencv4 have translation units that take gigabytes on their own and want a low
+            # concurrency from the FIRST attempt, while a small port that failed once is worth simply trying
+            # again at full speed. A single global schedule cannot express both without penalising everything.
+            install_schedule     = $installSchedule
+            max_install_attempts = @{ type = 'int'; min = 1 }
         }
     }
 
@@ -135,10 +205,33 @@ function Get-DrivEnvConfigSchema
                 required = $true
                 fields   = @{ url = $reqString; sha256 = $stringNode }
             }
+            # THE THREE NAMES A SUBSYSTEM HAS, which this used to conflate into one "profile".
+            #
+            #   subsystem       the MSYSTEM value and the install directory   clang64 -> /clang64
+            #   repo_subpath    where the packages live on repo.msys2.org     mingw/clang64
+            #   package_prefix  what a package is actually called             mingw-w64-clang-x86_64-<name>
+            #
+            # Normally you write only 'subsystem' and step 2 derives the rest from a table verified against
+            # repo.msys2.org. The other two are overrides, for a subsystem added after that table was written.
+            #
+            # 'profile' is the LEGACY spelling and still works: it means subsystem = "<profile>64", which is
+            # what the old code assumed. It stays required=false rather than being removed so that a
+            # configuration written before this change keeps validating; one of the two must be present, and
+            # step 2 is where that is enforced because only it knows the table.
+            #
+            # 'arch' is optional now: every subsystem in the table carries its own default, and getting it
+            # wrong is how you ask clangarm64 for x86_64 packages.
             target   = @{
                 type     = 'object'
                 required = $true
-                fields   = @{ profile = $reqString; arch = $reqString; base_url = $stringNode }
+                fields   = @{
+                    profile        = @{ type = 'string'; notEmpty = $true }
+                    subsystem      = @{ type = 'string'; notEmpty = $true }
+                    package_prefix = @{ type = 'string'; notEmpty = $true }
+                    repo_subpath   = @{ type = 'string'; notEmpty = $true }
+                    arch           = @{ type = 'string'; notEmpty = $true }
+                    base_url       = $stringNode
+                }
             }
             packages = @{ type = 'array'; required = $true; item = $msys2Package }
         }
@@ -174,6 +267,31 @@ function Get-DrivEnvConfigSchema
             # on one that does not need it, because a high value on a healthy machine only turns a genuine build
             # error into a long wait.
             max_install_attempts = @{ type = 'int'; min = 1 }
+
+            # The DEFAULT schedule for every port that does not declare its own. Optional: with neither this nor
+            # max_install_attempts, step 4 behaves exactly as it always has -- first attempt at vcpkg's own
+            # concurrency, every attempt after it serialised. max_install_attempts still works alongside this
+            # and sets the LENGTH: it truncates a longer schedule, and extends a shorter one by repeating its
+            # last entry, which is the conservative one.
+            install_schedule = $installSchedule
+
+            overlay_ports = @{ type = 'array'; item = $overlayLayerSet }
+
+            # Where vcpkg unpacks and compiles. Optional; step 4 defaults it to <drive>:/bt.
+            #
+            # This is not a tidiness preference, it is a hard limit. vcpkg builds each port under
+            # <root>/buildtrees/<port>/<triplet>-rel/, and with a triplet name like
+            # x64-mingw-ucrt-dynamic-release that prefix alone is 69 characters. Qt's autogen filenames are
+            # enormous, and the total reached 261 against the 260-character cap Windows applies to any program
+            # that has not opted into long paths through its application manifest. MSYS2's GCC has not, so
+            # LongPathsEnabled=1 in the registry does not rescue it, and qtdeclarative fails with
+            # "error: opening dependency file ...: No such file or directory".
+            #
+            # <drive>:/bt spends 6 characters where the default spends 20, which put that same path at 247.
+            # Nothing is lost by moving it: buildtrees is scratch, it is not part of any package ABI -- a
+            # vcpkg_abi_info.txt has no entry for it -- and it is deleted after each port when
+            # clean-buildtrees is in effect.
+            buildtrees_root = @{ type = 'string'; notEmpty = $true }
         }
     }
 
