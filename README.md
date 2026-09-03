@@ -201,6 +201,44 @@ Once step 3 has run, the environment is entered from the drive itself:
 
 ---
 
+## The Public Contract
+
+The generated `<drive>:\env\<envname>_env_variables.env` holds two kinds of variable, and the difference matters
+because one kind is a promise and the other is this generator talking to itself.
+
+**Public — what a repository may depend on:**
+
+| Variable | Meaning |
+| --- | --- |
+| `DEVSYSTEM_TOOLCHAIN_ROOT` | The prefix holding the compiler drivers, `cmake`, `ninja` and `gdb` |
+| `DEVSYSTEM_TOOLCHAIN` | The compiler family, exactly `gcc` or `clang` |
+| `DEVSYSTEM_TOOLCHAIN_ID` | The namespace slug for paths: `ucrt64`, `clang64`, … |
+| `DEVSYSTEM_BUILDTREES`, `DEVSYSTEM_DEPLOYS`, `DEVSYSTEM_WORKSPACE` | Where builds, installs and sources live |
+| `VCPKG_ROOT`, `VCPKG_DEFAULT_TRIPLET` | The dependency prefix and its triplet |
+
+**Private** — `MSYS2_ROOT`, `MSYS2_BASH`, `MSYS2_ENV`, `BASE_PATH`, `DEVDRIVE_*`, `VCPKG_OVERLAY_*`,
+`VCPKG_BASELINE`, `VCPKG_BIN`, `GST_*`. A repository reading these is coupling itself to MSYS2 rather than to the
+environment.
+
+**`DEVSYSTEM_TOOLCHAIN` is the one that had to be invented, and the reason is worth stating: the family is not
+discoverable.** MSYS2's CLANG64 ships `gcc.exe` and `g++.exe` as byte-identical copies of `clang.exe` — step 2
+creates them on purpose, so build systems expecting a GCC driver keep working — and `gcc --version` there prints
+*clang version 22.1.8*. Anything that sniffs the prefix to decide gets the wrong answer, and anything that
+string-matches `clang64` out of a directory name or a triplet is reading this generator's private encoding. So
+the environment states it, from a `Family` column on step 2's subsystem table. `msys2.target.family` overrides it
+for a subsystem the table does not list, and an unlisted subsystem with no family gets a warning rather than a
+guess.
+
+Both toolchain values are deliberately slash-free. The launcher bootstrap rewrites anything that looks like a
+drive path into POSIX form as it exports it, and a bare token cannot be caught by that conversion.
+
+`MINGW_ROOT` is still written beside `DEVSYSTEM_TOOLCHAIN_ROOT`, deprecated. The name became false the day a
+CLANG64 environment worked — it pointed at a directory with nothing to do with MinGW GCC. It stays for one
+migration cycle because CMake presets have no fallback syntax for a missing `$env{}`: the day it disappears,
+every preset still naming it configures with an empty path instead of failing cleanly.
+
+---
+
 ## Configuration
 
 One file, four sections. `drivenv-cfg_example.json` is tracked and documents every key;

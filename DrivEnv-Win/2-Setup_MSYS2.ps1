@@ -256,24 +256,32 @@ function Resolve-Msys2Subsystem($Target)
         $subsystem = "{0}64" -f $profile
     }
 
+    # THE FAMILY COLUMN IS A TABLE AND NOT SOMETHING DERIVED, and that is the important part. It cannot be
+    # worked out by looking at the prefix directory: clang64 ships gcc.exe and g++.exe, and they ARE clang --
+    # byte-identical copies of clang.exe, which step 7 of this script creates on purpose so that build systems
+    # expecting a gcc driver keep working. `gcc --version` there prints "clang version 22.1.8". Anything that
+    # sniffs the prefix to decide the family therefore gets the wrong answer, which is why the environment has
+    # to STATE it.
     $table = @{
-        'ucrt64'     = @{ Prefix = 'mingw-w64-ucrt-x86_64';   Subpath = 'mingw/ucrt64';     Arch = 'x86_64'  }
-        'clang64'    = @{ Prefix = 'mingw-w64-clang-x86_64';  Subpath = 'mingw/clang64';    Arch = 'x86_64'  }
-        'mingw64'    = @{ Prefix = 'mingw-w64-x86_64';        Subpath = 'mingw/mingw64';    Arch = 'x86_64'  }
-        'clangarm64' = @{ Prefix = 'mingw-w64-clang-aarch64'; Subpath = 'mingw/clangarm64'; Arch = 'aarch64' }
-        'mingw32'    = @{ Prefix = 'mingw-w64-i686';          Subpath = 'mingw/mingw32';    Arch = 'i686'    }
-        'clang32'    = @{ Prefix = 'mingw-w64-clang-i686';    Subpath = 'mingw/clang32';    Arch = 'i686'    }
+        'ucrt64'     = @{ Prefix = 'mingw-w64-ucrt-x86_64';   Subpath = 'mingw/ucrt64';     Arch = 'x86_64';  Family = 'gcc'   }
+        'clang64'    = @{ Prefix = 'mingw-w64-clang-x86_64';  Subpath = 'mingw/clang64';    Arch = 'x86_64';  Family = 'clang' }
+        'mingw64'    = @{ Prefix = 'mingw-w64-x86_64';        Subpath = 'mingw/mingw64';    Arch = 'x86_64';  Family = 'gcc'   }
+        'clangarm64' = @{ Prefix = 'mingw-w64-clang-aarch64'; Subpath = 'mingw/clangarm64'; Arch = 'aarch64'; Family = 'clang' }
+        'mingw32'    = @{ Prefix = 'mingw-w64-i686';          Subpath = 'mingw/mingw32';    Arch = 'i686';    Family = 'gcc'   }
+        'clang32'    = @{ Prefix = 'mingw-w64-clang-i686';    Subpath = 'mingw/clang32';    Arch = 'i686';    Family = 'clang' }
     }
 
     $prefix  = ""
     $subpath = ""
     $arch    = ""
+    $family  = ""
 
     if ($table.ContainsKey($subsystem))
     {
         $prefix  = $table[$subsystem].Prefix
         $subpath = $table[$subsystem].Subpath
         $arch    = $table[$subsystem].Arch
+        $family  = $table[$subsystem].Family
     }
 
     # Explicit overrides win over the table, and are the only way to reach a subsystem it does not list.
@@ -292,6 +300,11 @@ function Resolve-Msys2Subsystem($Target)
         $v = ([string]$Target.arch).Trim()
         if (-not [string]::IsNullOrWhiteSpace($v)) { $arch = $v }
     }
+    if ($keys -contains 'family')
+    {
+        $v = ([string]$Target.family).Trim().ToLowerInvariant()
+        if (-not [string]::IsNullOrWhiteSpace($v)) { $family = $v }
+    }
 
     if ([string]::IsNullOrWhiteSpace($prefix) -or [string]::IsNullOrWhiteSpace($subpath))
     {
@@ -301,7 +314,16 @@ function Resolve-Msys2Subsystem($Target)
         Abort-WithError
     }
 
-    return @{ Subsystem = $subsystem; Prefix = $prefix; Subpath = $subpath; Arch = $arch }
+    # A subsystem reached only through overrides has no family unless the configuration gave one. Guessing
+    # from the name would be exactly the sniffing this table exists to avoid, so say so and let the user
+    # decide: an empty family means the contract simply does not claim to know.
+    if ([string]::IsNullOrWhiteSpace($family))
+    {
+        Write-Warn "msys2.target.family is not set and subsystem '$subsystem' is not in the known table, so"
+        Write-Warn "DEVSYSTEM_TOOLCHAIN will be written empty. Set msys2.target.family to 'gcc' or 'clang'."
+    }
+
+    return @{ Subsystem = $subsystem; Prefix = $prefix; Subpath = $subpath; Arch = $arch; Family = $family }
 }
 
 # Resolves one JSON package entry into the three things pacman and the downloader need: the real package name, the
@@ -1278,8 +1300,12 @@ $envFilePath = Join-Path "$driveLetter`:" (("env/{0}_env_variables.env" -f $devE
 $msys2PathNorm = $msys2Path -replace '\\', '/'
 $mingwRootPath = "$msys2PathNorm/$msysEnv"     
 $msys2BashPath = "$msys2PathNorm/usr/bin/bash.exe"
+$toolchainFamily = [string]$msysSub.Family
 
-Write-Info "MINGW_ROOT=${mingwRootPath}"
+Write-Info "DEVSYSTEM_TOOLCHAIN_ROOT=${mingwRootPath}"
+Write-Info "DEVSYSTEM_TOOLCHAIN=${toolchainFamily}"
+Write-Info "DEVSYSTEM_TOOLCHAIN_ID=${msysEnv}"
+Write-Info "MINGW_ROOT=${mingwRootPath}  (deprecated alias, see the note where it is written)"
 Write-Info "MSYS2_ROOT=${msys2PathNorm}"
 Write-Info "MSYS2_BASH=${msys2BashPath}"
 Write-Info "MSYS2_ENV=${msysEnv}"
@@ -1378,7 +1404,26 @@ if (-not (Test-Path $envFilePath))
 
 # Write all environment variables to a file for later use
 $envLines = @(
+    # THE PUBLIC CONTRACT. These are the names a repository is allowed to depend on. Everything else in this
+    # file is this generator talking to itself, and a repository reading MSYS2_ROOT or BASE_PATH is coupling
+    # itself to MSYS2 rather than to the environment.
+    #
+    # DEVSYSTEM_TOOLCHAIN is the load-bearing addition, and it is here because nothing else states the
+    # compiler family. It is not derivable: clang64 ships gcc.exe and g++.exe that ARE clang, so a consumer
+    # sniffing the prefix gets the wrong answer, and a consumer string-matching "clang64" out of a directory
+    # name or a triplet is reading this generator private encoding. Both values are slash-free on purpose --
+    # the launcher bootstrap rewrites anything that looks like a drive path into POSIX form on export, and a
+    # bare token cannot be caught by that.
+    "DEVSYSTEM_TOOLCHAIN_ROOT=$mingwRootPath"
+    "DEVSYSTEM_TOOLCHAIN=$toolchainFamily"
+    "DEVSYSTEM_TOOLCHAIN_ID=$msysEnv"
+
+    # DEPRECATED, kept for one migration cycle. The name is now simply false: under clang64 this points at a
+    # directory that has nothing to do with MinGW GCC. It stays until a grep across the generator and every
+    # workspace shows no consumer left, because presets have no fallback syntax for a missing $env{} -- so
+    # the day this disappears, every preset still naming it breaks at configure time with an empty path.
     "MINGW_ROOT=$mingwRootPath"
+
     "MSYS2_ROOT=$msys2PathNorm"
     "MSYS2_BASH=$msys2BashPath"
     "MSYS2_ENV=$msysEnv"

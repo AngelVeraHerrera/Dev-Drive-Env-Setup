@@ -230,6 +230,12 @@ function Get-DrivEnvConfigSchema
                     package_prefix = @{ type = 'string'; notEmpty = $true }
                     repo_subpath   = @{ type = 'string'; notEmpty = $true }
                     arch           = @{ type = 'string'; notEmpty = $true }
+
+                    # The compiler family, 'gcc' or 'clang'. Only needed for a subsystem the script's table
+                    # does not list, since for the known ones it comes from there. It exists because the
+                    # family cannot be sniffed: clang64's gcc.exe and g++.exe are copies of clang.
+                    family         = @{ type = 'string'; notEmpty = $true; allowed = @('gcc', 'clang') }
+
                     base_url       = $stringNode
                 }
             }
