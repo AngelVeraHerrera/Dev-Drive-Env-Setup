@@ -118,6 +118,8 @@ function Abort-WithError
     }
 
     if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
+    # The log of a run that died is the one somebody will want, and the one nobody saves.
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 1
 }
 
@@ -270,6 +272,7 @@ catch
 # Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
 # than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
 . (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+. (Join-Path $PSScriptRoot "DrivEnvLogs.ps1")
 
 $cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
 if ($cfgProblems.Count -gt 0)
@@ -284,6 +287,7 @@ Write-Info "Configuration validated against the schema: no problems."
 if ($ValidateOnly)
 {
     Write-Info "-ValidateOnly was given, so nothing further will run."
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 0
 }
 $driveLetter = ([string]$Cfg.environment.dev_drive_letter).Trim().TrimEnd(':').ToUpperInvariant()
@@ -735,6 +739,12 @@ $host.UI.RawUI.WindowTitle = $originalTitle
 if ($failures.Count -gt 0)
 {
     Write-Error ("Verification found {0} problem(s)." -f $failures.Count)
+
+    # ABOVE the -NoFail branch, not below it. That branch exits inline, so a copy placed after it runs only in
+    # the -NoFail case -- which is the case where verification was told not to matter. The log worth keeping is
+    # the other one.
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
+
     if (-not $NoFail) { exit 1 }
     exit 0
 }
@@ -742,8 +752,10 @@ if ($failures.Count -gt 0)
 if ($skipped.Count -gt 0)
 {
     Write-Warn ("No failures, but {0} check(s) could not be carried out." -f $skipped.Count)
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 0
 }
 
 Write-Info "Verification OK."
+if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
 exit 0

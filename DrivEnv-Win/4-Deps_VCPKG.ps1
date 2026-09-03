@@ -96,6 +96,8 @@ function Abort-WithError
     }
 
     if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
+    # The log of a run that died is the one somebody will want, and the one nobody saves.
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 1
 }
 
@@ -413,6 +415,7 @@ catch
 # Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
 # than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
 . (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+. (Join-Path $PSScriptRoot "DrivEnvLogs.ps1")
 
 $cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
 if ($cfgProblems.Count -gt 0)
@@ -427,6 +430,7 @@ Write-Info "Configuration validated against the schema: no problems."
 if ($ValidateOnly)
 {
     Write-Info "-ValidateOnly was given, so nothing further will run."
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 0
 }
 if (-not $Cfg.environment)  { Write-Error "Missing 'environment' object in config JSON: $ConfigPath"; Abort-WithError }
@@ -1015,6 +1019,19 @@ $concurrencyLine
             break
         }
 
+        # THE FAILED ATTEMPT'S LOGS, SAVED NOW, because the next attempt destroys them.
+        #
+        # vcpkg writes the port's logs into the buildtree under fixed names -- build-<triplet>-rel-err.log and
+        # friends -- so attempt 2 overwrites attempt 1's. With a four-entry schedule that leaves exactly one
+        # set of logs on disk at the end: the last attempt's. The first failure is usually the informative one,
+        # and the interesting comparison is between attempts, which is precisely what gets thrown away.
+        #
+        # Saved on the last attempt too. The tail quoted below is 25 lines of the two newest files, which is
+        # enough to see a cause but not enough to diagnose one, and a re-run of this step overwrites even that.
+        $savedTo = Save-VcpkgFailureLogs -PortName $port.Name -Attempt $attempt `
+                                         -BuildtreesRoot $buildtreesRoot -DriveLetter $driveLetter
+        if (-not [string]::IsNullOrWhiteSpace($savedTo)) { Write-Info ("Failure logs kept in {0}" -f $savedTo) }
+
         if ($attempt -lt $portAttempts)
         {
             Write-Warn ("Installation of '{0}' failed (ExitCode={1})." -f $port.Spec, $code)
@@ -1473,6 +1490,11 @@ if ($retriedPorts.Count -gt 0)
     Write-Warn "One is bad luck. Several, across unrelated ports, is worth investigating: the causes seen so far are"
     Write-Warn "an on-access virus scanner holding files open, and memory pressure making the compiler crash."
 }
+
+# ABOVE the prompt below, not after it: UserInteractive is True even with stdin redirected, and ReadKey then
+# throws instead of waiting -- the trap Abort-WithError already documents. Anything after the prompt is
+# skipped in precisely the non-interactive case where this copy is the only record anybody will have.
+if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
 
 if ([Environment]::UserInteractive) {
     Write-Host ""

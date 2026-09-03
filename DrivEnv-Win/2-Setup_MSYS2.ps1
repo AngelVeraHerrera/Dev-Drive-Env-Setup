@@ -89,6 +89,8 @@ function Abort-WithError
     }
     
     if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
+    # The log of a run that died is the one somebody will want, and the one nobody saves.
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 1
 }
 
@@ -602,6 +604,7 @@ try
 # Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
 # than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
 . (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+. (Join-Path $PSScriptRoot "DrivEnvLogs.ps1")
 
 $cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
 if ($cfgProblems.Count -gt 0)
@@ -616,6 +619,7 @@ Write-Info "Configuration validated against the schema: no problems."
 if ($ValidateOnly)
 {
     Write-Info "-ValidateOnly was given, so nothing further will run."
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 0
 }
 if (-not $Cfg.environment)
@@ -1441,6 +1445,11 @@ Write-Info "MSYS2 environment setup completed successfully."
 Write-Info "TOTAL EXECUTION TIME: $($elapsed.TotalSeconds) seconds  ($elapsedStr)"
 
 # Exit
+# ABOVE the prompt below, not after it: UserInteractive is True even with stdin redirected, and ReadKey then
+# throws instead of waiting -- the trap Abort-WithError already documents. Anything after the prompt is
+# skipped in precisely the non-interactive case where this copy is the only record anybody will have.
+if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
+
 if ([Environment]::UserInteractive) {
     Write-Host ""
     Write-Host "Press any key to exit..."

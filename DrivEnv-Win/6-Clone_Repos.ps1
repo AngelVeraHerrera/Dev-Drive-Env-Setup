@@ -107,6 +107,8 @@ function Abort-WithError
     }
 
     if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
+    # The log of a run that died is the one somebody will want, and the one nobody saves.
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 1
 }
 
@@ -337,6 +339,7 @@ catch
 # Validate the whole configuration before anything reads a value out of it. An unknown key is an ERROR here rather
 # than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
 . (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
+. (Join-Path $PSScriptRoot "DrivEnvLogs.ps1")
 
 $cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
 if ($cfgProblems.Count -gt 0)
@@ -351,6 +354,7 @@ Write-Info "Configuration validated against the schema: no problems."
 if ($ValidateOnly)
 {
     Write-Info "-ValidateOnly was given, so nothing further will run."
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 0
 }
 
@@ -481,6 +485,7 @@ if ($repos.Count -eq 0)
     Write-NoFormat "  NOTHING TO DO"
     Write-NoFormat "================================================================="
     if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
+    if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
     exit 0
 }
 
@@ -710,4 +715,5 @@ if ($failed.Count -gt 0)
 Write-Info "All configured repositories are in place."
 
 if ($originalTitle) { $host.UI.RawUI.WindowTitle = $originalTitle }
+if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
 exit 0

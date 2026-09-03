@@ -53,7 +53,7 @@ A drive that mounts under one letter and contains everything a build needs:
 | `deploys/` | Installed artefacts of your own projects |
 | `testing/` | Runnable checks for the libraries that are historically troublesome |
 | `installation/` | What this environment IS: package inventory, baseline, overlay notes, manual installs |
-| `logs/` | Environment and tool logs |
+| `logs/` | Environment and tool logs, each setup step's own log, and the logs of every port that failed |
 
 Plus launchers on the drive itself — a `.bat` for Windows and a bash bootstrap for the MSYS2 shell — so the
 environment is entered the same way by a person, a script or a CI job.
@@ -544,6 +544,37 @@ rather than a second copy of the port. `ports.clang` and `ports.ucrt` ship empty
 
 ---
 
+## Logs
+
+Every step logs into `install_logs\` beside the scripts, and copies that log onto the drive at
+`<drive>:\logs\setup\` — on the way out of a successful run *and* on the way out of a failed one. The scripts live
+in a working copy that gets cloned, moved and cleaned; the drive does not. A drive that carries the record of how
+it was made can be handed to somebody else, or read a year later, without that working copy still existing.
+
+Failed ports get their own copy, and this one is about timing rather than location:
+
+```
+<drive>:\logs\vcpkg\<port>\attempt1_20260903_093201\
+<drive>:\logs\vcpkg\<port>\attempt2_20260903_094410\
+```
+
+vcpkg writes a port's logs into the buildtree under fixed names — `build-<triplet>-rel-err.log` and friends — so
+**the next attempt overwrites them.** With retries enabled that leaves exactly one set on disk when the run ends:
+the last attempt's. The first failure is usually the informative one, and the comparison between attempts is the
+whole reason for retrying at concurrency 12, then 6, then 1 — and it is precisely what got thrown away. Step 4 now
+copies the logs out after each failed attempt, before the next one starts, one directory per attempt.
+
+This is separate from the tail step 4 already quotes into its own log. The tail is 25 lines of the two newest
+`*-err.log` files, which is enough to *see* a cause and not enough to diagnose one; a re-run of the step overwrites
+even that. `logs/setup` rather than `logs/vcpkg` for the step logs, incidentally, because step 1 has nothing to do
+with vcpkg and a step-1 log filed under `vcpkg` is worse than no filing at all.
+
+None of it is allowed to be fatal. Losing a log copy is worth a warning and is not worth failing a build that
+otherwise worked — least of all on an abort path that is already reporting a real error.
+
+---
+
+<!-- INSTALLATION RECORD -->
 ## Installation Record
 
 Step 4 writes an inventory to `<drive>:\installation\`, next to the hand-written notes:
