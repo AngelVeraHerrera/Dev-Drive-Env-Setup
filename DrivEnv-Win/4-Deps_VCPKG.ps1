@@ -268,6 +268,105 @@ function Get-Msys2ScriptOutput
     }
 }
 
+# THE INSTALL-SCHEDULE AND OVERLAY-LAYER HELPERS LIVE UP HERE, WITH THE OTHER FUNCTIONS, AND THAT IS NOT
+# TIDINESS. PowerShell executes a script top to bottom, so a function is only callable BELOW its own
+# definition. These were first placed next to the install loop that is their main consumer, which left the
+# port-parsing loop around line 460 calling ConvertTo-InstallSchedule three hundred lines before it existed:
+#     The term 'ConvertTo-InstallSchedule' is not recognized as a name of a cmdlet, function, script file...
+# once per package carrying its own schedule. The errors are non-terminating, so the run CONTINUED and those
+# packages silently fell back to the global schedule -- a wrong result rather than a stopped script, which is
+# the worse of the two outcomes.
+function Resolve-OverlayLayers
+{
+    # @brief The overlay port layers one triplet should search, in order. Returns layer NAMES, not paths.
+    #
+    # Matched exactly on the triplet, then on "*", then falling back to the single shared layer. The order of
+    # the returned list is the search order vcpkg is given, and vcpkg takes the first layer that contains the
+    # port -- so a specific layer earlier in the list overrides the shared one later in it.
+    #
+    # Why this is resolved PER PORT rather than once for the whole run: it is what lets one vcpkg tree hold two
+    # triplets with different overlays, which is the shape a dual GCC/clang environment needs. The overlay path
+    # is not a property of the tree; it is an argument to each invocation, and step 3 of this script invokes
+    # vcpkg once per port.
+    param ($OverlayConfig, [string]$Triplet)
+
+    $fallback = $null
+
+    foreach ($entry in @($OverlayConfig))
+    {
+        if ($null -eq $entry) { continue }
+
+        $entryTriplet = ([string]$entry.triplet).Trim()
+        $layers = @()
+        foreach ($layer in @($entry.layers))
+        {
+            $name = ([string]$layer).Trim() -replace '^[\/]+', '' -replace '[\/]+$', ''
+            if (-not [string]::IsNullOrWhiteSpace($name)) { $layers += $name }
+        }
+        if ($layers.Count -eq 0) { continue }
+
+        if ($entryTriplet -eq $Triplet) { return ,([string[]]$layers) }
+        if ($entryTriplet -eq '*' -and $null -eq $fallback) { $fallback = [string[]]$layers }
+    }
+
+    if ($null -ne $fallback) { return ,([string[]]$fallback) }
+
+    return ,([string[]]@("ports"))
+}
+
+function ConvertTo-InstallSchedule
+{
+    # @brief Turn a JSON install_schedule array into the list of concurrencies the retry loop uses: entry N is
+    #        what attempt N runs with, and 0 means "export nothing and let vcpkg size the build".
+    #
+    # No validation here on purpose. DrivEnvConfig.ps1 has already checked the shape -- an array of objects whose
+    # only key is an optional non-negative int -- and a second copy of that check would only give the two
+    # something to disagree about. An entry with no 'concurrency' is 0, which is the documented meaning of {}.
+    param ($Entries)
+
+    $out = @()
+    foreach ($entry in @($Entries))
+    {
+        # Piped rather than $entry.PSObject.Properties.Name, for the reason DrivEnvConfig.ps1 documents at
+        # length: on a bare {} the member access yields $null, and @($null) is an array holding one null.
+        $keys = @()
+        if ($null -ne $entry) { $keys = @($entry.PSObject.Properties | ForEach-Object { $_.Name }) }
+
+        if ($keys -contains 'concurrency') { $out += [int]$entry.concurrency } else { $out += 0 }
+    }
+
+    # Comma-wrapped so a ONE-attempt schedule comes back as an array of one rather than as a bare int:
+    # PowerShell unrolls an array returned from a function, and a single element then arrives as a scalar.
+    return ,([int[]]$out)
+}
+
+function Resize-InstallSchedule
+{
+    # @brief Force a schedule to exactly $Count attempts. Longer is truncated; shorter is extended by REPEATING
+    #        THE LAST entry, because the last entry is the careful one -- a schedule ends at whatever concurrency
+    #        was chosen for the worst case, so extra attempts should inherit it rather than invent one.
+    param ([int[]]$Schedule, [int]$Count)
+
+    if ($Schedule.Count -eq 0) { $Schedule = [int[]]@(0) }
+    if ($Count -lt 1)          { $Count = 1 }
+
+    $out = @()
+    for ($i = 0; $i -lt $Count; $i++)
+    {
+        if ($i -lt $Schedule.Count) { $out += $Schedule[$i] } else { $out += $Schedule[$Schedule.Count - 1] }
+    }
+
+    return ,([int[]]$out)
+}
+
+function Format-InstallSchedule
+{
+    # @brief The readable form of a schedule: "auto, 4, 1". Zero prints as 'auto' because that is what it means.
+    param ([int[]]$Schedule)
+
+    return ((@($Schedule) | ForEach-Object { if ($_ -le 0) { 'auto' } else { [string]$_ } }) -join ', ')
+}
+
 function ConvertTo-ManifestName
 {
     # @brief Turn the dev environment name into a valid vcpkg manifest name
@@ -730,96 +829,6 @@ $scriptHeader = New-Msys2ScriptHeader -Msys2Env        $msys2Env `
                                       -OverlayTriplets $overlayTripletsDrive `
                                       -BinaryCache     $binaryCacheDrive
 
-function Resolve-OverlayLayers
-{
-    # @brief The overlay port layers one triplet should search, in order. Returns layer NAMES, not paths.
-    #
-    # Matched exactly on the triplet, then on "*", then falling back to the single shared layer. The order of
-    # the returned list is the search order vcpkg is given, and vcpkg takes the first layer that contains the
-    # port -- so a specific layer earlier in the list overrides the shared one later in it.
-    #
-    # Why this is resolved PER PORT rather than once for the whole run: it is what lets one vcpkg tree hold two
-    # triplets with different overlays, which is the shape a dual GCC/clang environment needs. The overlay path
-    # is not a property of the tree; it is an argument to each invocation, and step 3 of this script invokes
-    # vcpkg once per port.
-    param ($OverlayConfig, [string]$Triplet)
-
-    $fallback = $null
-
-    foreach ($entry in @($OverlayConfig))
-    {
-        if ($null -eq $entry) { continue }
-
-        $entryTriplet = ([string]$entry.triplet).Trim()
-        $layers = @()
-        foreach ($layer in @($entry.layers))
-        {
-            $name = ([string]$layer).Trim() -replace '^[\/]+', '' -replace '[\/]+$', ''
-            if (-not [string]::IsNullOrWhiteSpace($name)) { $layers += $name }
-        }
-        if ($layers.Count -eq 0) { continue }
-
-        if ($entryTriplet -eq $Triplet) { return ,([string[]]$layers) }
-        if ($entryTriplet -eq '*' -and $null -eq $fallback) { $fallback = [string[]]$layers }
-    }
-
-    if ($null -ne $fallback) { return ,([string[]]$fallback) }
-
-    return ,([string[]]@("ports"))
-}
-
-function ConvertTo-InstallSchedule
-{
-    # @brief Turn a JSON install_schedule array into the list of concurrencies the retry loop uses: entry N is
-    #        what attempt N runs with, and 0 means "export nothing and let vcpkg size the build".
-    #
-    # No validation here on purpose. DrivEnvConfig.ps1 has already checked the shape -- an array of objects whose
-    # only key is an optional non-negative int -- and a second copy of that check would only give the two
-    # something to disagree about. An entry with no 'concurrency' is 0, which is the documented meaning of {}.
-    param ($Entries)
-
-    $out = @()
-    foreach ($entry in @($Entries))
-    {
-        # Piped rather than $entry.PSObject.Properties.Name, for the reason DrivEnvConfig.ps1 documents at
-        # length: on a bare {} the member access yields $null, and @($null) is an array holding one null.
-        $keys = @()
-        if ($null -ne $entry) { $keys = @($entry.PSObject.Properties | ForEach-Object { $_.Name }) }
-
-        if ($keys -contains 'concurrency') { $out += [int]$entry.concurrency } else { $out += 0 }
-    }
-
-    # Comma-wrapped so a ONE-attempt schedule comes back as an array of one rather than as a bare int:
-    # PowerShell unrolls an array returned from a function, and a single element then arrives as a scalar.
-    return ,([int[]]$out)
-}
-
-function Resize-InstallSchedule
-{
-    # @brief Force a schedule to exactly $Count attempts. Longer is truncated; shorter is extended by REPEATING
-    #        THE LAST entry, because the last entry is the careful one -- a schedule ends at whatever concurrency
-    #        was chosen for the worst case, so extra attempts should inherit it rather than invent one.
-    param ([int[]]$Schedule, [int]$Count)
-
-    if ($Schedule.Count -eq 0) { $Schedule = [int[]]@(0) }
-    if ($Count -lt 1)          { $Count = 1 }
-
-    $out = @()
-    for ($i = 0; $i -lt $Count; $i++)
-    {
-        if ($i -lt $Schedule.Count) { $out += $Schedule[$i] } else { $out += $Schedule[$Schedule.Count - 1] }
-    }
-
-    return ,([int[]]$out)
-}
-
-function Format-InstallSchedule
-{
-    # @brief The readable form of a schedule: "auto, 4, 1". Zero prints as 'auto' because that is what it means.
-    param ([int[]]$Schedule)
-
-    return ((@($Schedule) | ForEach-Object { if ($_ -le 0) { 'auto' } else { [string]$_ } }) -join ', ')
-}
 
 # Ports that failed once and then installed unchanged. Reported at the end rather than only in passing, because
 # it is the one number that says something about the machine rather than about the configuration.
@@ -879,8 +888,8 @@ if ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root")
     if (-not [string]::IsNullOrWhiteSpace($configuredRoot))
     {
         # Accept either form and hand bash the POSIX one, since the install script runs under MSYS2:
-        # "S:/bt" and "S:t" both become "/s/bt".
-        $normalised = $configuredRoot.Replace('', '/')
+        # "S:/bt" and "S:\bt" both become "/s/bt".
+        $normalised = $configuredRoot.Replace('\', '/')
         if ($normalised -match '^([A-Za-z]):/(.*)$')
         {
             $normalised = "/{0}/{1}" -f $Matches[1].ToLowerInvariant(), $Matches[2].TrimEnd('/')
