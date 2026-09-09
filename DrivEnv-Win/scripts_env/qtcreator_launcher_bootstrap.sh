@@ -343,15 +343,15 @@ if [[ -z "${MSYS2_ENV}" ]]; then
     echo "[ERROR] MSYS2_ENV not defined."
     exit 1
 fi
-if [[ -z "${MINGW_ROOT}" ]]; then
-    echo "[ERROR] MINGW_ROOT not defined."
+if [[ -z "${DEVSYSTEM_TOOLCHAIN_ROOT}" ]]; then
+    echo "[ERROR] DEVSYSTEM_TOOLCHAIN_ROOT not defined."
     exit 1
 fi
 
 DEVDRIVE_ROOT="/${DEVDRIVE_LETTER#/}"
 echo "[INFO] DevDrive root : ${DEVDRIVE_ROOT}"
 echo "[INFO] MSYS2 env     : ${MSYS2_ENV}"
-echo "[INFO] MINGW_ROOT    : ${MINGW_ROOT}"
+echo "[INFO] Toolchain root: ${DEVSYSTEM_TOOLCHAIN_ROOT}"
 
 # -------------------------------------------------------------------
 # QtCreator isolated directories (persisted in dev drive)
@@ -379,7 +379,7 @@ echo "[INFO] QtCreator settings : ${QT_SETTINGS_PATH}"
 # custom entry. Overwriting it here stripped all of that and left QtCreator running builds that could not find
 # their own DLLs. Only fall back if the .env supplied nothing at all.
 if [[ -z "${PATH:-}" ]]; then
-  export PATH="${MINGW_ROOT}/bin:/usr/local/bin:/usr/bin:/bin"
+  export PATH="${DEVSYSTEM_TOOLCHAIN_ROOT}/bin:/usr/local/bin:/usr/bin:/bin"
 fi
 echo "[INFO] PATH configured"
 
@@ -387,7 +387,7 @@ echo "[INFO] PATH configured"
 # Locate QtCreator binary
 # -------------------------------------------------------------------
 
-QT_CREATOR_EXE="${MINGW_ROOT}/bin/qtcreator.exe"
+QT_CREATOR_EXE="${DEVSYSTEM_TOOLCHAIN_ROOT}/bin/qtcreator.exe"
 if [[ ! -x "${QT_CREATOR_EXE}" ]]; then
     if command -v qtcreator >/dev/null 2>&1; then
         QT_CREATOR_EXE="$(command -v qtcreator)"

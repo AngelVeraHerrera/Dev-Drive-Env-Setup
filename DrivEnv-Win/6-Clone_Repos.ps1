@@ -200,18 +200,18 @@ function Resolve-GitExecutable
     # @brief Locate git.exe inside the generated MSYS2 installation.
     #
     # Step 2 installs the MinGW flavour of git (mingw-w64-<profile>-<arch>-git), which lands in
-    # <MINGW_ROOT>\bin, not in <MSYS2_ROOT>\usr\bin. The plain MSYS package would land in usr\bin.
+    # <DEVSYSTEM_TOOLCHAIN_ROOT>\bin, not in <MSYS2_ROOT>\usr\bin. The plain MSYS package would land in usr\bin.
     # Both layouts are accepted, and the login shell is used as a last resort so a different
     # profile (mingw64, clang64, ...) still resolves.
     param
     (
-        [string]$MingwRoot,
+        [string]$ToolchainRoot,
         [string]$Msys2Root,
         [string]$BashPath
     )
 
     $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($MingwRoot)) { $candidates += (Join-Path (Convert-ToWinPath $MingwRoot) "bin\git.exe") }
+    if (-not [string]::IsNullOrWhiteSpace($ToolchainRoot)) { $candidates += (Join-Path (Convert-ToWinPath $ToolchainRoot) "bin\git.exe") }
     if (-not [string]::IsNullOrWhiteSpace($Msys2Root)) { $candidates += (Join-Path (Convert-ToWinPath $Msys2Root) "usr\bin\git.exe") }
 
     foreach ($candidate in $candidates)
@@ -457,9 +457,10 @@ if (-not (Test-Path -LiteralPath $envFilePath))
 }
 
 $envMap    = Read-EnvFile -Path $envFilePath
-$mingwRoot = [string]$envMap["MINGW_ROOT"]
 $msys2Root = [string]$envMap["MSYS2_ROOT"]
 $msys2Bash = [string]$envMap["MSYS2_BASH"]
+$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Msys2Root $msys2Root `
+                                          -Msys2Env $envMap["MSYS2_ENV"] -Warn { param($m) Write-Warn $m }
 
 if ([string]::IsNullOrWhiteSpace($msys2Root))
 {
@@ -489,7 +490,7 @@ if ($repos.Count -eq 0)
     exit 0
 }
 
-$gitExe = Resolve-GitExecutable -MingwRoot $mingwRoot -Msys2Root $msys2Root -BashPath $msys2BashWin
+$gitExe = Resolve-GitExecutable -ToolchainRoot $toolchainRoot -Msys2Root $msys2Root -BashPath $msys2BashWin
 if (-not $gitExe)
 {
     Write-Error "Git was not found in the generated environment."

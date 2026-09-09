@@ -232,10 +232,12 @@ guess.
 Both toolchain values are deliberately slash-free. The launcher bootstrap rewrites anything that looks like a
 drive path into POSIX form as it exports it, and a bare token cannot be caught by that conversion.
 
-`MINGW_ROOT` is still written beside `DEVSYSTEM_TOOLCHAIN_ROOT`, deprecated. The name became false the day a
-CLANG64 environment worked — it pointed at a directory with nothing to do with MinGW GCC. It stays for one
-migration cycle because CMake presets have no fallback syntax for a missing `$env{}`: the day it disappears,
-every preset still naming it configures with an empty path instead of failing cleanly.
+`MINGW_ROOT` is **gone**. It named the same directory and the name became false the day a CLANG64 environment
+worked, since that directory has nothing to do with MinGW GCC. Nothing reads it any more, in this generator or
+in the repositories the environment builds. A drive generated before the change gets the new name by re-running
+step 2, which rewrites its block of the `.env` in place; presets have no fallback syntax for a missing `$env{}`,
+so a project pointed at an environment that predates the rename configures with an empty path rather than
+failing cleanly, and re-running step 2 is the fix.
 
 ---
 

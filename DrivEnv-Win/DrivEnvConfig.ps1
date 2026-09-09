@@ -438,6 +438,48 @@ function Get-DrivEnvEditDistance
     return $prev[$m]
 }
 
+function Get-DrivEnvToolchainRoot
+{
+    # @brief The compiler prefix out of a parsed .env.
+    #
+    # DEVSYSTEM_TOOLCHAIN_ROOT is the only name read. MINGW_ROOT, which this replaces, is not consulted: it was
+    # already false under clang64, where it named a directory with nothing to do with MinGW GCC, and carrying a
+    # deprecated alias only means every reader has to keep knowing about both. A drive generated before the
+    # rename gets it back by re-running step 2, which is a minute; nothing here bends to avoid that.
+    #
+    # Composing the prefix from MSYS2_ROOT and MSYS2_ENV is a last resort for an environment file written by an
+    # interrupted step 2. It is correct by construction -- step 2 builds the value exactly that way -- but it is
+    # this script guessing at something the file was supposed to state, so it warns.
+    #
+    # @param EnvMap    Hashtable from Read-EnvFile.
+    # @param Msys2Root Prefix root for the last-resort composition. Omit to disable it.
+    # @param Msys2Env  Subsystem directory name for the last-resort composition. Omit to disable it.
+    # @param Warn      Optional scriptblock taking one string.
+    # @return The prefix in POSIX-slash form, or "" if nothing could be determined.
+    param
+    (
+                      $EnvMap,
+        [string]      $Msys2Root = "",
+        [string]      $Msys2Env  = "",
+        [scriptblock] $Warn      = $null
+    )
+
+    $value = [string]$EnvMap["DEVSYSTEM_TOOLCHAIN_ROOT"]
+    if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+
+    if (-not [string]::IsNullOrWhiteSpace($Msys2Root) -and -not [string]::IsNullOrWhiteSpace($Msys2Env))
+    {
+        $derived = "{0}/{1}" -f $Msys2Root.TrimEnd(@('/', '\')), $Msys2Env
+        if ($Warn)
+        {
+            & $Warn ("DEVSYSTEM_TOOLCHAIN_ROOT is not in the environment file, assuming: {0}. Re-run step 2." -f $derived)
+        }
+        return $derived
+    }
+
+    return ""
+}
+
 function Set-DrivEnvFileValues
 {
     # @brief Write KEY=VALUE entries into the generated .env, idempotently, leaving PATH last.
@@ -458,8 +500,8 @@ function Set-DrivEnvFileValues
     #
     # SECTIONS EXIST TO MAKE REMOVAL POSSIBLE. Deduplicating by key can only ever replace a key the caller still
     # writes; a key a step STOPS writing has nothing to match it and survives forever in every .env already on
-    # disk. MINGW_ROOT is the live example -- it is deprecated and about to go, and without a fenced block the
-    # day it disappears from step 2 is the day it becomes immortal on every existing drive. A fence also keeps
+    # disk. MINGW_ROOT is the worked example: step 2 stopped writing it, and without a fenced block that would
+    # have been the day it became immortal on every drive already generated. A fence also keeps
     # the file readable, since it says which step owns which lines, and any prose put between the markers is
     # replaced with them rather than stacking. Without -Section the by-key behaviour is all you get.
     #

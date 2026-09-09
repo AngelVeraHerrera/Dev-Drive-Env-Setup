@@ -353,18 +353,18 @@ function Resolve-GitExecutable
     # @brief Locate git.exe inside the generated MSYS2 installation.
     #
     # Step 2 installs the MinGW flavour of git (mingw-w64-<profile>-<arch>-git), which lands in
-    # <MINGW_ROOT>\bin, not in <MSYS2_ROOT>\usr\bin. The plain MSYS package would land in usr\bin.
+    # <DEVSYSTEM_TOOLCHAIN_ROOT>\bin, not in <MSYS2_ROOT>\usr\bin. The plain MSYS package would land in usr\bin.
     # Both layouts are accepted, and the login shell is used as a last resort so a different
     # profile (mingw64, clang64, ...) still resolves.
     param
     (
-        [string]$MingwRoot,
+        [string]$ToolchainRoot,
         [string]$Msys2Root,
         [string]$BashPath
     )
 
     $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($MingwRoot)) { $candidates += (Join-Path (Convert-ToWinPath $MingwRoot) "bin\git.exe") }
+    if (-not [string]::IsNullOrWhiteSpace($ToolchainRoot)) { $candidates += (Join-Path (Convert-ToWinPath $ToolchainRoot) "bin\git.exe") }
     if (-not [string]::IsNullOrWhiteSpace($Msys2Root)) { $candidates += (Join-Path (Convert-ToWinPath $Msys2Root) "usr\bin\git.exe") }
 
     foreach ($candidate in $candidates)
@@ -631,7 +631,6 @@ if (-not (Test-Path -LiteralPath $envFilePath))
 $envMap = Read-EnvFile $envFilePath
 
 $msys2Root = [string]$envMap["MSYS2_ROOT"]
-$mingwRoot = [string]$envMap["MINGW_ROOT"]
 $msys2Bash = [string]$envMap["MSYS2_BASH"]
 $msys2Env  = [string]$envMap["MSYS2_ENV"]
 
@@ -646,11 +645,8 @@ if ([string]::IsNullOrWhiteSpace($msys2Env))
     $msys2Env = "{0}64" -f ([string]$Cfg.msys2.target.profile)
     Write-Warn "MSYS2_ENV missing from the environment file, assuming: $msys2Env"
 }
-if ([string]::IsNullOrWhiteSpace($mingwRoot))
-{
-    $mingwRoot = "{0}/{1}" -f $msys2Root, $msys2Env
-    Write-Warn "MINGW_ROOT missing from the environment file, assuming: $mingwRoot"
-}
+$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Msys2Root $msys2Root -Msys2Env $msys2Env `
+                                          -Warn { param($m) Write-Warn $m }
 if ([string]::IsNullOrWhiteSpace($msys2Bash))
 {
     $msys2Bash = "{0}/usr/bin/bash.exe" -f $msys2Root
@@ -658,11 +654,11 @@ if ([string]::IsNullOrWhiteSpace($msys2Bash))
 }
 
 $msys2RootWin = Convert-ToWinPath $msys2Root
-$mingwRootWin = Convert-ToWinPath $mingwRoot
+$toolchainRootWin = Convert-ToWinPath $toolchainRoot
 $msys2BashWin = Convert-ToWinPath $msys2Bash
 
 Write-Info "MSYS2_ROOT = $msys2RootWin"
-Write-Info "MINGW_ROOT = $mingwRootWin"
+Write-Info "DEVSYSTEM_TOOLCHAIN_ROOT = $toolchainRootWin"
 Write-Info "MSYS2_ENV  = $msys2Env"
 
 Write-Info "Checking if msys2 bash exists..."
@@ -674,17 +670,17 @@ if (-not (Test-Path -LiteralPath $msys2BashWin))
 }
 
 Write-Info "Checking if git tool exists..."
-$gitExe = Resolve-GitExecutable -MingwRoot $mingwRoot -Msys2Root $msys2Root -BashPath $msys2BashWin
+$gitExe = Resolve-GitExecutable -ToolchainRoot $toolchainRoot -Msys2Root $msys2Root -BashPath $msys2BashWin
 if (-not $gitExe)
 {
     Write-Error "Git was not found inside the generated MSYS2 installation."
-    Write-Error "Looked under '$mingwRootWin\bin' and '$msys2RootWin\usr\bin', and asked the MSYS2 login shell."
+    Write-Error "Looked under '$toolchainRootWin\bin' and '$msys2RootWin\usr\bin', and asked the MSYS2 login shell."
     Write-Error "Re-run 2-Setup_MSYS2.ps1, which installs the git package."
     Abort-WithError
 }
 
 # MSYS2 runtime DLLs must be reachable for git and its helper processes.
-$env:PATH = "{0}\bin;{1}\usr\bin;{2}" -f $mingwRootWin, $msys2RootWin, $env:PATH
+$env:PATH = "{0}\bin;{1}\usr\bin;{2}" -f $toolchainRootWin, $msys2RootWin, $env:PATH
 
 # And the Windows system directories, at the tail, because STEP 6 runs bootstrap-vcpkg.bat and that .bat calls
 # powershell.exe by name. Whether this shell inherited a PATH containing System32 is not something this script

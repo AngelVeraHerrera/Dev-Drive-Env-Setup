@@ -303,7 +303,7 @@ if (-not (Test-Path -LiteralPath $envFilePath))
 $envMap  = Read-EnvFile -Path $envFilePath
 $vcpkgRoot = [string]$envMap["VCPKG_ROOT"]
 $triplet   = [string]$envMap["VCPKG_DEFAULT_TRIPLET"]
-$mingwRoot = [string]$envMap["MINGW_ROOT"]
+$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Warn { param($m) Write-Warn $m }
 
 if (-not $vcpkgRoot -or -not $triplet)
 {
@@ -371,7 +371,7 @@ $pathParts = @()
 $pathParts += $toolDirs
 $pathParts += $binDir
 $pathParts += $vcpkgRoot
-if ($mingwRoot) { $pathParts += (Join-Path $mingwRoot "bin") }
+if ($toolchainRoot) { $pathParts += (Join-Path $toolchainRoot "bin") }
 $pathParts += @("$env:SystemRoot\System32", "$env:SystemRoot")
 
 $env:PATH = ($pathParts -join ';')

@@ -33,7 +33,7 @@
 
 param(
     [string]$Root,
-    [string]$Mingw = $env:MINGW_ROOT
+    [string]$Mingw = $env:DEVSYSTEM_TOOLCHAIN_ROOT
 )
 
 $ErrorActionPreference = 'Continue'

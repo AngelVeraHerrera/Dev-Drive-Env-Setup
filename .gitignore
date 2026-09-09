@@ -11,6 +11,12 @@
 
 # Cfg files
 drivenv-cfg.json
+# Local variants and hand-made backups of it: same secretless-but-machine-specific content,
+# and "drivenv-cfg - copia.json" is exactly what Windows names one.
+drivenv-cfg*.json
+!drivenv-cfg_example.json
+
+__pycache__/
 
 # Logs
 *.log

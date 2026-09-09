@@ -1370,14 +1370,13 @@ Write-Info "STEP 7: Setup environment variables and shortcout."
 
 $envFilePath = Join-Path "$driveLetter`:" (("env/{0}_env_variables.env" -f $devEnvName).ToLower())
 $msys2PathNorm = $msys2Path -replace '\\', '/'
-$mingwRootPath = "$msys2PathNorm/$msysEnv"     
+$toolchainRootPath = "$msys2PathNorm/$msysEnv"     
 $msys2BashPath = "$msys2PathNorm/usr/bin/bash.exe"
 $toolchainFamily = [string]$msysSub.Family
 
-Write-Info "DEVSYSTEM_TOOLCHAIN_ROOT=${mingwRootPath}"
+Write-Info "DEVSYSTEM_TOOLCHAIN_ROOT=${toolchainRootPath}"
 Write-Info "DEVSYSTEM_TOOLCHAIN=${toolchainFamily}"
 Write-Info "DEVSYSTEM_TOOLCHAIN_ID=${msysEnv}"
-Write-Info "MINGW_ROOT=${mingwRootPath}  (deprecated alias, see the note where it is written)"
 Write-Info "MSYS2_ROOT=${msys2PathNorm}"
 Write-Info "MSYS2_BASH=${msys2BashPath}"
 Write-Info "MSYS2_ENV=${msysEnv}"
@@ -1486,15 +1485,9 @@ $envLines = @(
     # name or a triplet is reading this generator private encoding. Both values are slash-free on purpose --
     # the launcher bootstrap rewrites anything that looks like a drive path into POSIX form on export, and a
     # bare token cannot be caught by that.
-    "DEVSYSTEM_TOOLCHAIN_ROOT=$mingwRootPath"
+    "DEVSYSTEM_TOOLCHAIN_ROOT=$toolchainRootPath"
     "DEVSYSTEM_TOOLCHAIN=$toolchainFamily"
     "DEVSYSTEM_TOOLCHAIN_ID=$msysEnv"
-
-    # DEPRECATED, kept for one migration cycle. The name is now simply false: under clang64 this points at a
-    # directory that has nothing to do with MinGW GCC. It stays until a grep across the generator and every
-    # workspace shows no consumer left, because presets have no fallback syntax for a missing $env{} -- so
-    # the day this disappears, every preset still naming it breaks at configure time with an empty path.
-    "MINGW_ROOT=$mingwRootPath"
 
     "MSYS2_ROOT=$msys2PathNorm"
     "MSYS2_BASH=$msys2BashPath"

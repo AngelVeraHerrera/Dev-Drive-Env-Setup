@@ -47,7 +47,7 @@ import sys
 
 def find_git():
     """The drive's own git first, then MSYS2's, then PATH. Same order the generator uses."""
-    mingw = os.environ.get('MINGW_ROOT', '')
+    mingw = os.environ.get('DEVSYSTEM_TOOLCHAIN_ROOT', '')
     msys = os.environ.get('MSYS2_ROOT', '')
     for c in (os.path.join(mingw, 'bin', 'git.exe') if mingw else None,
               os.path.join(msys, 'usr', 'bin', 'git.exe') if msys else None):

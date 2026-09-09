@@ -978,7 +978,7 @@ if (-not (Test-Path -LiteralPath $envFilePath))
 $envMap = Read-EnvFile $envFilePath
 
 $msys2Root = [string]$envMap["MSYS2_ROOT"]
-$mingwRoot = [string]$envMap["MINGW_ROOT"]
+$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Warn { param($m) Write-Warn $m }
 $msys2Bash = [string]$envMap["MSYS2_BASH"]
 $msys2Env  = [string]$envMap["MSYS2_ENV"]
 
@@ -1728,12 +1728,12 @@ try
     # from a plain PowerShell with no system git got the bare commit; from the environment launcher, the full
     # description. Same drive, same baseline, two different inventories.
     #
-    # Step 2 installs the MinGW flavour, which lands in <MINGW_ROOT>\bin; the plain MSYS package would land in
+    # Step 2 installs the MinGW flavour, which lands in <DEVSYSTEM_TOOLCHAIN_ROOT>\bin; the plain MSYS package would land in
     # <MSYS2_ROOT>\usr\bin. Both are accepted. PATH stays as a last resort so nothing is lost where it used to work.
     $gitSource = $null
 
     $gitCandidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($mingwRoot)) { $gitCandidates += (Join-Path (Convert-ToWinPath $mingwRoot) "bin\git.exe") }
+    if (-not [string]::IsNullOrWhiteSpace($toolchainRoot)) { $gitCandidates += (Join-Path (Convert-ToWinPath $toolchainRoot) "bin\git.exe") }
     if (-not [string]::IsNullOrWhiteSpace($msys2Root)) { $gitCandidates += (Join-Path (Convert-ToWinPath $msys2Root) "usr\bin\git.exe") }
 
     foreach ($gitCandidate in $gitCandidates)
