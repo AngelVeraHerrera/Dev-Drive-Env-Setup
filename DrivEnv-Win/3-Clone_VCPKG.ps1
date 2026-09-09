@@ -726,6 +726,14 @@ if (-not $gitExe)
 # MSYS2 runtime DLLs must be reachable for git and its helper processes.
 $env:PATH = "{0}\bin;{1}\usr\bin;{2}" -f $mingwRootWin, $msys2RootWin, $env:PATH
 
+# And the Windows system directories, at the tail, because STEP 6 runs bootstrap-vcpkg.bat and that .bat calls
+# powershell.exe by name. Whether this shell inherited a PATH containing System32 is not something this script
+# can assume -- a narrowed one is normal when the scripts are run from an environment launcher -- and the
+# failure it produces, "powershell.exe is not recognised" in the middle of a vcpkg bootstrap, points nowhere
+# near the cause. See Add-DrivEnvWindowsSystemPath for why this is derived from SystemRoot and appended rather
+# than prepended.
+[void](Add-DrivEnvWindowsSystemPath -Report { param($m) Write-Info $m })
+
 $gitVersion = Get-NativeOutput $gitExe @("--version")
 if ($gitVersion.ExitCode -ne 0)
 {

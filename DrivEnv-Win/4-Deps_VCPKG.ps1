@@ -1066,6 +1066,11 @@ else
 {
     Write-Warn "vcpkg.exe not found at '$vcpkgExeWin'. Bootstrapping the existing clone..."
 
+    # bootstrap-vcpkg.bat calls powershell.exe by name, and a .bat finds it only through PATH. This shell's
+    # PATH is not something the script can assume anything about. Same reasoning, and the same helper, as the
+    # bootstrap in step 3; see Add-DrivEnvWindowsSystemPath.
+    [void](Add-DrivEnvWindowsSystemPath -Report { param($m) Write-Info $m })
+
     $bootstrapBat = Join-Path $vcpkgRootWin "bootstrap-vcpkg.bat"
     if (-not (Test-Path -LiteralPath $bootstrapBat))
     {

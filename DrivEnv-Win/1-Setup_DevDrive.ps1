@@ -178,6 +178,12 @@ if ($cfgProblems.Count -gt 0)
 
 Write-Info "Configuration validated against the schema: no problems."
 
+# This step calls diskpart, fsutil and powershell.exe BY NAME, and all three live in System32. A shell whose
+# PATH does not carry it -- an environment launcher, a scheduled task, a stripped terminal -- would fail here on
+# the very first thing this script tries to do, with an error naming the tool rather than the PATH. Appended at
+# the tail, so nothing is shadowed; see Add-DrivEnvWindowsSystemPath.
+[void](Add-DrivEnvWindowsSystemPath -Report { param($m) Write-Info $m })
+
 if ($ValidateOnly)
 {
     Write-Info "-ValidateOnly was given, so nothing further will run."

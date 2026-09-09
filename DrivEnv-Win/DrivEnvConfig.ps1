@@ -438,6 +438,64 @@ function Get-DrivEnvEditDistance
     return $prev[$m]
 }
 
+function Add-DrivEnvWindowsSystemPath
+{
+    # @brief Make sure THIS PROCESS can find powershell.exe, cmd.exe and where.exe, whatever PATH it inherited.
+    #
+    # WHAT THIS FIXES. vcpkg's bootstrap-vcpkg.bat downloads the vcpkg tool with powershell.exe, and a plain
+    # .bat finds it the only way a .bat can: by searching PATH. Run one of these steps from a shell whose PATH
+    # has been narrowed -- an environment launcher, a task scheduler, a stripped terminal -- and the bootstrap
+    # dies with "powershell.exe no se reconoce como un comando interno o externo", which points at vcpkg and is
+    # nothing to do with vcpkg.
+    #
+    # DERIVED FROM SystemRoot, NOT FROM PATH, because PATH is exactly what cannot be trusted here. And appended
+    # at the TAIL, never prepended: System32 shadowing the toolchain is the failure this project has already
+    # been bitten by once, with make.exe. Presence and precedence are different problems and this only fixes
+    # the first.
+    #
+    # This is the HOST process, and it changes nothing about the generated environment: step 2 puts the same
+    # four directories in the .env unconditionally, for the same reasons, and neither reads the other.
+    #
+    # @param Report Optional scriptblock taking one string, called once if anything was added.
+    param ([scriptblock] $Report = $null)
+
+    $root = [string]$env:SystemRoot
+    if ([string]::IsNullOrWhiteSpace($root)) { $root = "C:\Windows" }
+
+    $system32 = Join-Path $root "System32"
+    $wanted = @(
+        $system32,
+        $root,
+        (Join-Path $system32 "Wbem"),
+        (Join-Path (Join-Path $system32 "WindowsPowerShell") "v1.0")
+    )
+
+    $present = @()
+    foreach ($entry in (([string]$env:PATH) -split ';'))
+    {
+        $trimmed = $entry.Trim().TrimEnd('\')
+        if (-not [string]::IsNullOrWhiteSpace($trimmed)) { $present += $trimmed.ToLowerInvariant() }
+    }
+
+    $added = @()
+    foreach ($dir in $wanted)
+    {
+        if (($present -notcontains $dir.TrimEnd('\').ToLowerInvariant()) -and (Test-Path -LiteralPath $dir))
+        {
+            $env:PATH = "{0};{1}" -f $env:PATH.TrimEnd(';'), $dir
+            $added += $dir
+        }
+    }
+
+    if ($added.Count -gt 0 -and $Report)
+    {
+        & $Report ("Appended {0} Windows system director(y/ies) to this process's PATH so a .bat can find " -f $added.Count)
+        & $Report ("powershell.exe and cmd.exe: {0}" -f ($added -join '; '))
+    }
+
+    return $added
+}
+
 function Resolve-DrivEnvBuildtreesRoot
 {
     # @brief Turn vcpkg.buildtrees_root into every form the steps need, from one definition.
