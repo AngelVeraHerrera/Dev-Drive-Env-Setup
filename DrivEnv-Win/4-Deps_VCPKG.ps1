@@ -978,9 +978,10 @@ if (-not (Test-Path -LiteralPath $envFilePath))
 $envMap = Read-EnvFile $envFilePath
 
 $msys2Root = [string]$envMap["MSYS2_ROOT"]
-$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Warn { param($m) Write-Warn $m }
 $msys2Bash = [string]$envMap["MSYS2_BASH"]
 $msys2Env  = [string]$envMap["MSYS2_ENV"]
+$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Msys2Root $msys2Root -Msys2Env $msys2Env `
+                                          -Warn { param($m) Write-Warn $m }
 
 if ([string]::IsNullOrWhiteSpace($msys2Root) -or [string]::IsNullOrWhiteSpace($msys2Bash) -or [string]::IsNullOrWhiteSpace($msys2Env))
 {

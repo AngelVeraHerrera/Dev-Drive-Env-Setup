@@ -303,7 +303,8 @@ if (-not (Test-Path -LiteralPath $envFilePath))
 $envMap  = Read-EnvFile -Path $envFilePath
 $vcpkgRoot = [string]$envMap["VCPKG_ROOT"]
 $triplet   = [string]$envMap["VCPKG_DEFAULT_TRIPLET"]
-$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Warn { param($m) Write-Warn $m }
+$toolchainRoot = Get-DrivEnvToolchainRoot -EnvMap $envMap -Msys2Root $envMap["MSYS2_ROOT"] `
+                                          -Msys2Env $envMap["MSYS2_ENV"] -Warn { param($m) Write-Warn $m }
 
 if (-not $vcpkgRoot -or -not $triplet)
 {

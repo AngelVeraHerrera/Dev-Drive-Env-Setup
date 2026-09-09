@@ -477,6 +477,15 @@ function Get-DrivEnvToolchainRoot
         return $derived
     }
 
+    # EMPTY IS REPORTED, never just returned. Measured: called without the two fall-back arguments against an
+    # environment file that has no DEVSYSTEM_TOOLCHAIN_ROOT, this handed back "" without a word, the caller
+    # dropped the toolchain from PATH under an `if ($toolchainRoot)`, and step 5 then reported 172 libraries
+    # failing to load. The answer looked like a broken environment; the cause was an unanswered question.
+    if ($Warn)
+    {
+        & $Warn "DEVSYSTEM_TOOLCHAIN_ROOT is not in the environment file and cannot be derived from it. Whatever needs the toolchain prefix is about to go without it. Re-run step 2."
+    }
+
     return ""
 }
 
