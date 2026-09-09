@@ -9,12 +9,12 @@
 !installation/**
 *deploy*/
 
-# Cfg files
-drivenv-cfg.json
-# Local variants and hand-made backups of it: same secretless-but-machine-specific content,
-# and "drivenv-cfg - copia.json" is exactly what Windows names one.
+# Cfg files. The pattern covers the working copy AND the hand-made backups beside it -- same
+# secretless-but-machine-specific content, and "drivenv-cfg - copia.json" is exactly what
+# Windows names one. The two documentation copies are named back in.
 drivenv-cfg*.json
 !drivenv-cfg_example.json
+!drivenv-cfg_full-reference.json
 
 __pycache__/
 
