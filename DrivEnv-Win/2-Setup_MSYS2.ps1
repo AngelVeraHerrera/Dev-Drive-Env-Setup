@@ -1171,6 +1171,70 @@ else
     Write-Info "No latest packages configured."
 }
 
+# EVERY PINNED PACKAGE IS NOW CONFIRMED INSTALLED, AT THE PINNED VERSION, BY ASKING PACMAN.
+#
+# The exit code of "pacman -U" is not enough, and a run proved it. Pinning winpthreads without also pinning
+# libwinpthread -- they are two halves of one mingw-w64 source and winpthreads requires an EXACT libwinpthread
+# version -- left pacman unable to resolve it. It reported that as a WARNING, skipped winpthreads, skipped clang
+# along with it because clang depends on winpthreads, and exited ZERO:
+#
+#     advertencia: no se pudo resolver «...-libwinpthread=14.0.0.r302...», dependencia de «...-winpthreads»
+#     advertencia: no se pudo resolver «...-winpthreads», dependencia de «...-clang»
+#     :: Los siguientes paquetes no pueden ser actualizados debido a dependencias que no se pudo resolver:
+#
+# So the environment was built without a compiler and said nothing. Fifteen minutes later step 4 died inside
+# vcpkg's detect_compiler with "Could not find the compiler specified in the environment variable CC: clang",
+# which names vcpkg, names CC, and names nothing that would lead anyone here.
+#
+# A positive check costs one pacman -Q and turns a silent fifteen-minute detour into an immediate, specific
+# failure. It is deliberately EXACT on the version: a pin that quietly resolved to something else is the same
+# class of problem and just as invisible.
+if ($pinnedNames.Count -gt 0)
+{
+    Write-Info "Verifying that every pinned package installed at its pinned version..."
+
+    $installedMap = @{}
+    $queryOut = & "$bashPath" -lc "pacman -Q"
+    if ($LASTEXITCODE -ne 0)
+    {
+        Write-Error "pacman -Q failed while verifying the pinned packages (exit $LASTEXITCODE)."
+        Abort-WithError
+    }
+    foreach ($line in @($queryOut))
+    {
+        $parts = ([string]$line).Trim() -split '\s+'
+        if ($parts.Count -ge 2) { $installedMap[$parts[0]] = $parts[1] }
+    }
+
+    $pinProblems = @()
+    foreach ($p in @($Cfg.msys2.packages))
+    {
+        if (([string]$p.mode).Trim().ToLowerInvariant() -ne "pinned") { continue }
+
+        $res = Resolve-Msys2Package -pkg $p -sub $msysSub
+        $wanted = [string]$p.version
+        $actual = $installedMap[$res.PkgName]
+
+        if ($null -eq $actual)      { $pinProblems += ("{0}: pinned {1}, NOT INSTALLED" -f $res.PkgName, $wanted) }
+        elseif ($actual -ne $wanted) { $pinProblems += ("{0}: pinned {1}, installed {2}" -f $res.PkgName, $wanted, $actual) }
+    }
+
+    if ($pinProblems.Count -gt 0)
+    {
+        Write-Error ("{0} pinned package(s) did not install as pinned:" -f $pinProblems.Count)
+        foreach ($problem in $pinProblems) { Write-Error ("    " + $problem) }
+        Write-Error ""
+        Write-Error "pacman reports an unresolvable pin as a WARNING and still exits zero, so this is caught here"
+        Write-Error "rather than by an exit code. Read the pacman output above for the dependency it could not"
+        Write-Error "satisfy. The usual cause is a pin on one half of a package pair: winpthreads requires an exact"
+        Write-Error "libwinpthread, and mingw-w64's headers, crt, winpthreads and libwinpthread are one source."
+        Write-Error "Pin both halves to the same version, or neither."
+        Abort-WithError
+    }
+
+    Write-Info ("All {0} pinned package(s) verified at their pinned versions." -f $pinnedNames.Count)
+}
+
 # GCC AND G++ DRIVER ALIASES, on a clang subsystem only.
 #
 # Plenty of build systems have "gcc" written into them rather than asking $CC, and MSYS2's clang package does
@@ -1205,8 +1269,16 @@ if ($msysSub.Subsystem -like "clang*")
 
         if (-not (Test-Path -LiteralPath $src))
         {
-            Write-Warn ("{0} not found in {1}; skipping the {2} alias." -f $pair.From, $clangBin, $pair.To)
-            continue
+            # FATAL, not a warning. This is a CLANG subsystem and clang.exe is missing: whatever else the run
+            # produces, it is not an environment. It warned and carried on once, and the run continued through
+            # steps 3 and 4 before dying inside vcpkg's detect_compiler fifteen minutes later, with a message
+            # about CC that led nowhere near a missing package. The pinned-package check above catches the usual
+            # cause first; this catches the rest, including a package left in latest mode that failed to install.
+            Write-Error ("{0} is missing from {1}." -f $pair.From, $clangBin)
+            Write-Error "This is a clang subsystem, so that file is the compiler. The environment cannot be built"
+            Write-Error "without it, and continuing would fail much later inside vcpkg with an unrelated-looking"
+            Write-Error "error. Check the pacman output above for a package that did not install."
+            Abort-WithError
         }
 
         try
