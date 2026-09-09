@@ -151,8 +151,11 @@ $stepDefs = @(
 $ErrorActionPreference = "Stop"
 
 $originalTitle = $host.UI.RawUI.WindowTitle
-$scriptDir     = $PSScriptRoot
-if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+$drivEnvRoot   = $PSScriptRoot
+if (-not $drivEnvRoot) { $drivEnvRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+
+# This file is the entry point and sits at the generator root; the steps it drives live in scripts/.
+$scriptDir = Join-Path $drivEnvRoot "scripts"
 
 if ($To -lt $From)
 {

@@ -596,16 +596,18 @@ function Configure-MSYS2Proxy
 # CONFIGURATION
 # --------------------------------------------------------------------
 
-# A relative -ConfigFile is relative to the script, not to the caller's working directory: these scripts are
+# A relative -ConfigFile is relative to config/, not to the caller's working directory: these scripts are
 # routinely launched by double-click and from elsewhere, and resolving against the cwd would silently pick a
-# different config depending on where the shell happened to be.
+# different config depending on where the shell happened to be. config/ rather than this script's own
+# directory because the steps moved into scripts/ and the configuration did not follow them: one place for
+# the files a person edits, one for the files a person runs.
 $ConfigPath = if ([System.IO.Path]::IsPathRooted($ConfigFile))
 {
     $ConfigFile
 }
 else
 {
-    Join-Path $PSScriptRoot $ConfigFile
+    Join-Path (Join-Path (Split-Path -Parent (Get-ScriptDirectory)) "config") $ConfigFile
 }
 
 if (-not (Test-Path $ConfigPath)) 
@@ -750,7 +752,7 @@ foreach ($p in $msysPackages)
     }
 }
 
-$localPkgDir = Join-Path $PSScriptRoot "packages_msys2"
+$localPkgDir = Join-Path (Split-Path -Parent (Get-ScriptDirectory)) "packages_msys2"
 if (-not (Test-Path $localPkgDir)) { New-Item -ItemType Directory -Path $localPkgDir | Out-Null }
 
 $msys2Installer = Join-Path $localPkgDir (Get-FileNameFromUrl $msys2Url)
@@ -765,11 +767,15 @@ $msysShellExe = Join-Path $msys2Path ("{0}.exe" -f $msysEnv)
 
 $scriptStart = Get-Date
 $scriptDir = Get-ScriptDirectory
-$localPkgDir = Join-Path $scriptDir "packages_msys2"
+# The steps live in scripts/. Everything they read out of the generator or write back into it -- the
+# configuration, the overlay ports and triplets, the MSYS2 package cache, the launcher templates and these
+# logs -- sits one level up beside that directory, so it is all named from the root and not from here.
+$drivEnvRoot = Split-Path -Parent $scriptDir
+$localPkgDir = Join-Path $drivEnvRoot "packages_msys2"
 if (-not (Test-Path $localPkgDir)) { New-Item -ItemType Directory -Path $localPkgDir | Out-Null }
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$logsDir = Join-Path $scriptDir "install_logs"
+$logsDir = Join-Path $drivEnvRoot "install_logs"
 if (-not (Test-Path $logsDir)){New-Item -ItemType Directory -Path $logsDir | Out-Null}
 $globalLogFile = Join-Path $logsDir "${timestamp}_msys2-env-setup.log"
 $globalLogFileUnix = $globalLogFile -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
@@ -1503,7 +1509,10 @@ $envLines = @(
 # BASE_PATH back AFTER the PATH line step 3 had already written, which is the one ordering the launcher cannot
 # survive. The section name is what lets a re-run replace its own block, comments and all, instead of stacking.
 Write-Info "Writing environment variables to $envFilePath"
-Set-DrivEnvFileValues -Path $envFilePath -Lines $envLines -Section "msys2"
+# -Retire names what this block used to write. MINGW_ROOT was removed from the list above, and on a drive
+# generated before the fences existed that is not enough to make it go: there is no marked block to
+# replace, so the orphaned line just stays. Measured on a real drive, which had two of them.
+Set-DrivEnvFileValues -Path $envFilePath -Lines $envLines -Section "msys2" -Retire @("MINGW_ROOT")
  
 # Shortcut 
 $volume = Get-Volume -DriveLetter $driveLetterOnly -ErrorAction SilentlyContinue

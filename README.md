@@ -25,8 +25,8 @@ cloned at whatever commit was current, a `PATH` that grew over years, and knowle
 only in the head of whoever set it up. When the machine changes, or the person does, it has to be rediscovered.
 
 **DrivEnv-Win** turns that into a description. One JSON file names the drive, the toolchain and its pinned package
-versions, the vcpkg baseline commit, the packages and their features, the environment variables and the folders. Five
-numbered PowerShell scripts turn the description into a working, self-contained drive — and the fifth one proves it
+versions, the vcpkg baseline commit, the packages and their features, the environment variables and the folders. Six
+numbered PowerShell scripts, driven by one runner, turn the description into a working, self-contained drive — and the fifth one proves it
 works rather than assuming it.
 
 > ⚠️ **Why that last part matters.** A build system reporting success is a statement about compilation, not about the
@@ -92,20 +92,50 @@ one level down, in `DrivEnv-Win/`, and that is the directory every command below
 ```powershell
 git clone https://github.com/DegorasProjectTeam/DrivEnv-Win.git
 cd DrivEnv-Win\DrivEnv-Win
-copy drivenv-cfg_example.json drivenv-cfg.json
+copy config\drivenv-cfg_example.json config\drivenv-cfg.json
 ```
 
-Edit `drivenv-cfg.json` — at minimum the drive letter, the label and the environment name — then run the steps in
-order, from an **elevated** PowerShell for the first one:
+Edit `config\drivenv-cfg.json` — at minimum the drive letter, the label and the environment name — then run
+the whole procedure, from an **elevated** PowerShell:
 
 ```powershell
-.\1-Setup_DevDrive.ps1     # create and mount the drive, lay out the folders, write the launchers
-.\2-Setup_MSYS2.ps1           # install MSYS2 and the pinned toolchain packages
-.\3-Clone_VCPKG.ps1           # clone vcpkg at the baseline, write the environment file
-.\4-Deps_VCPKG.ps1            # install the configured packages, write the installation inventory
-.\5-Verify_Env.ps1            # prove the result works
-.\6-Clone_Repos.ps1           # clone the configured projects into the drive (optional)
+.\Generate-DrivEnv.ps1
 ```
+
+It runs the six steps in order, stops at the first failure, and prints what each one cost. It reimplements nothing:
+each step is launched exactly as you would launch it, so its own logging, its own log copy onto the drive and its
+own validation all still happen, once, where they already were.
+
+| Switch | What it does |
+| --- | --- |
+| `-ConfigFile <name>` | Forwarded verbatim to every step. A bare name resolves against `config/` |
+| `-From <n>` | Resume at step *n*, so a failure at step 4 does not cost you steps 1 to 3 again |
+| `-To <n>`, `-Skip 5,6` | Stop early, or drop steps inside the range |
+| `-ValidateOnly` | Check the configuration and change nothing |
+
+Nothing stops you running a step on its own — that is all the runner does:
+
+```powershell
+.\scripts\1-Setup_DevDrive.ps1     # create and mount the drive, lay out the folders, write the launchers
+.\scripts\2-Setup_MSYS2.ps1        # install MSYS2 and the pinned toolchain packages
+.\scripts\3-Clone_VCPKG.ps1        # clone vcpkg at the baseline, write the environment file
+.\scripts\4-Deps_VCPKG.ps1         # install the configured packages, write the installation inventory
+.\scripts\5-Verify_Env.ps1         # prove the result works
+.\scripts\6-Clone_Repos.ps1        # clone the configured projects into the drive (optional)
+```
+
+### Layout
+
+| Path | What lives there |
+| --- | --- |
+| `Generate-DrivEnv.ps1` | The entry point |
+| `config/` | The configuration you edit, and the two documented copies |
+| `scripts/` | The six steps and the two shared modules |
+| `scripts_env/` | Launchers and tool wrappers, copied onto the drive |
+| `vcpkg_overlays/` | Overlay ports and triplets |
+| `packages_msys2/` | Download cache for the MSYS2 installer and its packages |
+| `testing/`, `installation/` | Material copied onto the drive |
+| `install_logs/` | Every run's log, before it is copied to the drive |
 
 Step 6 is optional in the real sense: a configuration with no `workspace` section is valid, and the step then says so
 and exits 0. It is last because it is the only one that puts *your* code on the drive rather than the environment's.
@@ -187,11 +217,12 @@ Every step takes the same `-ConfigFile` switch and **must be given the same file
 through the generated environment file on the drive.
 
 ```powershell
-.\1-Setup_DevDrive.ps1 -ConfigFile my-other-drive.json
+.\Generate-DrivEnv.ps1 -ConfigFile my-other-drive.json
+.\scripts\1-Setup_DevDrive.ps1 -ConfigFile my-other-drive.json
 ```
 
-A bare name or a relative path resolves against the script's own directory, so a config sitting beside the scripts
-needs no path at all.
+A bare name or a relative path resolves against `config/`, so a configuration sitting there needs no path at all. An
+absolute path is taken as given, which is what lets one live outside the repository entirely.
 
 Once step 3 has run, the environment is entered from the drive itself:
 
@@ -243,15 +274,15 @@ failing cleanly, and re-running step 2 is the fix.
 
 ## Configuration
 
-One file, four sections. `drivenv-cfg_example.json` is tracked and documents every key;
+One file, four sections, in `config/`. `drivenv-cfg_example.json` is tracked and documents every key;
 `drivenv-cfg.json` is the one you edit and is deliberately **not** tracked.
 
 Every step validates this file before it acts on any value in it, and reports every problem at once rather than the
-first. All five also take `-ValidateOnly`, which validates and stops without changing anything -- a second's check on
+first. All six also take `-ValidateOnly`, which validates and stops without changing anything -- a second's check on
 an edited file, and worth considerably more before a step that takes an hour than after it.
 
 ```powershell
-.\5-Verify_Env.ps1 -ValidateOnly
+.\scripts\5-Verify_Env.ps1 -ValidateOnly
 ```
 
 > ⚠️ **An unknown key is an error, not a default.** Every reader in these scripts falls back to a default when
@@ -514,8 +545,8 @@ separately and much earlier: every step validates it before acting on any value 
 error rather than a silent default -- see [Configuration](#configuration).
 
 ```powershell
-.\5-Verify_Env.ps1            # exits non-zero if anything is wrong
-.\5-Verify_Env.ps1 -NoFail    # report only, for a run whose purpose is to look
+.\scripts\5-Verify_Env.ps1            # exits non-zero if anything is wrong
+.\scripts\5-Verify_Env.ps1 -NoFail    # report only, for a run whose purpose is to look
 ```
 
 Output is a summary by group, a list of anything that failed, and a report written to
@@ -637,7 +668,7 @@ rather than a second copy of the port. `ports.clang` and `ports.ucrt` ship empty
 
 ### One patch to vcpkg itself
 
-An overlay replaces a port. Step 5 of `3-Clone_VCPKG.ps1` patches something an overlay cannot reach: vcpkg's own
+An overlay replaces a port. Step 5 of `scripts/3-Clone_VCPKG.ps1` patches something an overlay cannot reach: vcpkg's own
 `scripts/cmake/vcpkg_execute_build_process.cmake`, adding one string to the list of build failures that vcpkg
 retries with parallelism disabled.
 

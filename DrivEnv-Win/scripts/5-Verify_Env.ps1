@@ -242,8 +242,12 @@ $originalTitle = $host.UI.RawUI.WindowTitle
 $host.UI.RawUI.WindowTitle = "Environment verification"
 
 $scriptDir = Get-ScriptDirectory
+# The steps live in scripts/. Everything they read out of the generator or write back into it -- the
+# configuration, the overlay ports and triplets, the MSYS2 package cache, the launcher templates and these
+# logs -- sits one level up beside that directory, so it is all named from the root and not from here.
+$drivEnvRoot = Split-Path -Parent $scriptDir
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$logsDir   = Join-Path $scriptDir "install_logs"
+$logsDir   = Join-Path $drivEnvRoot "install_logs"
 if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir | Out-Null }
 $globalLogFile = Join-Path $logsDir "${timestamp}_generic_devdrive-verify.log"
 
@@ -254,7 +258,7 @@ Write-Info "ENVIRONMENT VERIFICATION"
 # --------------------------------------------------------------------
 
 if ([System.IO.Path]::IsPathRooted($ConfigFile)) { $cfgPath = $ConfigFile }
-else { $cfgPath = Join-Path $scriptDir $ConfigFile }
+else { $cfgPath = Join-Path (Join-Path $drivEnvRoot "config") $ConfigFile }
 
 if (-not (Test-Path -LiteralPath $cfgPath))
 {
@@ -518,15 +522,31 @@ if ($checkTools.Count -gt 0)
         $name = ([string]$tool).Trim()
         if (-not $name) { continue }
 
-        $found = Get-Command $name -ErrorAction SilentlyContinue
-        if ($found)
-        {
-            Add-Result -Group "tools" -Name $name -State "ok" -Detail $found.Source
-        }
-        else
+        # -CommandType Application, because "is this tool on PATH" is a question about EXECUTABLES and
+        # Get-Command answers about the whole command namespace. Windows PowerShell 5.1 ships `curl` and
+        # `wget` as aliases for Invoke-WebRequest, so a bare Get-Command curl returns an AliasInfo whose
+        # Source is empty -- and this check reported curl present on a drive that has no curl.exe at all.
+        # A verification that passes on a name collision is worse than one that fails.
+        $found = @(Get-Command $name -CommandType Application -ErrorAction SilentlyContinue) |
+                 Select-Object -First 1
+        if (-not $found)
         {
             Add-Result -Group "tools" -Name $name -State "fail" -Detail "not on the environment's PATH"
+            continue
         }
+
+        # AND IT HAS TO COME FROM THE DRIVE. The same curl resolved, as an Application, to the copy Git for
+        # Windows puts on the system PATH -- a real executable, nothing to do with this environment, and a
+        # pass that means nothing. The failure text has always said "the environment's PATH"; this makes it
+        # true.
+        $src = [string]$found.Source
+        if (-not $src.ToUpperInvariant().StartsWith("${driveLetter}:"))
+        {
+            Add-Result -Group "tools" -Name $name -State "fail" -Detail "found at $src, which is outside ${driveLetter}:"
+            continue
+        }
+
+        Add-Result -Group "tools" -Name $name -State "ok" -Detail $src
     }
 }
 
@@ -546,12 +566,17 @@ if ($checkCommands.Count -gt 0)
         if (-not $cmd) { continue }
         $expect = [string]$entry.expect
 
-        $parts = $cmd.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
-        $exe   = $parts[0]
-        $args  = @()
-        if ($parts.Count -gt 1) { $args = $parts[1..($parts.Count - 1)] }
+        $parts   = $cmd.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
+        $exe     = $parts[0]
+        $cmdArgs = @()
+        if ($parts.Count -gt 1) { $cmdArgs = $parts[1..($parts.Count - 1)] }
 
-        $resolved = Get-Command $exe -ErrorAction SilentlyContinue
+        # Application only, for the reason spelled out in the tools check above: resolved as anything, `curl`
+        # comes back as the Invoke-WebRequest alias, its Source is empty, and `& ""` throws "the expression
+        # after '&' produced an invalid object" -- reported as a command that ran and misbehaved rather than
+        # as the missing executable it is.
+        $resolved = @(Get-Command $exe -CommandType Application -ErrorAction SilentlyContinue) |
+                    Select-Object -First 1
         if (-not $resolved)
         {
             Add-Result -Group "commands" -Name $cmd -State "fail" -Detail "$exe not on PATH"
@@ -560,7 +585,7 @@ if ($checkCommands.Count -gt 0)
 
         try
         {
-            $out = & $resolved.Source @args 2>&1
+            $out = & $resolved.Source @cmdArgs 2>&1
             $code = $LASTEXITCODE
         }
         catch

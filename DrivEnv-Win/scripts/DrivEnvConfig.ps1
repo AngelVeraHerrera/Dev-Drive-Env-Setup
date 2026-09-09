@@ -8,7 +8,7 @@
 # License: MIT
 # ====================================================================
 #
-# All five scripts read the same JSON, and until this file existed a key
+# All six scripts read the same JSON, and until this file existed a key
 # the scripts did not know about was simply never read. That is not a
 # harmless no-op, because every reader falls back to a DEFAULT:
 #
@@ -38,7 +38,7 @@
 
 function Get-DrivEnvConfigSchema
 {
-    # @brief Every key the five scripts read, with its type and allowed values.
+    # @brief Every key the six scripts read, with its type and allowed values.
     #
     # Node shape: type = object | map | array | string | int | bool
     #   object   fields    = @{ name = node }   every present key must be listed; required ones must be present
@@ -507,12 +507,18 @@ function Set-DrivEnvFileValues
     # nothing. The duplicate block above landed AFTER the PATH line and redefined BASE_PATH behind it. So this
     # lifts any PATH assignment out and re-appends it at the end, whichever step wrote it.
     #
-    # SECTIONS EXIST TO MAKE REMOVAL POSSIBLE. Deduplicating by key can only ever replace a key the caller still
-    # writes; a key a step STOPS writing has nothing to match it and survives forever in every .env already on
-    # disk. MINGW_ROOT is the worked example: step 2 stopped writing it, and without a fenced block that would
-    # have been the day it became immortal on every drive already generated. A fence also keeps
-    # the file readable, since it says which step owns which lines, and any prose put between the markers is
-    # replaced with them rather than stacking. Without -Section the by-key behaviour is all you get.
+    # SECTIONS GROUP THE FILE BY THE STEP THAT OWNS IT, and let a re-run replace its own block whole -- prose
+    # between the markers included -- rather than stacking another copy underneath.
+    #
+    # WHAT A SECTION CANNOT DO IS RETIRE A KEY, and this was got wrong once already. Dropping MINGW_ROOT from
+    # step 2's block was expected to remove it from drives already generated, "because the block is fenced". It
+    # did not: their .env files were written before fences existed, so there was no marked block to remove and
+    # the orphaned line -- both copies of it, on a file that had been written twice -- simply survived. Verified
+    # on a real drive, after the fact. A fence can only ever remove what a fence previously wrote.
+    #
+    # Hence -Retire: the names this section used to write and no longer does, deleted wherever they are found.
+    # It is a list that grows, which is the honest cost of removing a name from a contract, and it can be pruned
+    # once no environment old enough to carry the name is still in use.
     #
     # @param Path    The .env file. Created if absent.
     # @param Values  Hashtable of KEY = value, emitted in enumeration order. Use an ordered hashtable if order
@@ -521,12 +527,15 @@ function Set-DrivEnvFileValues
     #                Keys are parsed out of them, so they deduplicate exactly like $Values entries do.
     # @param Section Name of the block. When given, the written lines are fenced by markers and a previous
     #                block with the same name is removed entirely, comments included.
+    # @param Retire  Names to delete from the file without writing them back. For a key this caller has stopped
+    #                writing, which nothing else can match.
     param
     (
         [string]  $Path,
                   $Values  = $null,
         [string[]]$Lines   = $null,
-        [string]  $Section = $null
+        [string]  $Section = $null,
+        [string[]]$Retire  = @()
     )
 
     # One ordered block of literal lines, whichever shape the caller used.
@@ -548,6 +557,8 @@ function Set-DrivEnvFileValues
             if ($key -match '^[A-Za-z_][A-Za-z0-9_]*$') { $owned += $key }
         }
     }
+
+    foreach ($key in $Retire) { if ($key) { $owned += ([string]$key).Trim() } }
 
     $open  = "# >>> drivenv:{0}" -f $Section
     $close = "# <<< drivenv:{0}" -f $Section

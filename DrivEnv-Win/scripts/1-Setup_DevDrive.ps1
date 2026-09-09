@@ -136,16 +136,18 @@ function Enable-HWDetection
 # CONFIGURATION
 # --------------------------------------------------------------------
 
-# A relative -ConfigFile is relative to the script, not to the caller's working directory: these scripts are
+# A relative -ConfigFile is relative to config/, not to the caller's working directory: these scripts are
 # routinely launched by double-click and from elsewhere, and resolving against the cwd would silently pick a
-# different config depending on where the shell happened to be.
+# different config depending on where the shell happened to be. config/ rather than this script's own
+# directory because the steps moved into scripts/ and the configuration did not follow them: one place for
+# the files a person edits, one for the files a person runs.
 $ConfigPath = if ([System.IO.Path]::IsPathRooted($ConfigFile))
 {
     $ConfigFile
 }
 else
 {
-    Join-Path $PSScriptRoot $ConfigFile
+    Join-Path (Join-Path (Split-Path -Parent (Get-ScriptDirectory)) "config") $ConfigFile
 }
 
 if (-not (Test-Path $ConfigPath)) 
@@ -326,12 +328,16 @@ if (-not (Test-Path "$(($vhdPath -split ':')[0]):\" -ErrorAction SilentlyContinu
 
 $scriptStart     = Get-Date
 $scriptDir       = Get-ScriptDirectory
+# The steps live in scripts/. Everything they read out of the generator or write back into it -- the
+# configuration, the overlay ports and triplets, the MSYS2 package cache, the launcher templates and these
+# logs -- sits one level up beside that directory, so it is all named from the root and not from here.
+$drivEnvRoot = Split-Path -Parent $scriptDir
 $vhdFilePath     = Join-Path $vhdPath ("{0}.vhdx" -f $driveLabel)
 $vhdRoot         = [System.IO.Path]::GetPathRoot($vhdPath)
-$setupScriptsDir = Join-Path $scriptDir "scripts_env"
+$setupScriptsDir = Join-Path $drivEnvRoot "scripts_env"
 
 $timestamp       = Get-Date -Format "yyyyMMdd_HHmmss"
-$logsDir         = Join-Path $scriptDir "install_logs"
+$logsDir         = Join-Path $drivEnvRoot "install_logs"
 if (-not (Test-Path $logsDir)){New-Item -ItemType Directory -Path $logsDir | Out-Null}
 $globalLogFile   = Join-Path $logsDir "${timestamp}_generic_devdrive-setup.log"
 $globalLogFileUnix = $globalLogFile -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
@@ -1034,7 +1040,7 @@ foreach ($tree in @("testing", "installation"))
         continue
     }
 
-    $source = Join-Path $scriptDir $tree
+    $source = Join-Path $drivEnvRoot $tree
     if (-not (Test-Path -LiteralPath $source))
     {
         Write-Info "No $tree tree in the generator, nothing to copy."
