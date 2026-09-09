@@ -1505,11 +1505,12 @@ $envLines = @(
     # expands ${...} line by line, so a PATH written before the variables it references would resolve to empty.
 )
 
-Write-Info "Appending environment variables to $envFilePath"
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-$stream = [System.IO.StreamWriter]::new($envFilePath, $true, $utf8NoBom)  
-foreach ($line in $envLines) {$stream.WriteLine($line)}
-$stream.Close()
+# NOT AN APPEND, which is what this used to be. Step 2 gets retried -- after a pacman failure, after a change of
+# subsystem, after anything -- and an append wrote the entire block a second time. On a real drive that put
+# BASE_PATH back AFTER the PATH line step 3 had already written, which is the one ordering the launcher cannot
+# survive. The section name is what lets a re-run replace its own block, comments and all, instead of stacking.
+Write-Info "Writing environment variables to $envFilePath"
+Set-DrivEnvFileValues -Path $envFilePath -Lines $envLines -Section "msys2"
  
 # Shortcut 
 $volume = Get-Volume -DriveLetter $driveLetterOnly -ErrorAction SilentlyContinue

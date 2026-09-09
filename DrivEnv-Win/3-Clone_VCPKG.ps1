@@ -193,46 +193,6 @@ function Read-EnvFile
     return $map
 }
 
-function Set-EnvFileValues
-{
-    # @brief Idempotently write KEY=VALUE entries: existing lines for the managed keys are
-    #        dropped and the new block is appended, so re-running never duplicates entries.
-    param
-    (
-        [string]$Path,
-                $Values
-    )
-
-    $kept = @()
-    if (Test-Path -LiteralPath $Path)
-    {
-        foreach ($raw in (Get-Content -LiteralPath $Path))
-        {
-            $line = [string]$raw
-            $idx  = $line.IndexOf("=")
-            if ($idx -gt 0)
-            {
-                $key = $line.Substring(0, $idx).Trim()
-                if ($Values.Contains($key)) { continue }
-            }
-            $kept += $line
-        }
-    }
-
-    $out = @()
-    $out += $kept
-    foreach ($key in $Values.Keys) { $out += ("{0}={1}" -f $key, $Values[$key]) }
-
-    $dir = Split-Path -Parent $Path
-    if ($dir -and -not (Test-Path -LiteralPath $dir))
-    {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
-
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllLines($Path, $out, $utf8NoBom)
-}
-
 function Test-EnvFileDefines
 {
     # @brief Whether the env file already carries a KEY= line for this name, i.e. an earlier step defined it.
@@ -1372,7 +1332,7 @@ foreach ($key in $vcpkgEnvValues.Keys)
 }
 
 Write-Info "Updating environment variables in $envFilePath"
-Set-EnvFileValues -Path $envFilePath -Values $vcpkgEnvValues
+Set-DrivEnvFileValues -Path $envFilePath -Values $vcpkgEnvValues -Section "vcpkg"
 
 Write-Info "STEP 9: OK"
 

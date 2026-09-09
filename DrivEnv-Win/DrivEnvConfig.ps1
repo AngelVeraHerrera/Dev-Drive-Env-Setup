@@ -438,6 +438,149 @@ function Get-DrivEnvEditDistance
     return $prev[$m]
 }
 
+function Set-DrivEnvFileValues
+{
+    # @brief Write KEY=VALUE entries into the generated .env, idempotently, leaving PATH last.
+    #
+    # WHY THIS EXISTS. Step 2 used to append its block with a StreamWriter opened for append and nothing else.
+    # Run it twice -- which is exactly what happens when a step fails and is retried, and it happened -- and the
+    # file ends up carrying every key twice. Observed on a real drive: DEVSYSTEM_TOOLCHAIN_ROOT, MSYS2_ROOT,
+    # BASE_PATH and five others written once at line 7 and again at line 32.
+    #
+    # The duplicate was harmless only because both runs computed the same values. Had anything changed between
+    # them -- a different subsystem, a moved drive -- the file would have held both answers, and which one won
+    # would depend on how the reader happened to iterate.
+    #
+    # PATH LAST IS AN INVARIANT, not tidiness. The launcher bootstrap expands ${...} line by line, so a PATH
+    # written before the variables it references resolves against whatever they were at that point, or to
+    # nothing. The duplicate block above landed AFTER the PATH line and redefined BASE_PATH behind it. So this
+    # lifts any PATH assignment out and re-appends it at the end, whichever step wrote it.
+    #
+    # SECTIONS EXIST TO MAKE REMOVAL POSSIBLE. Deduplicating by key can only ever replace a key the caller still
+    # writes; a key a step STOPS writing has nothing to match it and survives forever in every .env already on
+    # disk. MINGW_ROOT is the live example -- it is deprecated and about to go, and without a fenced block the
+    # day it disappears from step 2 is the day it becomes immortal on every existing drive. A fence also keeps
+    # the file readable, since it says which step owns which lines, and any prose put between the markers is
+    # replaced with them rather than stacking. Without -Section the by-key behaviour is all you get.
+    #
+    # @param Path    The .env file. Created if absent.
+    # @param Values  Hashtable of KEY = value, emitted in enumeration order. Use an ordered hashtable if order
+    #                matters. Existing lines for these keys are dropped, not duplicated.
+    # @param Lines   Literal lines -- comments, blanks and KEY=value alike -- emitted verbatim before $Values.
+    #                Keys are parsed out of them, so they deduplicate exactly like $Values entries do.
+    # @param Section Name of the block. When given, the written lines are fenced by markers and a previous
+    #                block with the same name is removed entirely, comments included.
+    param
+    (
+        [string]  $Path,
+                  $Values  = $null,
+        [string[]]$Lines   = $null,
+        [string]  $Section = $null
+    )
+
+    # One ordered block of literal lines, whichever shape the caller used.
+    $block = @()
+    if ($Lines)  { $block += $Lines }
+    if ($Values) { foreach ($key in $Values.Keys) { $block += ("{0}={1}" -f $key, $Values[$key]) } }
+
+    # The keys this call owns are simply the ones it is about to write. Parsing them back out of $block rather
+    # than tracking them separately means a KEY=value buried in $Lines is deduplicated too, not just the ones
+    # that came in through $Values. The name pattern is what keeps a comment containing an "=" out of the set.
+    $owned = @()
+    foreach ($raw in $block)
+    {
+        $line = [string]$raw
+        $idx  = $line.IndexOf("=")
+        if ($idx -gt 0)
+        {
+            $key = $line.Substring(0, $idx).Trim()
+            if ($key -match '^[A-Za-z_][A-Za-z0-9_]*$') { $owned += $key }
+        }
+    }
+
+    $open  = "# >>> drivenv:{0}" -f $Section
+    $close = "# <<< drivenv:{0}" -f $Section
+
+    # A REWRITE MUST NOT MOVE THE BLOCK. Removing the old section and appending the new one at the end reorders
+    # the file every time a step is retried, and order is load-bearing: the launcher bootstrap expands ${...}
+    # line by line, so a block that references a name defined by a later block resolves to nothing. So the
+    # removal leaves a marker behind and the new block goes back into that exact position. Only a section the
+    # file has never seen is appended.
+    $slot = " drivenv-slot-" + [guid]::NewGuid().ToString()
+
+    $kept = @()
+    if (Test-Path -LiteralPath $Path)
+    {
+        $inSection = $false
+        foreach ($raw in (Get-Content -LiteralPath $Path))
+        {
+            $line = [string]$raw
+            if ($Section)
+            {
+                if ($line.Trim() -eq $open)  { $inSection = $true;  $kept += $slot; continue }
+                if ($line.Trim() -eq $close) { $inSection = $false; continue }
+                if ($inSection) { continue }
+            }
+            $idx = $line.IndexOf("=")
+            if ($idx -gt 0 -and ($owned -contains $line.Substring(0, $idx).Trim())) { continue }
+            $kept += $line
+        }
+    }
+
+    # Whatever was removed took its own blank lines with it and left the neighbours', which would otherwise
+    # accumulate one per re-run -- at the head of the file, at the tail, and wherever two blocks used to meet.
+    $norm = @()
+    foreach ($raw in $kept)
+    {
+        $line = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($line))
+        {
+            if ($norm.Count -eq 0) { continue }
+            if ([string]::IsNullOrWhiteSpace([string]$norm[-1])) { continue }
+        }
+        $norm += $line
+    }
+    $last = $norm.Count - 1
+    while ($last -ge 0 -and [string]::IsNullOrWhiteSpace([string]$norm[$last])) { $last-- }
+    $kept = if ($last -ge 0) { @($norm[0..$last]) } else { @() }
+
+    $fenced = @()
+    if ($Section) { $fenced += $open }
+    $fenced += $block
+    if ($Section) { $fenced += $close }
+
+    $out = @()
+    if ($kept -contains $slot)
+    {
+        foreach ($line in $kept)
+        {
+            if ($line -eq $slot) { $out += $fenced } else { $out += $line }
+        }
+    }
+    else
+    {
+        $out += $kept
+        if ($out.Count -gt 0 -and $Section) { $out += "" }
+        $out += $fenced
+    }
+
+    # PATH to the very end, wherever it came from -- and deliberately AFTER the closing marker, so it belongs to
+    # no block. Lifting it inside the fence would read better and would mean that re-running step 2, whose block
+    # would then enclose a PATH line step 3 wrote, deletes PATH outright and leaves the environment unlaunchable.
+    # Outside every fence it is protected by the key rule alone, and only the step that owns it can replace it.
+    $pathLines = @($out | Where-Object { ([string]$_).TrimStart().StartsWith("PATH=") })
+    if ($pathLines.Count -gt 0)
+    {
+        $out = @($out | Where-Object { -not ([string]$_).TrimStart().StartsWith("PATH=") }) + $pathLines
+    }
+
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($Path, [string[]]$out, $utf8NoBom)
+}
+
 function Add-DrivEnvWindowsSystemPath
 {
     # @brief Make sure THIS PROCESS can find powershell.exe, cmd.exe and where.exe, whatever PATH it inherited.
