@@ -1850,7 +1850,10 @@ if ($retriedPorts.Count -gt 0)
 # skipped in precisely the non-interactive case where this copy is the only record anybody will have.
 if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
 
-if ([Environment]::UserInteractive) {
+# The SAME guard as Abort-WithError, and for the same measured reason: UserInteractive is True even with
+# stdin redirected, and ReadKey then THROWS instead of waiting. Unguarded, a step that did everything it
+# was asked to would die here on its very last statement and report failure to whatever drove it.
+if ([Environment]::UserInteractive -and -not [System.Console]::IsInputRedirected) {
     Write-Host ""
     Write-Host "Press any key to exit..."
     [void][System.Console]::ReadKey($true)
