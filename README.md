@@ -407,12 +407,22 @@ Windows applies a 260-character cap to any program that has not opted into long 
 manifest, and **MSYS2's GCC has not**, so `LongPathsEnabled=1` in the registry does not rescue it.
 
 ```json
-"buildtrees_root": "R:/bt"
+"buildtrees_root": "bt"
 ```
 
-The default is `<drive>:/bt`, which puts that same path at 247. Nothing is lost by moving it: buildtrees is scratch,
-it is not part of any package ABI, and it is deleted after each port when clean-buildtrees is in effect. Step 1
-creates whatever you configure here.
+**A folder, relative to the dev drive** — not a path. `environment.dev_drive_letter` already says which drive this
+is, and repeating it here only creates a second place for the answer to come from. A chain such as `"scratch/bt"`
+works too.
+
+The default is `bt`, which puts that same path at 247. Nothing is lost by moving it: buildtrees is scratch, it is
+not part of any package ABI, and it is deleted after each port when clean-buildtrees is in effect. Step 1 creates
+whatever you configure here.
+
+An absolute form is still accepted, and the drive part is discarded with a warning. That is not politeness about
+old configurations: **the two steps used to disagree**. Step 1 stripped the letter and created the folder on the
+drive it had just mounted, while step 4 kept the letter and handed it to vcpkg — so a configuration reading
+`"T:/bt"` against a dev drive of `N` did not fail. It created `N:/bt`, built in `T:/bt`, and half-filled two disks
+without saying a word. Both steps now go through one resolver, so that answer can only be written once.
 
 > ⚠️ **A different triplet means a different installed tree.** Everything built under it, dependencies included,
 > lands in `vcpkg/installed/<that-triplet>/`, so consumers need a second `CMAKE_PREFIX_PATH` — and a library built

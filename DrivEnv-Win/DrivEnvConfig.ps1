@@ -297,6 +297,11 @@ function Get-DrivEnvConfigSchema
             # Nothing is lost by moving it: buildtrees is scratch, it is not part of any package ABI -- a
             # vcpkg_abi_info.txt has no entry for it -- and it is deleted after each port when
             # clean-buildtrees is in effect.
+            #
+            # A FOLDER, RELATIVE TO THE DEV DRIVE: "bt", or "scratch/bt" for a chain. Do not spell the drive
+            # letter here -- environment.dev_drive_letter already says which drive this is, and repeating it
+            # only creates a second place for the answer to come from. Resolve-DrivEnvBuildtreesRoot below is
+            # the single thing that turns this into a path, so every step agrees by construction.
             buildtrees_root = @{ type = 'string'; notEmpty = $true }
         }
     }
@@ -431,6 +436,81 @@ function Get-DrivEnvEditDistance
     }
 
     return $prev[$m]
+}
+
+function Resolve-DrivEnvBuildtreesRoot
+{
+    # @brief Turn vcpkg.buildtrees_root into every form the steps need, from one definition.
+    #
+    # WHY THIS IS SHARED. Step 1 creates the directory and step 4 hands the path to vcpkg, and each used to
+    # normalise the setting itself -- with different rules. Step 1 stripped any drive letter and created the
+    # folder on the drive it had just mounted; step 4 kept the letter and passed it through. So a configuration
+    # naming one drive while environment.dev_drive_letter named another did not fail: step 1 made <drive>:/bt
+    # and step 4 told vcpkg to build somewhere else entirely, and the run half-filled two disks in silence.
+    # Two consumers, one definition, and the disagreement cannot be written any more.
+    #
+    # THE SETTING IS A FOLDER, RELATIVE TO THE DEV DRIVE. An absolute form is still accepted, because existing
+    # configurations spell one, but the drive part is DISCARDED and said so out loud: buildtrees belongs on the
+    # dev drive by design -- the whole reason the setting exists is to keep the path short on that drive -- and
+    # honouring a foreign letter here would resurrect exactly the split this function removes.
+    #
+    # @param Cfg         The parsed configuration.
+    # @param DriveLetter The dev drive letter, with or without a colon.
+    # @param Warn        Optional scriptblock taking one string, called for anything worth reporting.
+    # @return A hashtable: Folder ("bt"), Windows ("N:/bt") and Posix ("/n/bt").
+    param
+    (
+        [object]      $Cfg,
+        [string]      $DriveLetter,
+        [scriptblock] $Warn = $null
+    )
+
+    $letter = ([string]$DriveLetter).Trim().TrimEnd(@(':', '\', '/'))
+    $folder = "bt"
+
+    $given = ""
+    if ($Cfg -and $Cfg.vcpkg -and ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root"))
+        { $given = ([string]$Cfg.vcpkg.buildtrees_root).Trim().Replace('\', '/') }
+
+    if (-not [string]::IsNullOrWhiteSpace($given))
+    {
+        $stripped = $given
+        $had_drive = ""
+
+        if     ($stripped -match '^([A-Za-z]):/?(.*)$') { $had_drive = $Matches[1]; $stripped = $Matches[2] }
+        elseif ($stripped -match '^/([A-Za-z])/(.*)$')  { $had_drive = $Matches[1]; $stripped = $Matches[2] }
+
+        $stripped = $stripped.Trim('/')
+
+        # A colon surviving the patterns above means a shape neither of them recognised -- "S:" alone, or
+        # something hand-edited into nonsense -- and a directory name cannot hold one.
+        if ([string]::IsNullOrWhiteSpace($stripped) -or $stripped -match '\.\.' -or $stripped -match ':')
+        {
+            if ($Warn) { & $Warn ("vcpkg.buildtrees_root '{0}' is not a folder on the drive; using '{1}'." -f $given, $folder) }
+        }
+        else
+        {
+            $folder = $stripped
+
+            if (-not [string]::IsNullOrWhiteSpace($had_drive) -and
+                ($had_drive.ToUpperInvariant() -ne $letter.ToUpperInvariant()))
+            {
+                if ($Warn)
+                {
+                    & $Warn ("vcpkg.buildtrees_root names drive '{0}:' but the dev drive is '{1}:'. Buildtrees " -f $had_drive.ToUpperInvariant(), $letter.ToUpperInvariant())
+                    & $Warn ("always go on the dev drive, so '{0}:/{1}' is what will be used. Drop the letter " -f $letter.ToUpperInvariant(), $folder)
+                    & $Warn ("from the setting -- it is a folder relative to the drive, and naming one here is")
+                    & $Warn ("how a run used to build on one disk while installing on another.")
+                }
+            }
+        }
+    }
+
+    return @{
+        Folder  = $folder
+        Windows = "{0}:/{1}" -f $letter.ToUpperInvariant(), $folder
+        Posix   = "/{0}/{1}" -f $letter.ToLowerInvariant(), $folder
+    }
 }
 
 function Get-DrivEnvSuggestion

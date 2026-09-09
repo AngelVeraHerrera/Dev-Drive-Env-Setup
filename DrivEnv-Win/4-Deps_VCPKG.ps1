@@ -1191,23 +1191,11 @@ if ($Cfg.vcpkg.PSObject.Properties.Name -contains "max_install_attempts")
 #
 # A short root is the whole fix, and it is free: buildtrees is scratch and is not part of any package ABI.
 # <drive>:/bt puts that same path at 247 and leaves room for Qt to grow; /buildtrees would put it at 255.
-$buildtreesRoot = "/{0}/bt" -f $driveLetter.TrimEnd(':')
-if ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root")
-{
-    $configuredRoot = ([string]$Cfg.vcpkg.buildtrees_root).Trim()
-    if (-not [string]::IsNullOrWhiteSpace($configuredRoot))
-    {
-        # Accept either form and hand bash the POSIX one, since the install script runs under MSYS2:
-        # "S:/bt" and "S:\bt" both become "/s/bt".
-        $normalised = $configuredRoot.Replace('\', '/')
-        if ($normalised -match '^([A-Za-z]):/(.*)$')
-        {
-            $normalised = "/{0}/{1}" -f $Matches[1].ToLowerInvariant(), $Matches[2].TrimEnd('/')
-        }
-        $buildtreesRoot = $normalised.TrimEnd('/')
-        Write-Info "Buildtrees root from the configuration: $buildtreesRoot"
-    }
-}
+# One resolver, shared with step 1, which is what creates this directory. The POSIX form is what bash gets,
+# since the install script runs under MSYS2. See Resolve-DrivEnvBuildtreesRoot for why this is not done here.
+$buildtreesRoot = (Resolve-DrivEnvBuildtreesRoot -Cfg $Cfg -DriveLetter $driveLetter `
+                                                 -Warn { param($m) Write-Warn $m }).Posix
+Write-Info "Buildtrees root: $buildtreesRoot"
 
 $index = 0
 $cancelledRun = $false

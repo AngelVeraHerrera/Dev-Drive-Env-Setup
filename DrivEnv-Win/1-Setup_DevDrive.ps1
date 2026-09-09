@@ -890,29 +890,10 @@ if ($Cfg.workspace -and -not [string]::IsNullOrWhiteSpace([string]$Cfg.workspace
 # autogen filenames reached 261 characters against the 260-character cap Windows applies to any program without
 # a long-path manifest -- which MSYS2's GCC lacks, so LongPathsEnabled=1 does not rescue it. /bt puts that path
 # at 247; the /buildtrees this used to create put it at 255, which worked but with five characters to spare.
-$buildtreesFolder = "bt"
-if ($Cfg.vcpkg -and ($Cfg.vcpkg.PSObject.Properties.Name -contains "buildtrees_root"))
-{
-    # Accept "S:/bt", "S:\bt", "/s/bt" or a bare "bt" and keep only the part below the drive root: this step
-    # only ever creates directories on the drive it has just mounted.
-    $cfgRoot = ([string]$Cfg.vcpkg.buildtrees_root).Trim().Replace('\', '/')
-    if     ($cfgRoot -match '^[A-Za-z]:/(.+)$') { $cfgRoot = $Matches[1] }
-    elseif ($cfgRoot -match '^/[A-Za-z]/(.+)$') { $cfgRoot = $Matches[1] }
-    $cfgRoot = $cfgRoot.Trim('/')
-
-    # The colon test is not redundant with the two patterns above. A bare drive root, "S:/", matches neither --
-    # they both require something after the slash -- and Trim('/') then leaves "S:", which would have this step
-    # try to create a directory whose name contains a colon. Rejecting anything that still holds one covers that
-    # and every other half-a-path a hand-edited config can produce.
-    if ((-not [string]::IsNullOrWhiteSpace($cfgRoot)) -and ($cfgRoot -notmatch '\.\.') -and ($cfgRoot -notmatch ':'))
-    {
-        $buildtreesFolder = $cfgRoot
-    }
-    else
-    {
-        Write-Warn "vcpkg.buildtrees_root is not a usable path on this drive; falling back to '$buildtreesFolder'."
-    }
-}
+# One resolver, shared with step 4, so the folder this step CREATES and the path that step hands vcpkg cannot
+# disagree. See Resolve-DrivEnvBuildtreesRoot for what used to happen when each normalised the setting itself.
+$buildtreesFolder = (Resolve-DrivEnvBuildtreesRoot -Cfg $Cfg -DriveLetter $driveLetter `
+                                                   -Warn { param($m) Write-Warn $m }).Folder
 
 $folders = 
 @(

@@ -79,7 +79,7 @@
             "baseline_commit": "06d00ffa491e4668627728f14b891d22c6fea146"
         },
         "target": { "triplet": "x64-mingw-ucrt-dynamic-release" },
-        "buildtrees_root": "R:/bt",
+        "buildtrees_root": "bt",
         "install_schedule": [{}, { "concurrency": 4 }, { "concurrency": 1 }],
         "packages": [
             { "name": "fmt" },
