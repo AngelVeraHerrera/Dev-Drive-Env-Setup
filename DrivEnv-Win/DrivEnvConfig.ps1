@@ -506,7 +506,7 @@ function Set-DrivEnvFileValues
     # line by line, so a block that references a name defined by a later block resolves to nothing. So the
     # removal leaves a marker behind and the new block goes back into that exact position. Only a section the
     # file has never seen is appended.
-    $slot = " drivenv-slot-" + [guid]::NewGuid().ToString()
+    $slot = " drivenv-slot-" + [guid]::NewGuid().ToString()
 
     $kept = @()
     if (Test-Path -LiteralPath $Path)
