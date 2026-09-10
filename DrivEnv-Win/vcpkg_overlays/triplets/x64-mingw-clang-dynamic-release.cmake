@@ -62,6 +62,42 @@ set(VCPKG_CXX_FLAGS "-D__USE_MINGW_ANSI_STDIO=1")
 # libgcc, which libtool does keep.
 set(VCPKG_LINKER_FLAGS "-lclang_rt.builtins-x86_64")
 
+# AND ONE THAT IS A BUG IN GLIB RATHER THAN AN ASSUMPTION ABOUT THE TOOLCHAIN.
+#
+# glib prints "GLib-CRITICAL **: TLS callback not invoked" from every process that loads it, and it is a TRUE
+# POSITIVE. The DLL ships with no PE TLS directory, so the loader never calls the callback glib registered, and
+# glib's per-thread cleanup never runs. Measured on this drive: exactly one kernel handle leaked per GLib thread
+# that exits -- 1.000/thread over 1000 cycles, against 0.000/thread on a same-version build whose directory is
+# intact -- which under GStreamer came to +75 process handles per burst of 40 concurrent pipelines, monotonic and
+# never reclaimed. g_get_system_data_dirs() also loses the vcpkg share/ prefix and the gettext locale directory
+# comes back empty.
+#
+# THE CAUSE IS NOT CLANG, which is worth saying because it looks like it is. glib's non-MSVC branch of
+# G_DEFINE_TLS_CALLBACK (glib/gconstructorprivate.h) only places the callback pointer in section .CRT$XLCE; the
+# MSVC branch additionally emits #pragma comment(linker, "/INCLUDE:_tls_used"). _tls_used is the
+# IMAGE_TLS_DIRECTORY that DataDirectory[9] points at, it lives in tlssup.o inside libmingw32.a, and current
+# mingw-w64-crt no longer references it from crt2.o or dllcrt2.o -- so lazy archive-member extraction never pulls
+# it in and glib's pointer is left live but unreachable. Verified on the UCRT64 drive: its GCC/ld.bfd glib has no
+# TLS directory either, while the libgobject linked two seconds later in the same session HAS one, because one of
+# gobject's own translation units uses native PE TLS and drags tlssup.o in by accident.
+#
+# -u forces the linker to treat _tls_used as undefined, which extracts tlssup.o and gives the image its TLS
+# directory. Measured on this exact toolchain (clang 22.1.8 / ld.lld 22.1.8) against a minimal reproduction of
+# glib's construct: without the flag, no TLS directory and the callback never fires; with it, a directory with one
+# live callback that runs at attach and at every thread detach.
+#
+# SCOPED TO GLIB on purpose. No other image in the installed tree carries the construct, and C++ thread_local
+# teardown does NOT depend on this array -- mingw-w64 dispatches __mingw_TLScallback from DllMainCRTStartup.
+# Applying the flag triplet-wide would hand ~430 images a TLS directory they never use, and would rebuild every
+# one of them, because the triplet file is an ABI input for all of them.
+#
+# DELETE THIS once the baseline carries glib >= 2.89.4, where GLib MR !5283 landed (merged 2026-08-07, shipped in
+# 2.90.0). Both the pinned baseline and vcpkg master still hold 2.88.3, with microsoft/vcpkg#53868 open to bump
+# it. When that lands the flag is redundant, not conflicting.
+if(PORT STREQUAL "glib")
+    set(VCPKG_LINKER_FLAGS "${VCPKG_LINKER_FLAGS} -Wl,-u,_tls_used")
+endif()
+
 # Policies suitable for MinGW / LLVM
 set(VCPKG_POLICY_ALLOW_OBSOLETE_MSVCRT enabled)
 set(VCPKG_POLICY_DLLS_WITHOUT_LIBS enabled)
