@@ -456,20 +456,6 @@ if ($checkDllLoad)
 {
     Write-Info "CHECK: every installed library and plugin loads."
 
-    Add-Type -ErrorAction Stop @'
-using System;
-using System.Runtime.InteropServices;
-public static class DevDriveLoader
-{
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern IntPtr LoadLibraryExW(string path, IntPtr file, uint flags);
-
-    // LOAD_WITH_ALTERED_SEARCH_PATH: resolve the dependencies of the DLL relative to ITS OWN directory, which is how
-    // the programs that use it will resolve them. Anything weaker would pass a library that no consumer can load.
-    public const uint AlteredSearchPath = 0x00000008;
-}
-'@
-
     $targets = @()
     foreach ($dir in @($binDir, $pluginDir))
     {
@@ -479,16 +465,90 @@ public static class DevDriveLoader
         }
     }
 
-    $failed = 0
-    foreach ($dll in $targets)
+    # THE SWEEP RUNS IN A CHILD PROCESS, and that is hygiene with a measured cost behind it.
+    #
+    # LoadLibrary pins a DLL for the life of the process and nothing here calls FreeLibrary. That omission is
+    # deliberate: unloading four hundred libraries in arbitrary order runs each one's DLL_PROCESS_DETACH, and a
+    # glib whose TLS callback never fired leaves vectored exception handlers registered against code that is
+    # about to be unmapped. So the handles have to be released some other way, and process exit is that way --
+    # the same teardown that already happens when the shell is closed, with no ordering we invented.
+    #
+    # In-process they were never released at all, and it bit: a `vcpkg remove glib` failed with "Acceso denegado"
+    # on a staging directory, and the holder turned out to be a PowerShell window from a verification run four
+    # hours earlier, still holding 430 modules from the drive. The drive was left without glib or gstreamer until
+    # those directories were renamed aside. Every rebuild that follows a verification would hit the same wall.
+    #
+    # A second thing falls out of it: a library that FAULTS while loading now takes down the child and is
+    # reported, where before it took the whole verification with it.
+    #
+    # The list travels in a FILE, not on the command line: 431 absolute paths is far past what a command line
+    # holds, and the child inherits this process's composed PATH, which is what makes the loads resolve.
+    $listFile  = [System.IO.Path]::GetTempFileName()
+    $childFile = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".ps1")
+
+    $childBody = @'
+param ([string]$ListFile)
+
+Add-Type -ErrorAction Stop @"
+using System;
+using System.Runtime.InteropServices;
+public static class DevDriveLoader
+{
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr LoadLibraryExW(string path, IntPtr file, uint flags);
+
+    // LOAD_WITH_ALTERED_SEARCH_PATH: resolve the dependencies of the DLL relative to ITS OWN directory, which is
+    // how the programs that use it will resolve them. Anything weaker would pass a library no consumer can load.
+    public const uint AlteredSearchPath = 0x00000008;
+}
+"@
+
+foreach ($path in (Get-Content -LiteralPath $ListFile))
+{
+    if ([string]::IsNullOrWhiteSpace($path)) { continue }
+    $handle = [DevDriveLoader]::LoadLibraryExW($path, [IntPtr]::Zero, [DevDriveLoader]::AlteredSearchPath)
+    if ($handle -eq [IntPtr]::Zero)
     {
-        $handle = [DevDriveLoader]::LoadLibraryExW($dll.FullName, [IntPtr]::Zero,
-                                                   [DevDriveLoader]::AlteredSearchPath)
-        if ($handle -eq [IntPtr]::Zero)
+        $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        Write-Output ("FAIL`t{0}`t{1}" -f (Split-Path -Leaf $path), $code)
+    }
+}
+
+# The sentinel is the point: without it, a child that died halfway through would look like a clean sweep.
+Write-Output "SWEPT"
+exit 0
+'@
+
+    $failed = 0
+    try
+    {
+        Set-Content -LiteralPath $listFile -Value ($targets | ForEach-Object { $_.FullName }) -Encoding UTF8
+        Set-Content -LiteralPath $childFile -Value $childBody -Encoding UTF8
+
+        $hostExe = (Get-Process -Id $PID).Path
+        if ([string]::IsNullOrWhiteSpace($hostExe)) { $hostExe = "powershell.exe" }
+
+        $childOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $childFile -ListFile $listFile 2>&1
+        $childCode = $LASTEXITCODE
+
+        $lines = @($childOut | ForEach-Object { [string]$_ })
+        if ($lines -notcontains "SWEPT")
         {
-            $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            # 126 is ERROR_MOD_NOT_FOUND: a dependency is missing, which is by far the common case and the one worth
-            # naming in the report, because the DLL itself is usually fine.
+            Add-Result -Group "load" -Name "the load sweep" -State "skip" `
+                       -Detail ("the child process ended at exit code {0} without finishing; a library may have faulted while loading" -f $childCode)
+        }
+
+        foreach ($line in $lines)
+        {
+            if (-not $line.StartsWith("FAIL`t")) { continue }
+            $parts = $line.Split("`t")
+            if ($parts.Count -lt 3) { continue }
+
+            $code = 0
+            [void][int]::TryParse($parts[2], [ref]$code)
+
+            # 126 is ERROR_MOD_NOT_FOUND: a dependency is missing, which is by far the common case and the one
+            # worth naming in the report, because the DLL itself is usually fine.
             $why = switch ($code)
             {
                 126 { "a dependency is missing (ERROR_MOD_NOT_FOUND)" }
@@ -496,9 +556,14 @@ public static class DevDriveLoader
                 193 { "not a valid image for this architecture" }
                 default { "win32 error $code" }
             }
-            Add-Result -Group "load" -Name $dll.Name -State "fail" -Detail $why
+            Add-Result -Group "load" -Name $parts[1] -State "fail" -Detail $why
             $failed++
         }
+    }
+    finally
+    {
+        Remove-Item -LiteralPath $listFile  -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $childFile -Force -ErrorAction SilentlyContinue
     }
 
     Write-Info "Libraries checked: $($targets.Count), failed to load: $failed"
