@@ -11,31 +11,46 @@
 <h1 align="center">DrivEnv-Win</h1>
 
 <p align="center">
-  Builds a complete, reproducible C++ development drive on Windows from a single JSON file: VHDX, pinned
-  MSYS2/UCRT64 toolchain, vcpkg with overlay ports, launchers, and a verification step that checks every
-  library actually loads.
+  Builds a self-contained C++ development drive on Windows from a single JSON file, and then checks that it works.
 </p>
 
 ---
 
 ## About This Repository
 
-A development environment is normally something that accumulates: a toolchain installed by hand, a package manager
-cloned at whatever commit was current, a `PATH` that grew over years, and knowledge about why any of it works living
-only in the head of whoever set it up. When the machine changes, or the person does, it has to be rediscovered.
+A development environment usually accumulates rather than gets built: a toolchain installed by hand, a package
+manager cloned at whatever commit was current that day, a `PATH` that grew over years, and the knowledge of why any
+of it works living only in the head of whoever set it up. When the machine changes, or the person does, it has to be
+rediscovered.
 
-**DrivEnv-Win** turns that into a description. One JSON file names the drive, the toolchain and its pinned package
-versions, the vcpkg baseline commit, the packages and their features, the environment variables and the folders. Six
-numbered PowerShell scripts, driven by one runner, turn the description into a working, self-contained drive — and the fifth one proves it
-works rather than assuming it.
+**On Linux this is largely a solved problem.** A container image pins the toolchain, the libraries and the
+environment in one file, it is cheap to rebuild, and it is the normal way to work.
 
-> ⚠️ **Why that last part matters.** A build system reporting success is a statement about compilation, not about the
-> environment being usable. Every failure this tooling has actually hit was silent. A missing `DirectXMath` made
-> GStreamer's `d3d11` library skip itself without a word, and `gstcuda` and `nvcodec` went with it — the first error
-> anyone saw named CUDA, which had nothing to do with it. A library whose import table named a DLL that its own port
-> installed under a *different* name killed `ffmpeg.exe` outright and took GStreamer's entire libav bridge with it,
-> unnoticed in two separate environments, because nothing had ever tried to **load** what had been built
-> successfully. Step 5 exists for that gap.
+**On Windows there is no equivalent that is both simple and standard**, at least not for native desktop C++ with
+GUI toolkits, hardware SDKs and vendor drivers in play. Windows containers are heavy, awkward for anything with a
+window or a USB device, and not how anyone actually develops this kind of software. So the usual answer is a
+document describing what to install, and the usual result is that no two machines end up alike.
+
+**DrivEnv-Win takes a different route: the environment is a drive.** One JSON file names the toolchain and its
+pinned package versions, the vcpkg baseline commit, the packages and their features, the variables and the folders.
+Six PowerShell steps, driven by one command, turn that description into a virtual disk that carries everything a
+build needs. It mounts under a letter, it is entered through its own launcher, and it can be handed to another
+machine or rebuilt from the same JSON months later.
+
+Nothing is installed system-wide, so several environments can exist side by side on one machine — a GCC one and a
+clang one, or one per project — without any of them being "the" environment.
+
+The last step is the point of the whole thing: it **verifies** the result rather than assuming it. A build system
+reporting success says something about compilation, not about the environment being usable, and the failures this
+tooling has actually hit were all silent ones — a library that built perfectly and could not be loaded, a plugin
+that skipped itself without a word.
+
+### Where this is used
+
+DrivEnv-Win generates the development environments for the **Degoras Project** systems that operate the Satellite
+Laser Ranging (SLR) station at the **Real Instituto y Observatorio de la Armada (ROA)** in San Fernando, Spain.
+Those systems combine real-time control, hardware SDKs and a heavy C++ dependency stack, which is exactly the case
+where "it works on my machine" stops being acceptable.
 
 ---
 
@@ -45,43 +60,27 @@ A drive that mounts under one letter and contains everything a build needs:
 
 | Path | Contents |
 | --- | --- |
-| `msys64/` | MSYS2 with a UCRT64 toolchain, packages pinned to exact versions |
-| `vcpkg/` | vcpkg at a pinned baseline commit, with overlay ports and overlay triplets |
+| `msys64/` | MSYS2 with the toolchain, packages pinned to exact versions |
+| `vcpkg/` | vcpkg at a pinned baseline commit, with overlay ports and triplets |
 | `env/` | The generated environment file, the launchers, and per-tool settings |
 | `workspace/` | Your source trees |
 | `buildtrees/` | Out-of-source build directories |
 | `deploys/` | Installed artefacts of your own projects |
 | `testing/` | Runnable checks for the libraries that are historically troublesome |
-| `installation/` | What this environment IS: package inventory, baseline, overlay notes, manual installs |
-| `logs/` | Environment and tool logs, each setup step's own log, and the logs of every port that failed |
+| `installation/` | What this environment is: package inventory, baseline, overlay notes |
+| `logs/` | Each setup step's log, and the logs of every port that failed |
 
 Plus launchers on the drive itself — a `.bat` for Windows and a bash bootstrap for the MSYS2 shell — so the
 environment is entered the same way by a person, a script or a CI job.
 
-Nothing is installed system-wide and the machine's global `PATH` is never touched. It does leave four marks outside
-the drive, all by design and all worth knowing about. The first two are switchable; the last two are not:
+The machine's global `PATH` is never touched. Four marks are left outside the drive, and the first two are
+switchable:
 
-- **desktop shortcuts** — one to the VHDX (step 1) so the drive can be remounted with a double click, one to the
-  environment launcher (step 2). Both governed by `create_desktop_shortcuts`, and turning it off on a drive that
-  already has them removes them;
-- a **scheduled task** that mounts the VHDX at startup, running as SYSTEM. Governed by `automount_at_startup`,
-  with the same removal behaviour. Without it the drive still mounts with `Mount-VHD` or by opening the VHDX;
-- `HKCU\...\Explorer\AutoplayHandlers\DisableAutoplay` is set to `1` while the disk is attached and back to `0`
-  afterwards, to stop Windows opening an AutoPlay dialog mid-run. Note that it is restored to `0` rather than to
-  whatever it was before, so a deliberately disabled AutoPlay setting will come back enabled;
-- two **Microsoft Defender path exclusions**, added unconditionally: the directory holding the VHDX, and the
-  drive letter itself. Both are needed — excluding the container does nothing for files opened as `<letter>:\`.
-
-> The mount task is named `DrivEnv_<label>_<letter>` and is identified by the VHDX it mounts, not by its name.
-> Regenerating a drive replaces its own task whatever that task was called, so a rename or an upgrade from an
-> older version leaves nothing stranded, and two environments sharing a label no longer overwrite each other.
->
-> A task whose VHDX no longer exists is **not** pruned by a generation run: nothing done for one environment
-> should delete state belonging to another, and a VHDX that is merely moved would cost somebody their mount
-> task without being asked. `Manage-MountTasks.ps1` is where that cleanup lives — it lists every startup
-> mount task on the machine, marks each `live`, `orphan` or `offline`, and removes the orphans on request.
-> It needs elevation to so much as *read*: these tasks run as SYSTEM, and `Get-ScheduledTask` omits them from
-> a non-elevated caller silently, so an unelevated run would confidently report none.
+- **desktop shortcuts** to the VHDX and to the environment launcher (`create_desktop_shortcuts`);
+- a **scheduled task** that mounts the drive at startup (`automount_at_startup`);
+- `DisableAutoplay` is set while the disk is attached and restored afterwards, so Windows does not open an AutoPlay
+  dialog mid-run;
+- two **Microsoft Defender path exclusions**, for the VHDX directory and the drive letter.
 
 ---
 
@@ -91,20 +90,29 @@ the drive, all by design and all worth knowing about. The first two are switchab
 | --- | --- |
 | Windows 10 or 11 | A **Dev Drive** (`use_dev_drive`) needs Windows 11 23H2 or later; otherwise a plain VHDX is used |
 | PowerShell | Developed and tested on PowerShell 7. The scripts use nothing newer than 5.1, which ships with Windows |
-| Administrator | Required by step 1 only, to create and mount the virtual disk |
+| Script execution enabled | See below |
+| Administrator | For step 1 only |
 | Free space | At least `vhd_size_gb` on the volume holding `vhd_root` |
 
-> ⚠️ Nothing else needs to be installed first, and that includes Git. The toolchain, the package manager and
-> every dependency are placed on the drive by the scripts, and the git that clones vcpkg is the one step 2 installed
-> on the drive -- located there explicitly rather than found on `PATH`, so the result does not depend on what the
-> machine happened to have.
+Windows blocks PowerShell scripts by default, so allow them for the current session before starting:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+That covers the whole run: the steps launched by `Generate-DrivEnv.ps1` are given their own bypass, so only the
+first invocation needs it. `-Scope Process` lasts until you close the window and changes nothing permanently.
+
+> ⚠️ Nothing else needs to be installed first, and that includes Git. The toolchain, the package manager and every
+> dependency are placed on the drive by the scripts, so the result does not depend on what the machine happened to
+> have.
 
 ---
 
 ## Quick Start
 
-The repository root holds only `README.md`, `LICENSE` and the git files. Everything the generator itself needs lives
-one level down, in `DrivEnv-Win/`, and that is the directory every command below is run from.
+Everything the generator needs lives in `DrivEnv-Win/`, one level down from the repository root, and that is the
+directory every command below is run from.
 
 ```powershell
 git clone https://github.com/DegorasProjectTeam/DrivEnv-Win.git
@@ -112,25 +120,28 @@ cd DrivEnv-Win\DrivEnv-Win
 copy config\drivenv-cfg_example.json config\drivenv-cfg.json
 ```
 
-Edit `config\drivenv-cfg.json` — at minimum the drive letter, the label and the environment name — then run
-the whole procedure, from an **elevated** PowerShell:
+Edit `config\drivenv-cfg.json` — at minimum the drive letter, the label and the environment name — then run the
+whole procedure:
 
 ```powershell
 .\Generate-DrivEnv.ps1
 ```
 
-It runs the six steps in order, stops at the first failure, and prints what each one cost. It reimplements nothing:
-each step is launched exactly as you would launch it, so its own logging, its own log copy onto the drive and its
-own validation all still happen, once, where they already were.
+> ⚠️ **Run it from an elevated PowerShell.** Administrator rights are needed by **step 1 alone**, and only to
+> create and mount the virtual disk — `diskpart` and the storage cmdlets require it. Nothing else in the procedure
+> does: installing the toolchain, building packages and verifying the result all run as a normal user. Resuming
+> past step 1 therefore needs no elevation at all, and `-From 2` or later will start without asking.
+
+It runs the six steps in order, stops at the first failure, and prints what each one cost.
 
 | Switch | What it does |
 | --- | --- |
-| `-ConfigFile <name>` | Forwarded verbatim to every step. A bare name resolves against `config/` |
+| `-ConfigFile <name>` | Forwarded to every step. A bare name resolves against `config/` |
 | `-From <n>` | Resume at step *n*, so a failure at step 4 does not cost you steps 1 to 3 again |
 | `-To <n>`, `-Skip 5,6` | Stop early, or drop steps inside the range |
 | `-ValidateOnly` | Check the configuration and change nothing |
 
-Nothing stops you running a step on its own — that is all the runner does:
+Any step can be run on its own — that is all the runner does:
 
 ```powershell
 .\scripts\1-Setup_DevDrive.ps1     # create and mount the drive, lay out the folders, write the launchers
@@ -141,106 +152,12 @@ Nothing stops you running a step on its own — that is all the runner does:
 .\scripts\6-Clone_Repos.ps1        # clone the configured projects into the drive (optional)
 ```
 
-### Layout
+Every step takes the same `-ConfigFile` and **must be given the same file**: they hand state to each other through
+the environment file on the drive. A bare name resolves against `config/`; an absolute path is taken as given, which
+lets a configuration live outside the repository.
 
-| Path | What lives there |
-| --- | --- |
-| `Generate-DrivEnv.ps1` | The entry point |
-| `Manage-MountTasks.ps1` | Lists the startup mount tasks on this machine and removes the orphaned ones |
-| `config/` | The configuration you edit, and the two documented copies |
-| `scripts/` | The six steps and the two shared modules |
-| `scripts_env/` | Launchers and tool wrappers, copied onto the drive |
-| `vcpkg_overlays/` | Overlay ports and triplets |
-| `packages_msys2/` | Download cache for the MSYS2 installer and its packages |
-| `testing/`, `installation/` | Material copied onto the drive |
-| `install_logs/` | Every run's log, before it is copied to the drive |
-
-Step 6 is optional in the real sense: a configuration with no `workspace` section is valid, and the step then says so
-and exits 0. It is last because it is the only one that puts *your* code on the drive rather than the environment's.
-
-Step 1 is the only one needing administrator rights. Started without them it asks for elevation, does the work in
-the elevated window, and waits for it -- so the window you started from stays open until that finishes, and then
-exits with the same code. Started already elevated it runs straight through and nothing waits.
-
-It also refuses to start unless the ground is clear. It checks that the drive letter is free, that no VHDX already
-sits at `vhd_root`, and that the volume there has at least `vhd_size_gb` available. All three run before anything is
-created and before elevation is even requested, so a configuration naming an occupied letter costs a second rather
-than a 50 GB file, a UAC prompt and a failure at the end.
-
-> ⚠️ **A letter can be taken by something `Get-Volume` cannot see** -- a mapped network drive, a `subst`, or a
-> disk attached with no mounted filesystem. The check consults the logical drive list as well, and says which kind of
-> thing holds the letter, because "in use by a network drive" and "in use by a mounted volume" call for different
-> fixes.
-
-> **Step 4 retries a failed port once, on its own, and the retry runs with concurrency forced to 1.** Not a plain
-> repeat of the same command: the failures this absorbs are concurrency- and resource-shaped, so serialising is
-> what changes the odds rather than just rolling the dice again. It is safe because vcpkg is per-package -- an
-> attempt costs only the port that failed, never the tree behind it.
->
-> Three failures seen on one machine, none of them a build error, all gone on a re-run:
->
-> | Port | What it said |
-> | --- | --- |
-> | `openssl` | `Trying to rename Makefile-179 -> Makefile: Permission denied` |
-> | `mongo-c-driver` | `internal compiler error: Segmentation fault`, during the GIMPLE `fre` pass |
-> | `glib` | `Access violation`, out of the meson configure |
->
-> **Every retry is reported, and the summary names each port that needed one.** That is deliberate. Three unrelated
-> programs -- perl, GCC and meson -- crashing on one machine and none of them on another is a statement about the
-> machine, not about vcpkg, and a retry that quietly succeeded would erase the only evidence of it. One retry is
-> bad luck; several across unrelated ports is worth investigating, and the usual causes are an on-access virus
-> scanner holding files open and memory pressure crashing the compiler.
->
-> If a port fails every attempt the step stops, and every attempt after the first having run serialised means a
-> race between parallel jobs is already ruled out.
->
-> **Ctrl-C stops the build, and step 4 handles it rather than dying.** An earlier version of this document claimed
-> the console signal reached bash and vcpkg by itself, and that was wrong: PowerShell tore down its own pipeline
-> and returned the prompt while bash, vcpkg, ninja and a dozen compilers carried on building unattended. The run
-> looked stopped and was not. Step 4 now takes over `Ctrl-C`, kills the build, and exits through its normal
-> reporting path — summary, preserved logs, restored console title, exit code `1223`.
->
-> The build is killed through a **Windows job object**, not by walking parent process ids, and the difference is
-> measurable rather than theoretical. `taskkill /T` kills the outer bash, the inner one dies with it, and any
-> grandchild is left holding a parent id that refers to a dead process, so the rest of the walk cannot see it: a
-> test script with one background and one foreground `sleep` returned in 3.4 s with **two processes still
-> running**. A job object is tracked by the kernel by membership, so terminating it takes everything. The same
-> test with `setsid`-detached, `nohup`-detached and nested `bash -c` branches leaves **zero** survivors.
->
-> `KILL_ON_JOB_CLOSE` is set as well, so if the script itself dies — a second `Ctrl-C`, a closed console window —
-> Windows tears the build down as the handle closes. `taskkill` still runs as a second sweep, for anything spawned
-> in the microseconds between starting the process and assigning it to the job.
->
-> A cancelled run costs the port being built at that moment and nothing else: vcpkg stages into `packages/` and
-> only then commits into `installed/`, so an interrupted port is simply not installed, everything already reported
-> as installed stays installed, and re-running step 4 resumes from there. **Steps 5 and 6 are skipped** after a
-> cancellation, because the manifest and the inventory record what the environment *is*, and overwriting an
-> accurate record of the last complete run with a partial one destroys evidence for no gain. Step 4's own
-> verification still runs — "what is installed right now" is exactly the question an interrupted run leaves open.
->
-> The `vcpkg-running.lock` files look alarming and are not — they are zero-byte files that live on disk
-> permanently and carry an OS-level lock only while vcpkg runs, which Windows releases however the process dies.
-> Verified on a drive whose builds had been interrupted repeatedly: all five lock files present, `vcpkg list` ran
-> and listed 102 packages.
->
-> **`vcpkg.max_install_attempts` raises the count**, and it is configurable because it is a property of the machine
-> rather than of the configuration. One machine here needed *five* attempts to get `qtshadertools` through, with
-> GCC segfaulting at a different optimisation pass and inside a different function on each run -- `dep_fusion` in
-> one, `threadfull` in the next. A compiler bug is deterministic, so crashing somewhere different every time is
-> hardware, and the honest fix is a memory test rather than a build flag. Raise this to keep working in the
-> meantime; leave it alone on a machine that does not need it, since a high value on a healthy one only turns a
-> genuine build error into a long wait.
-
-Every step takes the same `-ConfigFile` switch and **must be given the same file**: they hand state to each other
-through the generated environment file on the drive.
-
-```powershell
-.\Generate-DrivEnv.ps1 -ConfigFile my-other-drive.json
-.\scripts\1-Setup_DevDrive.ps1 -ConfigFile my-other-drive.json
-```
-
-A bare name or a relative path resolves against `config/`, so a configuration sitting there needs no path at all. An
-absolute path is taken as given, which is what lets one live outside the repository entirely.
+Step 1 refuses to start unless the ground is clear — the drive letter free, no VHDX already at `vhd_root`, enough
+space — and checks all of that before anything is created or elevation is requested.
 
 Once step 3 has run, the environment is entered from the drive itself:
 
@@ -248,14 +165,26 @@ Once step 3 has run, the environment is entered from the drive itself:
 <drive>:\env\launcher\<envname>_env_launcher.bat
 ```
 
+### Layout
+
+| Path | What lives there |
+| --- | --- |
+| `Generate-DrivEnv.ps1` | The entry point |
+| `Manage-MountTasks.ps1` | Lists the startup mount tasks on this machine and removes orphaned ones |
+| `config/` | The configuration you edit, and two documented copies |
+| `scripts/` | The six steps and the shared modules |
+| `scripts_env/` | Launchers and tool wrappers, copied onto the drive |
+| `vcpkg_overlays/` | Overlay ports and triplets |
+| `packages_msys2/` | Download cache for the MSYS2 installer and its packages |
+| `testing/`, `installation/` | Material copied onto the drive |
+| `install_logs/` | Every run's log, before it is copied to the drive |
+
 ---
 
 ## The Public Contract
 
-The generated `<drive>:\env\<envname>_env_variables.env` holds two kinds of variable, and the difference matters
-because one kind is a promise and the other is this generator talking to itself.
-
-**Public — what a repository may depend on:**
+The generated `<drive>:\env\<envname>_env_variables.env` holds two kinds of variable. These are the ones a
+repository may depend on:
 
 | Variable | Meaning |
 | --- | --- |
@@ -265,49 +194,27 @@ because one kind is a promise and the other is this generator talking to itself.
 | `DEVSYSTEM_BUILDTREES`, `DEVSYSTEM_DEPLOYS`, `DEVSYSTEM_WORKSPACE` | Where builds, installs and sources live |
 | `VCPKG_ROOT`, `VCPKG_DEFAULT_TRIPLET` | The dependency prefix and its triplet |
 
-**Private** — `MSYS2_ROOT`, `MSYS2_BASH`, `MSYS2_ENV`, `BASE_PATH`, `DEVDRIVE_*`, `VCPKG_OVERLAY_*`,
-`VCPKG_BASELINE`, `VCPKG_BIN`, `GST_*`. A repository reading these is coupling itself to MSYS2 rather than to the
-environment.
+Everything else in the file — `MSYS2_*`, `BASE_PATH`, `DEVDRIVE_*`, `VCPKG_OVERLAY_*`, `GST_*` — is the generator
+talking to itself. A project reading those is coupling itself to MSYS2 rather than to the environment.
 
-**`DEVSYSTEM_TOOLCHAIN` is the one that had to be invented, and the reason is worth stating: the family is not
-discoverable.** MSYS2's CLANG64 ships `gcc.exe` and `g++.exe` as byte-identical copies of `clang.exe` — step 2
-creates them on purpose, so build systems expecting a GCC driver keep working — and `gcc --version` there prints
-*clang version 22.1.8*. Anything that sniffs the prefix to decide gets the wrong answer, and anything that
-string-matches `clang64` out of a directory name or a triplet is reading this generator's private encoding. So
-the environment states it, from a `Family` column on step 2's subsystem table. `msys2.target.family` overrides it
-for a subsystem the table does not list, and an unlisted subsystem with no family gets a warning rather than a
-guess.
-
-Both toolchain values are deliberately slash-free. The launcher bootstrap rewrites anything that looks like a
-drive path into POSIX form as it exports it, and a bare token cannot be caught by that conversion.
-
-`MINGW_ROOT` is **gone**. It named the same directory and the name became false the day a CLANG64 environment
-worked, since that directory has nothing to do with MinGW GCC. Nothing reads it any more, in this generator or
-in the repositories the environment builds. A drive generated before the change gets the new name by re-running
-step 2, which rewrites its block of the `.env` in place; presets have no fallback syntax for a missing `$env{}`,
-so a project pointed at an environment that predates the rename configures with an empty path rather than
-failing cleanly, and re-running step 2 is the fix.
+`DEVSYSTEM_TOOLCHAIN` exists because the compiler family cannot be guessed: MSYS2's CLANG64 ships `gcc.exe` and
+`g++.exe` as copies of clang, so sniffing the prefix gives the wrong answer. The environment states it instead.
 
 ---
 
 ## Configuration
 
 One file, four sections, in `config/`. `drivenv-cfg_example.json` is tracked and documents every key;
-`drivenv-cfg.json` is the one you edit and is deliberately **not** tracked.
-
-Every step validates this file before it acts on any value in it, and reports every problem at once rather than the
-first. All six also take `-ValidateOnly`, which validates and stops without changing anything -- a second's check on
-an edited file, and worth considerably more before a step that takes an hour than after it.
+`drivenv-cfg.json` is the one you edit and is deliberately **not** tracked. Every step validates it before acting on
+any value.
 
 ```powershell
 .\scripts\5-Verify_Env.ps1 -ValidateOnly
 ```
 
-> ⚠️ **An unknown key is an error, not a default.** Every reader in these scripts falls back to a default when
-> a key is absent, so a typo used to be silent: `install_testing_materials` in the plural copied the testing tree you
-> asked it to skip, and `check_toolz` left step 5 checking no tools at all and then reporting `tools 0 checked, 0
-> failed` as a pass. A verification step that quietly verifies less than it was asked to is worse than none, because
-> it is believed. So the validator refuses the file and suggests the nearest key it knows.
+> ⚠️ **An unknown key is an error, not a default.** Every reader falls back to a default when a key is absent, so a
+> typo would otherwise be silent — `check_toolz` would leave step 5 checking no tools at all and reporting a pass.
+> The validator refuses the file and suggests the nearest key it knows.
 
 ### `environment`
 
@@ -325,49 +232,19 @@ an edited file, and worth considerably more before a step that takes an hour tha
 | `create_desktop_shortcuts` | Put the VHDX and launcher shortcuts on the desktop. Default `true` |
 | `automount_at_startup` | Register the scheduled task that mounts the drive at boot. Default `true` |
 | `proxy_url` | Proxy for the downloads, or empty for none |
-| `install_testing_material`, `install_installation_material` | Whether to copy `testing/` and `installation/` to the drive |
+| `install_testing_material`, `install_installation_material` | Whether to copy `testing/` and `installation/` |
 | `verification` | What step 5 checks — see below |
 
-> ⚠️ A `${REFERENCE}` that nothing defines expands to the **empty string**, not to an error, because the launcher
-> resolves the file line by line. An empty `PATH` component means "the current directory" to both `execvp` and bash,
-> which is a real shadowing hazard — so steps 1 and 3 validate every reference and refuse to write a config that
-> makes one. Order matters: a variable can only reference something defined before it.
+> ⚠️ A `${REFERENCE}` that nothing defines expands to the **empty string**, and an empty `PATH` component means
+> "the current directory" to both `execvp` and bash. Steps 1 and 3 validate every reference and refuse to write a
+> configuration that makes one. Order matters: a variable can only reference something defined before it.
 
 ### `msys2`
 
-Where to fetch the installer from, which subsystem and architecture to target, and the package list. Each package may
-be `pinned` to an exact version, which is what makes the toolchain reproducible rather than "whatever was current".
+Names the installer, the subsystem and the packages, each either pinned to an exact version or tracking latest.
+A pinned package that does not install is a hard error at step 2 rather than a mystery later.
 
-```json
-{ "name": "gcc", "mode": "pinned", "version": "16.2.0-3" }
-```
-
-A pinned package is also added to pacman's `IgnorePkg`, so a later `pacman -Syu` inside the environment leaves it
-alone. Pacman prints `warning: <pkg>: ignoring package upgrade` and skips it. Two limits worth knowing: if some other
-package being installed *requires* a newer version of an ignored one, pacman reports a dependency error instead of
-upgrading it silently — the right outcome, but one you have to resolve — and pinning a package does not pin what it
-links against.
-
-**Pin `headers` and `crt` explicitly, and pin them first.** Neither is something you would think to list: they arrive
-as dependencies of the compiler, so pinning the compiler does not pin them, and `IgnorePkg` covers named packages
-rather than transitive dependencies. Pinning the tools buys reproducibility; pinning these buys *correctness*.
-
-The example configurations lead with them for a reason. Two machines running the same clang 22.1.8 against the same
-sources, with the same features enabled, disagreed about whether GStreamer builds: on `headers`
-`14.0.0.r302.gd7f3c5201-1` the helper `ua_wcscpy_s` sits in `sec_api/stralign_s.h` behind a legacy
-`_WConst_Return` guard and is never compiled, so `stralign.h` has no line 208 at all; on a newer snapshot it lives in
-`stralign.h` itself with nothing gating it, where it collides with a macro GStreamer's bundled Intel dispatcher
-defines — see [One patch to vcpkg itself](#one-patch-to-vcpkg-itself) for that fix. The compiler was identical. The
-headers were not, and nothing in the configuration said so.
-
-One caveat that comes with pinning, and it is not hypothetical: MSYS2's repository serves only current versions.
-A pin has a shelf life, and the day a pinned version is dropped upstream, step 2 fails on a 404 rather than
-silently installing something else. Failing loudly is the right behaviour, but it does mean a pinned configuration
-needs revisiting deliberately rather than never.
-
-#### The three names a subsystem has
-
-`msys2.target` used to carry a single `profile`, and that conflated three different things:
+A subsystem is known by three different names, and the configuration keeps them apart:
 
 | | | |
 | --- | --- | --- |
@@ -375,7 +252,7 @@ needs revisiting deliberately rather than never.
 | `repo_subpath` | where the packages live on repo.msys2.org | `mingw/clang64` |
 | `package_prefix` | what a package is actually called | `mingw-w64-clang-x86_64-<name>` |
 
-Normally you write only `subsystem` and the other two come from a table verified against repo.msys2.org:
+The common ones are built in and need no configuration:
 
 | `subsystem` | `package_prefix` | `repo_subpath` | default `arch` |
 | --- | --- | --- | --- |
@@ -386,408 +263,161 @@ Normally you write only `subsystem` and the other two come from a table verified
 | `mingw32` | `mingw-w64-i686` | `mingw/mingw32` | `i686` |
 | `clang32` | `mingw-w64-clang-i686` | `mingw/clang32` | `i686` |
 
-Two rows are why the table exists rather than a string rule. **`mingw64` carries no infix at all**, so deriving the
-prefix from the subsystem name asks for `mingw-w64-mingw-x86_64-<name>`, which does not exist. And **`clangarm64`'s
-sub-path is not `<infix>64`**, so the same derivation looks for its packages in another architecture's repository.
-
-`package_prefix` and `repo_subpath` are overrides, for a subsystem MSYS2 adds after that table was written. Setting
-them for a subsystem the table already knows is redundant, and leaving stale values behind after changing `subsystem`
-is the obvious way to get it wrong — so prefer naming only `subsystem`.
-
-`profile` still works and means `subsystem = "<profile>64"`, so a configuration written before this change behaves
-exactly as it did. `arch` is now optional: every subsystem in the table carries its own.
-
-`file_arch` on a package is the architecture tag in the package **file name**, which is not always the target
-architecture: most `mingw` packages are published as `any`, and a handful of scripted `msys` ones are too. Leave it
-out unless a package's file name disagrees with the default.
-
 ### `vcpkg`
 
-The repository, the baseline mode and commit, the triplet, and the packages with their features.
-
-```json
-{ "name": "mongo-c-driver", "features": ["openssl"] }
-```
-
-`vcpkg.target.triplet` is the default for every package. A package may override it with an optional `triplet` of its
-own, for the case where one library has to be built differently from the rest:
-
-```json
-{ "name": "fastdds", "triplet": "x64-mingw-ucrt-static-release" }
-```
-
-Every triplet in `DrivEnv-Win/vcpkg_overlays/triplets/` is installed to the drive, each verified against its
-`.sha256`, so an override only needs the triplet to exist there. The configured triplet still aborts the run if its
-hash is missing; an additional one declines to travel with a warning instead.
+Names the repository, the baseline commit, the target triplet and the packages with their features. A package may
+override the triplet for itself, which is how one library is built statically inside an otherwise dynamic
+environment.
 
 #### `install_schedule` — attempts and concurrency as one list
 
-An install schedule is one entry per attempt, in order, each carrying the build concurrency that attempt runs with.
-The **length of the list is the attempt count**, so the two things a difficult machine needs tuning for cannot
-contradict each other:
-
 ```json
-"install_schedule": [ {}, { "concurrency": 4 }, { "concurrency": 1 } ]
+"install_schedule": [ {}, { "concurrency": 8 }, { "concurrency": 1 } ]
 ```
 
-That reads: first attempt at whatever vcpkg picks from the hardware, second throttled to four parallel jobs, third
-serialised. An empty entry, or `"concurrency": 0`, exports nothing and leaves vcpkg to size the build itself.
+One entry per attempt, in order; the length is the attempt count. `{}` or `concurrency: 0` lets vcpkg size the
+build from the hardware. The failures worth retrying are resource-shaped — a machine with many cores and little
+RAM exhausts memory long before it exhausts cores — so retrying identically just rolls the same dice, while
+retrying with fewer parallel jobs changes the odds. Both keys also exist per package, since the ports that need
+throttling are not the ports that need retrying.
 
-The point is that the failures worth retrying are **resource-shaped**, so repeating the same command just rolls the
-same dice. Measured on one machine building opencv4: GCC's `cc1plus` peaks at **928 MB**, and it runs up to **four
-linkers of 969 MB** alongside it, for a combined peak of **6.6 GB** at seventeen parallel jobs. Scale that to
-thirty-two threads and it is about 12 GB — which on a 16 GB machine is the edge, and past the edge the compiler dies
-in ways that look like compiler bugs: a segmentation fault at a different optimisation pass on every run.
+#### `retry_delay_seconds`
 
-A package may declare its own, because the ports that need throttling are not the ports that need retrying:
-
-```json
-{ "name": "opencv4", "install_schedule": [ { "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 } ] }
-{ "name": "qtbase",  "install_schedule": [ { "concurrency": 8 } ], "max_install_attempts": 3 }
-```
-
-`max_install_attempts` still works and now sets the **length** of the schedule, at either level: it truncates a
-longer one, and extends a shorter one by repeating its last entry, which is the careful one. With neither key the
-behaviour is what it always was — first attempt at vcpkg's concurrency, every attempt after it serialised.
-
-#### `retry_delay_seconds` — for the failures a lower concurrency cannot fix
-
-Seconds to wait before a retry, multiplied by the attempt number: `30` gives gaps of 0, 30, 60, 90 s. Absent
-or `0` retries immediately, which is the default and what this generator has always done. The wait costs
-nothing on a healthy run, since it only happens after a failure, and it is interruptible.
-
-`install_schedule` above answers the failures that are resource-shaped, where lowering concurrency is what
-changes the odds. This answers the other kind. Measured on a real run: a proxy returned **504** for a GitHub
-tarball, and every later attempt got that same 504 back in under a second — a cached negative response,
-not a timeout. All four attempts finished inside fifty seconds and never had a chance. That is also why the
-gap grows rather than being flat: those windows last minutes, so a flat five seconds would not have helped.
+Seconds to wait before a retry, multiplied by the attempt number: `30` gives gaps of 0, 30, 60, 90. Absent or `0`
+retries immediately, which is the default. It is for the failures a lower concurrency cannot fix — a flaky proxy,
+an unreachable mirror — and costs nothing on a healthy run.
 
 #### `cleanup.buildtrees` — what step 4 throws away when it is done
 
-`none` (the default, and what this generator has always done), `logs`, or `all`. Nothing is deleted unless
-you ask.
+`none` (the default), `logs`, or `all`. `buildtrees` is the largest thing on a finished drive by a wide margin and
+is pure scratch. `logs` removes each port's source and build directories but keeps its build logs; `all` removes
+the port directories whole. Only runs after a successful, uncancelled step 4.
 
-`buildtrees` is where every port is unpacked, configured and compiled, and on a finished 29-package drive it
-is **12.0 GB** against 1.2 GB of vcpkg staging and 382 MB of binary cache. It is scratch: no part of it
-enters a package ABI. `logs` deletes each port's source and build subdirectories and keeps the log files
-sitting directly in its directory — for a port that succeeded on its *first* attempt those logs exist
-nowhere else, because step 4 only copies logs to the drive from the failed-attempt branch. `all` deletes the
-port directories whole.
-
-> ⚠️ **`DEVSYSTEM_BUILDTREES` points at this same directory, so your own projects build here too.** On a
-> real drive that was 537 MB across fifteen directories sitting beside 89 vcpkg ports. Cleanup never touches
-> them: a port is identified by the `vcpkg_abi_info.txt` vcpkg leaves at the top of its directory, not by its
-> name. Measured on that drive, all 89 ports carry the stamp and none of the other directories does.
-
-Two things it costs, so they are not discovered afterwards. Every installed DLL carries DWARF paths into its
-port's `src/` — 153 of them in `libopencv_core4.dll` alone — so a debugger can no longer step into
-third-party sources; the libraries load and link exactly as before. And the binary cache does not make a
-later rebuild free in general: it is keyed on ABI, so anything that moves an ABI (a triplet edit, a baseline
-bump) rebuilds from source whether or not this ever ran.
-
-The cleanup runs only after a successful, uncancelled step 4, and a failure inside it warns rather than
-failing the run.
+> ⚠️ **`DEVSYSTEM_BUILDTREES` points at this same directory, so your own projects build here too.** Cleanup never
+> touches them: a port is identified by the `vcpkg_abi_info.txt` vcpkg leaves in its directory, not by its name.
 
 #### `buildtrees_root` — a hard limit, not a preference
 
-vcpkg builds each port under `<root>/<port>/<triplet>-rel/`, and with a name like `x64-mingw-ucrt-dynamic-release`
-that prefix alone is 69 characters. Qt's autogen filenames are long enough that `qtdeclarative` reached **261
-characters** and the build failed with `error: opening dependency file ...: No such file or directory`.
+A folder name relative to the drive, defaulting to `bt`. It is short on purpose: Windows applies a 260-character
+path cap to programs without a long-path manifest, MSYS2's GCC is one of them, and Qt's generated filenames under
+vcpkg's default `buildtrees/` reach it. Do not spell the drive letter here — `dev_drive_letter` already says which
+drive this is.
 
-Windows applies a 260-character cap to any program that has not opted into long paths through its application
-manifest, and **MSYS2's GCC has not**, so `LongPathsEnabled=1` in the registry does not rescue it.
+> ⚠️ **A different triplet means a different installed tree**, so consumers need a second `CMAKE_PREFIX_PATH`, and
+> a static library brings its own copies of shared dependencies. When the goal is just "this one library static",
+> `set(VCPKG_LIBRARY_LINKAGE static)` in an overlay portfile is the lighter tool.
 
-```json
-"buildtrees_root": "bt"
-```
-
-**A folder, relative to the dev drive** — not a path. `environment.dev_drive_letter` already says which drive this
-is, and repeating it here only creates a second place for the answer to come from. A chain such as `"scratch/bt"`
-works too.
-
-The default is `bt`, which puts that same path at 247. Nothing is lost by moving it: buildtrees is scratch, it is
-not part of any package ABI, and it is deleted after each port when clean-buildtrees is in effect. Step 1 creates
-whatever you configure here.
-
-An absolute form is still accepted, and the drive part is discarded with a warning. That is not politeness about
-old configurations: **the two steps used to disagree**. Step 1 stripped the letter and created the folder on the
-drive it had just mounted, while step 4 kept the letter and handed it to vcpkg — so a configuration reading
-`"T:/bt"` against a dev drive of `N` did not fail. It created `N:/bt`, built in `T:/bt`, and half-filled two disks
-without saying a word. Both steps now go through one resolver, so that answer can only be written once.
-
-> ⚠️ **A different triplet means a different installed tree.** Everything built under it, dependencies included,
-> lands in `vcpkg/installed/<that-triplet>/`, so consumers need a second `CMAKE_PREFIX_PATH` — and a library built
-> there brings its own static copies of shared dependencies. An application linking a package from a static tree
-> alongside Qt or curl from the dynamic one can end up with two OpenSSL instances in a single process. When the goal
-> is just "this one library static", `set(VCPKG_LIBRARY_LINKAGE static)` in an overlay portfile is the lighter tool:
-> the package stays in the same tree and its dependencies stay shared. That is how Fast DDS and the mongo family are
-> built here.
-
-> ⚠️ Prefer explicit feature lists over blanket ones such as ffmpeg's `all-gpl`. `all-gpl` enables everything,
-> including codecs that cannot work on this toolchain — and one of them took `avcodec` down with it, and `ffmpeg.exe`
-> and GStreamer's whole libav bridge after that. An explicit list is also a statement of intent that a reader can
-> check.
+> ⚠️ Prefer explicit feature lists over blanket ones such as ffmpeg's `all-gpl`, which enables codecs that cannot
+> work on this toolchain and can take the rest of the library down with them.
 
 ### `workspace`
 
-Optional, and the only section about your projects rather than the environment. Omit it and step 6 has nothing to do.
-
-```json
-"workspace": {
-    "default_folder": "workspace",
-    "repositories": [
-        { "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git" },
-        { "url": "https://github.com/DegorasProjectTeam/LibZMQUtils.git",
-          "folder": "workspace/degoras", "ref": "main", "optional": true }
-    ]
-}
-```
-
-Only `url` is required. `default_folder` names the directory **step 1 creates** and the one `DEVSYSTEM_WORKSPACE`
-points at, so there is one name in one place rather than a fixed `workspace` folder sitting empty beside whatever
-the configuration actually uses. Omit it and it is `workspace`, which is what every environment generated before
-this used. It must be relative to the drive root, with no drive letter and no `..`.
-
-| Key | Default | What it does |
-| --- | --- | --- |
-| `url` | — | Anything `git clone` accepts: https, ssh, or a local path |
-| `name` | last path segment of the URL, minus `.git` | The directory to clone into, so two forks can coexist |
-| `folder` | `workspace.default_folder` | Destination root, relative to the drive. No drive letter, no `..` |
-| `ref` | the remote's default branch | A branch or a tag. Not a commit id — `clone --branch` takes a name |
-| `depth` | full clone | A shallow clone of N commits |
-| `submodules` | `false` | Clone submodules too |
-| `optional` | `false` | A failure here is a warning instead of a fault |
-
-**What the step does when re-run**, which is the part that decides whether it is safe to leave in a pipeline:
-
-| On disk | What happens |
-| --- | --- |
-| Nothing | Cloned |
-| The same repository, same origin | **Left completely alone.** Not fetched, not reset, not rebased |
-| A git repository with a *different* origin | Refused, and the step fails |
-| Something that is not a git repository | Refused, and the step fails |
-
-It never fetches and never touches a working tree it did not just create. This step puts projects on a drive; it is
-not a synchroniser, and pulling under somebody's uncommitted work is not a thing a setup script should do.
-
-> ⚠️ **Private repositories over HTTPS will not clone here.** The step runs non-interactively with
-> `GIT_TERMINAL_PROMPT=0`, deliberately — otherwise an unattended run hangs forever waiting for a username nobody is
-> there to type. The drive's git has no credential helper of its own. Use a public URL, or an `ssh://` remote with a
-> key the machine already has, or mark that repository `optional` and clone it by hand. The step says exactly this
-> when an HTTPS clone fails, rather than leaving you to work it out.
-
-**What step 6 deliberately does not do: build anything.** A configuration that both names remote repositories and
-names a script to run after fetching them is a way to execute arbitrary code on whoever generates the drive, and
-step 1 self-elevates. Separately, and more mundanely: a project that fails to build is not a broken drive, and a
-step that conflates the two teaches people to ignore its failures. Build from the launcher, where a red build means
-what it says.
+Optional. Names git repositories for step 6 to clone onto the drive. Only the URL is required; a repository can
+override its directory name, destination folder, branch or tag, clone depth, submodules, and whether a failure to
+clone is fatal. A repository already present with the same origin is left alone — not fetched, not reset — and one
+with a different origin is refused rather than touched.
 
 ### `environment.verification`
 
-What "working" means for *this* drive, which is a question a generator cannot answer for you:
-
-| Key | Checks |
-| --- | --- |
-| `check_packages` | Every configured port is installed |
-| `check_dll_load` | Every installed library and plugin can actually be **loaded** |
-| `check_tools` | Named tools resolve on the environment's `PATH` |
-| `check_commands` | Named commands run and their output contains an expected string |
-| `check_gstreamer_elements` | Named GStreamer elements are registered |
+What step 5 checks: the packages that must be installed, whether every library loads, the tools that must be on
+`PATH`, commands that must run, and the GStreamer elements that must be registered.
 
 ---
 
 ## Verification
 
-This section is step 5, which checks the environment that was built. The configuration file itself is checked
-separately and much earlier: every step validates it before acting on any value in it, and an unknown key is an
-error rather than a silent default -- see [Configuration](#configuration).
+Step 5 checks the environment that was built.
 
 ```powershell
 .\scripts\5-Verify_Env.ps1            # exits non-zero if anything is wrong
-.\scripts\5-Verify_Env.ps1 -NoFail    # report only, for a run whose purpose is to look
+.\scripts\5-Verify_Env.ps1 -NoFail    # report only
 ```
 
 Output is a summary by group, a list of anything that failed, and a report written to
 `<drive>:\installation\verification.txt`.
 
 ```
- packages   27 checked, 0 failed
- load       445 checked, 0 failed
- tools      8 checked, 0 failed
- commands   4 checked, 0 failed
+ packages   29 checked, 0 failed
+ load      431 checked, 0 failed
+ tools       6 checked, 0 failed
+ commands    3 checked, 0 failed
  elements   29 checked, 0 failed
- patches    1 checked, 0 failed
+ patches     1 checked, 0 failed
 ```
 
-Three result states, not two: **ok**, **failed**, and **not checked**. The last one matters — a check that could not
-be carried out, because another vcpkg process held the lock for instance, is not a check that failed. A verification
-tool that cries wolf gets switched off.
-
-The `patches` group is the odd one out: every other check asks whether vcpkg produced the right thing, and that one
-asks whether vcpkg is still patched — see [One patch to vcpkg itself](#one-patch-to-vcpkg-itself). It exists because
-the patch applies by anchoring on a neighbouring line, so a baseline bump can leave it silently doing nothing, and
-the consequence surfaces hours later, in another step, on one machine out of two.
+Three result states, not two: **ok**, **failed**, and **not checked**. A check that could not be carried out is not
+a check that failed, and a verification tool that cries wolf gets switched off.
 
 **The load check is the one that earns its keep.** A DLL that built is not a DLL that works: it can be missing a
-dependency or importing a name nothing provides, and neither shows up until something tries to load it. Each library
-is opened with `LOAD_WITH_ALTERED_SEARCH_PATH`, so its dependencies resolve exactly as they will for a real consumer.
+dependency or importing a name nothing provides, and neither shows up until something tries to load it. Each
+library is opened the way a real consumer would open it.
 
 ---
 
 ## Testing Material
 
 `DrivEnv-Win/testing/` is copied to the drive and holds hand-runnable checks for the libraries that have
-historically been difficult on this toolchain:
+historically been difficult on this toolchain: GStreamer (elements, pipelines, hardware encode paths, RTP), FFmpeg
+(what was built in, decode and transcode) and curl (TLS backend and protocols).
 
-- **`gstreamer/`** — element checks, pipelines, NVIDIA and Media Foundation encode paths, RTP send/receive launchers,
-  low-latency patterns, and a real 1080p60 file to demux rather than a synthesised one.
-- **`ffmpeg/`** — what was built in, probing, decode and transcode.
-- **`curl/`** — TLS backend, protocols, and what the requested features actually produced.
-
-> ⚠️ Run these **from the environment's own launcher**. The vcpkg tool directories are placed on `PATH` by the
-> launcher, not by the environment file. And a binary run from a shell carrying *another* environment picks up that
-> environment's DLLs — the failure is `0xC0000139`, "entry point not found", which reads like a broken build rather
-> than a mixed one.
-
----
-
-### Triplet integrity
-
-Step 3 verifies every overlay triplet against a `.sha256` shipped beside it before installing it on the drive, and
-refuses to install one that does not match.
-
-The hash is over the file's **content with line endings normalised**, not over its raw bytes, and that distinction
-is load-bearing. These are text files in a git repository used with `core.autocrlf=true`, so the same committed
-bytes arrive as LF on one machine and CRLF on another. A byte hash measures the developer's git configuration
-rather than the file: measured, `x64-mingw-ucrt-static-release.cmake` hashes `910B5E89...` as LF and `8BAE34F2...`
-as CRLF, and a hash generated on one machine failed on the other. Regenerating it there fixed it there and broke it
-back here.
-
-Two guards, because either alone is fragile. `.gitattributes` marks these files `-text` so git stops rewriting
-them, and the check normalises anyway, so a clone predating that rule still verifies.
-
-> ⚠️ **If the check ever fails, read the diff before regenerating the hash.** The comparison ignores line
-> endings, so a mismatch means the *content* differs, which is the check doing its job. Regenerate with
-> `Utility-Hash_Generator.bat` in the triplets directory only once you know why it changed.
+> ⚠️ Run these **from the environment's own launcher**. A binary run from a shell carrying another environment
+> picks up that environment's DLLs, and the failure reads like a broken build rather than a mixed one.
 
 ---
 
 ## Overlay Ports
 
-`DrivEnv-Win/vcpkg_overlays/ports/` carries local ports for packages that do not build correctly on this
-toolchain as published. Every one of them is a thing that must be re-applied when the port is bumped, so
-**every one of them is documented** — what it changes, why, and how the failure presents itself — in
-[`installation/vcpkg_overlays.txt`](DrivEnv-Win/installation/vcpkg_overlays.txt).
-
-That file exists because the alternative was tried: a fix was made for an earlier environment, the reasoning lived
-only in the diff, the diff did not survive a rebase, and the same problem was diagnosed from scratch months later —
-presenting, that time, as an error message about CUDA.
-
-Several of these are genuine upstream bugs on non-MSVC Windows toolchains and are worth reporting upstream rather
-than carried forever. The notes say which.
-
-### Layers
+`DrivEnv-Win/vcpkg_overlays/ports/` carries local ports for packages that do not build correctly on this toolchain
+as published. Each one must be re-applied when the port is bumped, so each one is documented — what it changes, why,
+and how the failure presents itself — in
+[`installation/vcpkg_overlays.txt`](DrivEnv-Win/installation/vcpkg_overlays.txt). Several are genuine upstream bugs
+worth reporting rather than carrying forever; the notes say which.
 
 Overlay ports are **layered**, and each triplet says which layers it searches:
 
 ```json
 "overlay_ports": [
   { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
-  { "triplet": "x64-mingw-ucrt-dynamic-release",  "layers": ["ports.ucrt",  "ports"] },
   { "triplet": "*",                               "layers": ["ports"] }
 ]
 ```
 
-`triplet` is matched exactly, `"*"` covers anything no other entry names, and the layers are searched **in order** —
-vcpkg takes the first that contains the port, so a specific layer overrides the shared one. Layer names are single
-directory names under `vcpkg_overlays/`; a name that does not exist there is a hard error rather than an empty layer,
-because treating it as empty would mean a port you expect to be overridden quietly comes from upstream instead.
-
-Omit the key and every triplet gets `["ports"]`, which is what this generator did before layers existed.
-
-The resolution happens **per port**, not once per run. That is what will let one vcpkg tree hold a GCC triplet and a
-clang triplet with different overlays: the overlay path is not a property of the tree, it is an argument to each
-vcpkg invocation, and step 4 invokes vcpkg once per port.
+Layers are searched in order and vcpkg takes the first that contains the port, so a specific layer overrides the
+shared one. Omit the key and every triplet gets `["ports"]`.
 
 > ⚠️ **A layer is usually the wrong tool.** It holds a whole portfile, so two copies then have to be kept in step
-> through every baseline bump — and they will not be; the copy nobody is currently debugging goes stale silently and
-> the failure surfaces months later as "it works on the other triplet". For a delta of a line or two, put a
-> conditional **inside** the shared port instead. The `gstreamer` overlay does exactly that:
-> `if(VCPKG_C_COMPILER MATCHES "clang" OR TARGET_TRIPLET MATCHES "clang")`. Note `TARGET_TRIPLET` — the
-> project-side `VCPKG_TARGET_TRIPLET` does not exist in portfile scope, and a test against it reads empty and takes
-> the `else` branch without complaining.
+> through every baseline bump — and they will not be. For a delta of a line or two, put a conditional inside the
+> shared port instead.
 
-Bringing up a CLANG64 environment is the case this was built for, and it argues the same way. Eight
-incompatibilities turned up. Five were settings and live in the triplet. Three were source-level, and **two of those
-were upstream bugs whose fixes are correct for GCC as well** — a comparison operator that should have been `const`,
-and a cast that GCC accepts unchanged — so they sit in the shared `ports` layer with nothing to keep in step. Only
-`libffi`'s ELF symbol versioning was genuinely clang-specific, and even that is an option in the shared overlay
-rather than a second copy of the port. `ports.clang` and `ports.ucrt` ship empty, and their READMEs say why.
+Step 3 also applies one patch to vcpkg itself, adding a known-transient OpenSSL failure to the list of build errors
+vcpkg retries serially. It is idempotent, never fatal, and step 5 checks that it is still in place.
 
-### One patch to vcpkg itself
+### Triplet integrity
 
-An overlay replaces a port. Step 5 of `scripts/3-Clone_VCPKG.ps1` patches something an overlay cannot reach: vcpkg's own
-`scripts/cmake/vcpkg_execute_build_process.cmake`, adding one string to the list of build failures that vcpkg
-retries with parallelism disabled.
+Step 3 verifies every overlay triplet against a `.sha256` shipped beside it and refuses to install one that does
+not match. The hash is over the file's content with line endings normalised, not its raw bytes, so a checkout that
+converted line endings still verifies.
 
-OpenSSL's generated Makefile gives `build_libs`, `build_modules` and `build_inst_programs` a recipe each, and every
-one of them is its own sub-make: `"$(MAKE)" depend && "$(MAKE)" _build_libs`. `make install` reaches all three
-through `install_sw`, so at any `-j` above 1 three copies of `util/add-depends.pl` run at once in the same
-directory. That script writes `Makefile-<pid>`, reads `Makefile` to compare against it, then renames its temporary
-over it — and on Windows a rename onto a file another process holds open without `FILE_SHARE_DELETE` fails:
-
-```
-Trying to rename Makefile-1301 -> Makefile: Permission denied
-make[2]: *** [Makefile:3566: depend] Error 13
-```
-
-On POSIX that rename succeeds, which is why upstream never sees it. **Lowering the concurrency does not help** —
-the three sub-makes are prerequisites of one target, so they overlap at `-j 8` exactly as at `-j 12`, and an
-`install_schedule` that stops above 1 spends its attempts for nothing. Two machines here run the identical race:
-one wins it every time, the other loses it every time. That is what a microsecond window looks like across
-different hardware, and it is why this is not reproducible on the machine that happens to win.
-
-vcpkg already passes a hard-coded `-j 1` alongside the parallel install command and re-runs it when the log
-matches its retry list — a list that already carries `"Cannot write file"` and `"mkdir [^:]*: File exists"` for
-this very class, with its own comments reading *"Multiple threads using the same directory at the same time cause
-conflicts"*. The mechanism is there; only OpenSSL's wording was missing. Adding it costs nothing: the retry runs
-inside the same call, on the same buildtree, with every object already compiled. Letting step 4 retry the whole
-port instead re-extracts and rebuilds from scratch — measured at 2189 compiler invocations per attempt.
-
-The patch is idempotent and never fatal. If a baseline bump moves the anchor it warns loudly and carries on,
-because an environment that builds on any machine winning the race is still a working environment. Step 4's
-dirty-tree check knows about the file, so a re-run reports it as expected rather than warning about a change the
-generator made itself.
+> ⚠️ **If the check fails, read the diff before regenerating the hash.** The comparison ignores line endings, so a
+> mismatch means the content changed — which is the check doing its job.
 
 ---
 
 ## Logs
 
-Every step logs into `install_logs\` beside the scripts, and copies that log onto the drive at
-`<drive>:\logs\setup\` — on the way out of a successful run *and* on the way out of a failed one. The scripts live
-in a working copy that gets cloned, moved and cleaned; the drive does not. A drive that carries the record of how
-it was made can be handed to somebody else, or read a year later, without that working copy still existing.
+Every step logs into `install_logs\` beside the scripts and copies that log onto the drive at
+`<drive>:\logs\setup\`, on the way out of a successful run and of a failed one. The scripts live in a working copy
+that gets cloned, moved and cleaned; the drive does not, so a drive carries the record of how it was made.
 
-Failed ports get their own copy, and this one is about timing rather than location:
+Failed ports get their own copy, one directory per attempt:
 
 ```
 <drive>:\logs\vcpkg\<port>\attempt1_20260903_093201\
 <drive>:\logs\vcpkg\<port>\attempt2_20260903_094410\
 ```
 
-vcpkg writes a port's logs into the buildtree under fixed names — `build-<triplet>-rel-err.log` and friends — so
-**the next attempt overwrites them.** With retries enabled that leaves exactly one set on disk when the run ends:
-the last attempt's. The first failure is usually the informative one, and the comparison between attempts is the
-whole reason for retrying at concurrency 12, then 6, then 1 — and it is precisely what got thrown away. Step 4 now
-copies the logs out after each failed attempt, before the next one starts, one directory per attempt.
-
-This is separate from the tail step 4 already quotes into its own log. The tail is 25 lines of the two newest
-`*-err.log` files, which is enough to *see* a cause and not enough to diagnose one; a re-run of the step overwrites
-even that. `logs/setup` rather than `logs/vcpkg` for the step logs, incidentally, because step 1 has nothing to do
-with vcpkg and a step-1 log filed under `vcpkg` is worse than no filing at all.
-
-None of it is allowed to be fatal. Losing a log copy is worth a warning and is not worth failing a build that
-otherwise worked — least of all on an abort path that is already reporting a real error.
+vcpkg writes a port's logs under fixed names, so the next attempt overwrites them. Copying them out after each
+failed attempt keeps the first failure, which is usually the informative one.
 
 ---
 
@@ -799,23 +429,25 @@ Step 4 writes an inventory to `<drive>:\installation\`, next to the hand-written
 | File | Contents |
 | --- | --- |
 | `vcpkg_packages.txt` / `.json` | Which ports, versions and features — the JSON for diffing two drives or two dates |
-| `vcpkg_baseline.txt` | The baseline commit and what it was, so a version can be traced upstream |
+| `vcpkg_baseline.txt` | The baseline commit, so a version can be traced upstream |
 | `msys2_packages.txt` | The MSYS2 side, which vcpkg knows nothing about |
 | `environment.txt` | The generated variables, verbatim |
 | `verification.txt` | The result of the last step 5 run |
 | `vcpkg_overlays.txt` | Hand-written: what each overlay changes and why |
-| `vcpkg_packages_notes.txt` | Hand-written: what was enabled, what was excluded on purpose, what was tried and failed |
+| `vcpkg_packages_notes.txt` | Hand-written: what was enabled, excluded, or tried and failed |
 | `manual_installs.txt` | Hand-written: what no script installs |
 
-The generated files are generated because a hundred-package list maintained by hand is worse than none the moment it
-drifts. The hand-written ones are hand-written because no tool knows *why* a decision was taken.
+The generated files are generated because a hundred-package list maintained by hand is worse than none the moment
+it drifts. The hand-written ones are hand-written because no tool knows *why* a decision was taken.
 
 ---
 
 <!-- LICENSE -->
 ## License
 
-Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
+
+---
 
 <!-- CONTACT -->
 ## Author / Contact
@@ -829,12 +461,12 @@ Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
 <!-- ACKNOWLEDGMENTS -->
 ## Acknowledgments
 
-* Real Instituto y Observatorio de la Armada (ROA)
-* [MSYS2][toolchain-url], whose pinned packages this pins in turn
-* [vcpkg][vcpkg-url], and the port maintainers whose work the overlays here only patch
-* The [Qt Project](https://www.qt.io/)
-* [Shields.io](https://shields.io/)
-* [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+* [https://armada.defensa.gob.es/ArmadaPortal/page/Portal/ArmadaEspannola/cienciaobservatorio/prefLang-es/](https://armada.defensa.gob.es/ArmadaPortal/page/Portal/ArmadaEspannola/cienciaobservatorio/prefLang-es/)
+* [https://www.msys2.org/](https://www.msys2.org/)
+* [https://vcpkg.io/](https://vcpkg.io/)
+* [https://www.qt.io/](https://www.qt.io/)
+* [https://shields.io/](https://shields.io/)
+* [https://github.com/othneildrew/Best-README-Template](https://github.com/othneildrew/Best-README-Template)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -845,7 +477,7 @@ Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
 [platform-url]: #requirements
 [powershell-shield]: https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=for-the-badge&logo=powershell&logoColor=white
 [powershell-url]: #requirements
-[toolchain-shield]: https://img.shields.io/badge/toolchain-MSYS2%20UCRT64-orange?style=for-the-badge
+[toolchain-shield]: https://img.shields.io/badge/toolchain-MSYS2-orange?style=for-the-badge
 [toolchain-url]: https://www.msys2.org/
 [vcpkg-shield]: https://img.shields.io/badge/packages-vcpkg-brightgreen?style=for-the-badge
 [vcpkg-url]: https://vcpkg.io/
