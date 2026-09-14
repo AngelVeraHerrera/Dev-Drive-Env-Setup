@@ -76,10 +76,17 @@ function Write-Banner
 function Format-Duration
 {
     # @brief A TimeSpan as h:mm:ss, or m:ss when it is under an hour. Read at a glance, not parsed.
+    #
+    # Floor, NOT [int]. PowerShell's [int] cast ROUNDS, so a 50-second step printed "1:50" -- the minutes came
+    # from rounding 0.833 up while the seconds stayed 50 -- and 59:59 printed as "60:59". Caught by the summary
+    # disagreeing with itself: five steps adding to 1:12 under a column that read 1:50 for one of them.
     param ([TimeSpan]$Span)
 
-    if ($Span.TotalHours -ge 1) { return ("{0}:{1:00}:{2:00}" -f [int]$Span.TotalHours, $Span.Minutes, $Span.Seconds) }
-    return ("{0}:{1:00}" -f [int]$Span.TotalMinutes, $Span.Seconds)
+    if ($Span.TotalHours -ge 1)
+    {
+        return ("{0}:{1:00}:{2:00}" -f [math]::Floor($Span.TotalHours), $Span.Minutes, $Span.Seconds)
+    }
+    return ("{0}:{1:00}" -f [math]::Floor($Span.TotalMinutes), $Span.Seconds)
 }
 
 function Test-IsAdministrator
@@ -163,17 +170,6 @@ if ($To -lt $From)
     exit 1
 }
 
-# ELEVATION IS CHECKED HERE, once, rather than left to step 1. Step 1 can elevate itself by relaunching, but the
-# elevated copy lands in its OWN console window: this runner would see the launcher exit, call the step done,
-# and race ahead into step 2 while step 1 was still formatting the drive in a window nobody is watching.
-if (-not (Test-IsAdministrator))
-{
-    Write-Host "[ERROR] This runner must be started from an elevated PowerShell." -ForegroundColor Red
-    Write-Host "        Step 1 uses diskpart, and a step that elevates itself would open a second window this" -ForegroundColor Red
-    Write-Host "        runner cannot wait on -- so it is required up front instead of discovered halfway in." -ForegroundColor Red
-    exit 1
-}
-
 $skipNumbers = @()
 foreach ($token in ($Skip -split '[,;\s]+' | Where-Object { $_ -ne "" }))
 {
@@ -196,6 +192,27 @@ if ($ValidateOnly)
 if ($selected.Count -eq 0)
 {
     Write-Host "[ERROR] Every step in $From..$To was skipped; nothing to do." -ForegroundColor Red
+    exit 1
+}
+
+# ELEVATION IS CHECKED UP FRONT rather than left to step 1. Step 1 can elevate itself by relaunching, but the
+# elevated copy lands in its OWN console window: this runner would see the launcher exit, call the step done, and
+# race ahead into step 2 while step 1 was still formatting the drive in a window nobody is watching.
+#
+# ONLY WHEN STEP 1 IS ACTUALLY GOING TO RUN, though, and that distinction is the whole point of -From. Step 1 is
+# the only one that needs administrator rights -- diskpart -- and demanding them for a `-From 3` resume turns the
+# ordinary recovery case, where somebody restarts after a failed port at two in the morning, into a UAC prompt
+# for work that touches nothing privileged. -ValidateOnly selects step 1 but only reads the configuration, so it
+# is exempt too.
+$needsElevation = ($selected | Where-Object { $_.Number -eq 1 }) -and (-not $ValidateOnly)
+
+if ($needsElevation -and -not (Test-IsAdministrator))
+{
+    Write-Host "[ERROR] Step 1 creates and mounts the virtual disk with diskpart, so this runner must be" -ForegroundColor Red
+    Write-Host "        started from an elevated PowerShell. A step that elevates itself would open a second" -ForegroundColor Red
+    Write-Host "        window this runner cannot wait on, so it is required now rather than discovered later." -ForegroundColor Red
+    Write-Host "" -ForegroundColor Red
+    Write-Host "        Resuming past step 1 needs no elevation: try -From 2 or later." -ForegroundColor Red
     exit 1
 }
 
