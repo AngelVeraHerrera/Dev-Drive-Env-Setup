@@ -1819,6 +1819,118 @@ catch
 
 Write-Info "STEP 6: OK"
 
+# STEP 7: Optional cleanup of the build trees.
+# --------------------------------------------------------------------
+#
+# WHERE THIS SITS IS WHAT MAKES IT SAFE, so it is worth saying why here rather than guarding it four times.
+# Inside the "not cancelled" block, after step 6: every failure path in this script ends in Abort-WithError,
+# whose last statement is `exit 1`, so a failed run never reaches this line; a Ctrl-C sets $cancelledRun and
+# routes around the whole block; step 4 has already verified that every configured port is installed; and step
+# 6 has finished its `vcpkg list`, so no vcpkg process is holding a handle under the directories being removed.
+#
+# Nothing happens at all unless vcpkg.cleanup.buildtrees says so, and its default is "none".
+
+$cleanupMode = "none"
+if ($Cfg.vcpkg.PSObject.Properties.Name -contains "cleanup" -and $Cfg.vcpkg.cleanup -and
+    ($Cfg.vcpkg.cleanup.PSObject.Properties.Name -contains "buildtrees"))
+{
+    # Trimmed and lowered because the VALIDATOR compares that way -- it accepts " LOGS " as valid -- and a value
+    # that validates but matches no branch here would silently mean "none", which is the wrong kind of silence.
+    $cleanupMode = ([string]$Cfg.vcpkg.cleanup.buildtrees).Trim().ToLowerInvariant()
+}
+
+if ($cleanupMode -eq "none")
+{
+    Write-Info "STEP 7: Build trees kept (vcpkg.cleanup.buildtrees = none)."
+}
+else
+{
+    Write-Info "STEP 7: Clean the build trees (vcpkg.cleanup.buildtrees = $cleanupMode)."
+
+    # ONE SOURCE FOR THE PATH. Resolve-DrivEnvBuildtreesRoot exists precisely so steps 1 and 4 cannot disagree
+    # about where this is; re-deriving it here would reintroduce the drift it was written to remove.
+    $buildtreesWin = (Resolve-DrivEnvBuildtreesRoot -Cfg $Cfg -DriveLetter $driveLetter `
+                                                    -Warn { param($m) Write-Warn $m }).Windows
+    $buildtreesWin = Convert-ToWinPath $buildtreesWin
+
+    if (-not (Test-Path -LiteralPath $buildtreesWin))
+    {
+        Write-Warn "Build trees root '$buildtreesWin' does not exist; nothing to clean."
+    }
+    else
+    {
+        # THE SELECTOR, and the entire safety of this feature rests on it.
+        #
+        # DEVSYSTEM_BUILDTREES points at this same root, and every preset in every repository on the drive
+        # builds under it. So this directory holds the user's OWN build trees sitting beside vcpkg's -- measured
+        # on a finished drive, 15 of them (DegorasASI, DegorasKinesis and twelve HelloWorlds) against 89 port
+        # directories. Deleting by "everything under the root" would throw away somebody's work.
+        #
+        # A port directory is told apart by a stamp vcpkg leaves and nothing else does: a vcpkg_abi_info.txt at
+        # its top level. Measured on that drive: all 89 ports carry one, none of the 16 non-port directories
+        # does. Zero false positives, zero false negatives. Names are not used -- a name is a guess, the stamp
+        # is vcpkg saying "this is mine".
+        $candidates = @()
+        foreach ($dir in @(Get-ChildItem -LiteralPath $buildtreesWin -Directory -ErrorAction SilentlyContinue))
+        {
+            $stamp = @(Get-ChildItem -LiteralPath $dir.FullName -Filter "*vcpkg_abi_info.txt" -File -ErrorAction SilentlyContinue)
+            if ($stamp.Count -gt 0) { $candidates += $dir }
+        }
+
+        $skipped = @(Get-ChildItem -LiteralPath $buildtreesWin -Directory -ErrorAction SilentlyContinue).Count - $candidates.Count
+        Write-Info ("Port directories to clean: {0}. Left alone (not vcpkg's): {1}." -f $candidates.Count, $skipped)
+
+        $freedBytes = 0
+        $cleanStart = Get-Date
+
+        foreach ($dir in $candidates)
+        {
+            try
+            {
+                if ($cleanupMode -eq "all")
+                {
+                    $freedBytes += (Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
+                                    Measure-Object -Property Length -Sum).Sum
+                    Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction Stop
+                }
+                else
+                {
+                    # "logs": the subdirectories are the source tree and the configure/build tree; the files
+                    # sitting directly in the port's directory are its build logs. For a port that succeeded on
+                    # its FIRST attempt those logs exist nowhere else -- Save-VcpkgFailureLogs only ever runs
+                    # from the failed-attempt branch -- so this is the mode that can still answer "what did this
+                    # port actually do" after the space is reclaimed.
+                    foreach ($sub in @(Get-ChildItem -LiteralPath $dir.FullName -Directory -Force -ErrorAction SilentlyContinue))
+                    {
+                        $freedBytes += (Get-ChildItem -LiteralPath $sub.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
+                                        Measure-Object -Property Length -Sum).Sum
+                        Remove-Item -LiteralPath $sub.FullName -Recurse -Force -ErrorAction Stop
+                    }
+                }
+            }
+            catch
+            {
+                # A cleanup that fails after a good build must not turn a successful run into a failed one. It
+                # says what it could not remove and the run's exit code is untouched.
+                Write-Warn ("Could not clean '{0}': {1}" -f $dir.Name, $_.Exception.Message)
+            }
+        }
+
+        # The root itself is never removed: step 1 creates it, vcpkg puts its vcpkg-running.lock in it, and a
+        # later `-From 4` expects to find it.
+        if (-not (Test-Path -LiteralPath $buildtreesWin))
+        {
+            New-Item -ItemType Directory -Path $buildtreesWin -Force | Out-Null
+            Write-Info "Re-created the build trees root."
+        }
+
+        Write-Info ("Reclaimed {0:N1} MB in {1:N0} s. The binary cache at {2}:/packages/vcpkg was not touched." -f
+                    ($freedBytes / 1MB), ((Get-Date) - $cleanStart).TotalSeconds, $driveLetter)
+    }
+
+    Write-Info "STEP 7: OK"
+}
+
 }   # end of the "not cancelled" block guarding steps 5 and 6
 
 # FINALIZATION

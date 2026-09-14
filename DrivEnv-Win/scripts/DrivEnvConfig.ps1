@@ -191,6 +191,23 @@ function Get-DrivEnvConfigSchema
             install_testing_material      = $boolNode
             install_installation_material = $boolNode
             append_windows_system_path    = $boolNode
+
+            # TWO THINGS THIS GENERATOR PUTS ON THE HOST rather than on the drive it builds, and the only two.
+            # Everything else it makes lives under the drive letter and disappears when the VHDX does; these do
+            # not, which is the whole reason they are worth a switch.
+            #
+            #   create_desktop_shortcuts  the .lnk on the desktop to the VHDX (step 1) and the .lnk on the
+            #                             desktop to the environment launcher (step 2). NOT the launcher
+            #                             shortcut written to the drive root -- that one is part of the
+            #                             artifact, it is what makes a drive handed to somebody else
+            #                             self-explanatory, and no key named after the desktop should govern it.
+            #   automount_at_startup      the scheduled task that mounts the VHDX at boot.
+            #
+            # Both default to TRUE when absent, because both are what the generator has always done and a
+            # configuration written before these keys existed must keep meaning what it meant.
+            create_desktop_shortcuts      = $boolNode
+            automount_at_startup          = $boolNode
+
             proxy_url                     = $stringNode
             verification                  = $verification
         }
@@ -303,6 +320,43 @@ function Get-DrivEnvConfigSchema
             # only creates a second place for the answer to come from. Resolve-DrivEnvBuildtreesRoot below is
             # the single thing that turns this into a path, so every step agrees by construction.
             buildtrees_root = @{ type = 'string'; notEmpty = $true }
+
+            # WHAT STEP 4 THROWS AWAY WHEN IT HAS FINISHED, and it throws away nothing unless told to.
+            #
+            # buildtrees is where every port is unpacked, configured and compiled, and it is the largest thing
+            # on a finished drive by a wide margin: 12.0 GB against 1.2 GB of vcpkg staging and 382 MB of binary
+            # cache, measured on a complete 29-package environment. It is also pure scratch -- it is not part of
+            # any package ABI, a vcpkg_abi_info.txt has no entry for it -- which is what makes deleting it safe.
+            #
+            #   none   leave it alone. The default, and what this generator has always done.
+            #   logs   delete each port's source and build subdirectories, keep the files sitting directly in
+            #          its directory. Those files are the port's own build logs, and for a port that succeeded
+            #          on its FIRST attempt they exist nowhere else -- step 4 copies logs to the drive only from
+            #          the failed-attempt branch. Frees ~10.8 GB of the 12.0 and keeps the 764 MB that can still
+            #          answer "what did this port actually do".
+            #   all    delete each port's directory whole. Frees ~11.5 GB.
+            #
+            # ONLY DIRECTORIES VCPKG OWNS ARE TOUCHED, whichever mode is chosen, and that is not a detail: the
+            # same root holds the build trees of the user's OWN projects, because DEVSYSTEM_BUILDTREES points
+            # here and every preset in every repository writes under it. On the measured drive that was 537 MB
+            # across 15 directories -- DegorasASI, DegorasKinesis and twelve HelloWorlds -- sitting beside 89
+            # port directories. They are told apart by a vcpkg_abi_info.txt stamp, not by name; see step 4.
+            #
+            # WHAT THIS COSTS, so it is not sold as free. Every installed DLL carries DWARF paths pointing into
+            # its port's src/ directory -- 153 of them in libopencv_core4.dll alone -- so after a cleanup a
+            # debugger can no longer step into third-party sources. The libraries load and link exactly as
+            # before. And a later rebuild is NOT protected by the binary cache in general: the cache is keyed on
+            # ABI, so anything that moves an ABI (a triplet edit, a baseline bump) means building from source
+            # again whether or not this ever ran.
+            cleanup = @{
+                type   = 'object'
+                fields = @{
+                    # notEmpty is MANDATORY next to allowed, not decoration: the validator skips the allowed
+                    # check entirely for a whitespace value (:910), so without it "" would validate silently and
+                    # then fall through every branch of the reader. Same shape as msys2.target.family.
+                    buildtrees = @{ type = 'string'; notEmpty = $true; allowed = @('none', 'logs', 'all') }
+                }
+            }
         }
     }
 

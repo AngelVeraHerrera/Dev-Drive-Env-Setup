@@ -44,6 +44,8 @@
             ]
         },
         "append_windows_system_path": false,
+        "create_desktop_shortcuts": true,
+        "automount_at_startup": true,
         "proxy_url": ""
     },
     "msys2": {
@@ -76,6 +78,7 @@
         },
         "target": { "triplet": "x64-mingw-clang-dynamic-release" },
         "buildtrees_root": "bt",
+        "cleanup": { "buildtrees": "logs" },
         "max_install_attempts": 3,
         "install_schedule": [{}, { "concurrency": 8 }, { "concurrency": 1 }],
         "overlay_ports": [

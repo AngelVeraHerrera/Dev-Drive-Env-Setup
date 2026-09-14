@@ -102,7 +102,57 @@ function Test-IsAdministrator
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-ScriptDirectory 
+function Get-DrivEnvMountTaskForVhd
+{
+    # @brief Every scheduled task that mounts this exact VHDX, whatever it happens to be called.
+    #
+    # IDENTITY BY WHAT A TASK DOES, NOT BY WHAT IT IS CALLED. The task is named after the volume label, and the
+    # old pre-check asked Get-ScheduledTask for that bare name -- with no -TaskPath, so it resolved across EVERY
+    # task folder on the machine, including \Microsoft\Windows\. A label colliding with a vendor task name would
+    # have unregistered that vendor task. Matching on the VHDX path instead can only ever find tasks this
+    # generator wrote, because nothing else on a Windows box mounts this file.
+    #
+    # It also fixes the case the name-based check was reaching for and missing: a drive regenerated under a new
+    # label leaves the OLD task behind, still mounting the same VHDX at every boot, invisible because nobody
+    # looks up a task by its action.
+    #
+    # This parses the argument string built at the Register-ScheduledTask below. The two have to stay in sight of
+    # each other -- change the shape of that -Argument and this stops matching, silently.
+    #
+    # @param VhdPath Full path to the VHDX. Compared normalised and case-insensitively, as Windows paths are.
+    param ([string]$VhdPath)
+
+    $wanted = $null
+    try   { $wanted = [System.IO.Path]::GetFullPath($VhdPath) }
+    catch { return @() }
+
+    $found = @()
+    foreach ($task in @(Get-ScheduledTask -TaskPath '\' -ErrorAction SilentlyContinue))
+    {
+        foreach ($action in @($task.Actions))
+        {
+            $arguments = [string]$action.Arguments
+            if ($arguments -notmatch 'Mount-VHD') { continue }
+
+            $m = [regex]::Match($arguments, "-Path\s+'([^']+)'")
+            if (-not $m.Success) { continue }
+
+            $candidate = $null
+            try   { $candidate = [System.IO.Path]::GetFullPath($m.Groups[1].Value) }
+            catch { continue }
+
+            if ($candidate -and $candidate.Equals($wanted, [System.StringComparison]::OrdinalIgnoreCase))
+            {
+                $found += $task
+                break
+            }
+        }
+    }
+
+    return $found
+}
+
+function Get-ScriptDirectory
 {
     if ($PSScriptRoot) {
         return $PSScriptRoot
@@ -294,6 +344,23 @@ $sizeGB      = [int]   $Cfg.environment.vhd_size_gb
 $useDevDriveConfig = [bool]$Cfg.environment.use_dev_drive
 $forceDiskpart = [bool]$Cfg.environment.force_diskpart
 $vhdIsFixed = [bool]$Cfg.environment.vhd_fixed   # key is vhd_fixed; the old vhd_is_fixed always read $null
+
+# PRESENCE FIRST, THEN CAST. The three lines above cast straight off the object, which is right for keys whose
+# default is false: an absent key reads $null and [bool]$null is $false. These two default to TRUE, so the same
+# idiom would silently turn them OFF for every configuration written before they existed -- which is every
+# configuration that exists today. Asking whether the property is there first is the difference between an
+# optional key and a breaking change.
+$createDesktopShortcuts = $true
+if ($Cfg.environment.PSObject.Properties.Name -contains "create_desktop_shortcuts")
+{
+    $createDesktopShortcuts = [bool]$Cfg.environment.create_desktop_shortcuts
+}
+
+$automountAtStartup = $true
+if ($Cfg.environment.PSObject.Properties.Name -contains "automount_at_startup")
+{
+    $automountAtStartup = [bool]$Cfg.environment.automount_at_startup
+}
 
 if ([string]::IsNullOrWhiteSpace($driveLabel))  {Write-Error "Missing environment.dev_drive_label"; Abort-WithError}
 if ([string]::IsNullOrWhiteSpace($driveLetter)) {Write-Error "Missing environment.dev_drive_letter"; Abort-WithError}
@@ -1128,20 +1195,58 @@ $stream    = [System.IO.StreamWriter]::new($envFilePath, $false, $utf8NoBom)  # 
 foreach ($line in $envLines) { $stream.WriteLine($line) }
 $stream.Close()
 
-Write-Info "Creating shortcut to Dev Drive on desktop..."
-
 $volumeLabel  = $driveLabel
-$WshShell     = New-Object -ComObject WScript.Shell
 $desktopPath  = [Environment]::GetFolderPath('Desktop')
 $shortcutPath = Join-Path $desktopPath ("$volumeLabel.lnk")
-$shortcut     = $WshShell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath   = $vhdFilePath
-$shortcut.WindowStyle  = 1
-$shortcut.IconLocation = "shell32.dll,8"
-$shortcut.Description  = "Shortcut to VHDX image for $volumeLabel"
-$shortcut.Save()
 
-Write-Info "Shortcut created: $shortcutPath"
+if ($createDesktopShortcuts)
+{
+    Write-Info "Creating shortcut to Dev Drive on desktop..."
+
+    $WshShell     = New-Object -ComObject WScript.Shell
+    $shortcut     = $WshShell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath   = $vhdFilePath
+    $shortcut.WindowStyle  = 1
+    $shortcut.IconLocation = "shell32.dll,8"
+    $shortcut.Description  = "Shortcut to VHDX image for $volumeLabel"
+    $shortcut.Save()
+
+    Write-Info "Shortcut created: $shortcutPath"
+}
+else
+{
+    # REMOVED, NOT JUST SKIPPED, because this key is most often turned off on a drive that already has the
+    # shortcut, and a switch that leaves the thing it governs sitting on the desktop has not been honoured.
+    #
+    # MATCHED ON TARGET, NOT ON NAME. The file is named after the volume label, and a label is a word a person
+    # might plausibly have used for a shortcut of their own. Opening it and checking that it points at this
+    # run's VHDX is what makes deleting it safe: it establishes that this generator wrote it.
+    if (Test-Path -LiteralPath $shortcutPath)
+    {
+        try
+        {
+            $probe = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+            if ($probe.TargetPath -eq $vhdFilePath)
+            {
+                Remove-Item -LiteralPath $shortcutPath -Force
+                Write-Info "Desktop shortcuts not requested (environment.create_desktop_shortcuts = false); removed '$shortcutPath'."
+            }
+            else
+            {
+                Write-Warn "'$shortcutPath' exists but points at '$($probe.TargetPath)', not at this drive's VHDX. Left alone."
+            }
+        }
+        catch
+        {
+            Write-Warn ("Could not inspect '{0}', so it was left alone: {1}" -f $shortcutPath, $_.Exception.Message)
+        }
+    }
+    else
+    {
+        Write-Info "Desktop shortcuts not requested (environment.create_desktop_shortcuts = false); nothing created."
+    }
+}
+
 Write-Info "STEP 8: OK"
 
 Start-Sleep -Milliseconds 300
@@ -1152,31 +1257,64 @@ Start-Sleep -Milliseconds 300
 Write-Info "STEP 9: Configure automatic mount at startup."
 
 $taskName = $driveLabel
-$taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 
-if ($taskExists) {
-    Write-Info "Scheduled task '$taskName' already exists. Replacing..."
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+# WHATEVER IT IS CALLED, if it mounts this VHDX it belongs to this environment and this run replaces it. The
+# previous version looked the task up by label alone, which missed a task left behind by a drive regenerated
+# under a different label -- that one kept mounting the same file at every boot with nobody able to find it --
+# and, having no -TaskPath, could resolve a same-named task in a vendor folder and unregister that instead.
+$ownedTasks = @(Get-DrivEnvMountTaskForVhd -VhdPath $vhdFilePath)
+
+if ($automountAtStartup)
+{
+    foreach ($existing in $ownedTasks)
+    {
+        Write-Info ("Replacing the existing mount task '{0}{1}'." -f $existing.TaskPath, $existing.TaskName)
+        Unregister-ScheduledTask -TaskName $existing.TaskName -TaskPath $existing.TaskPath -Confirm:$false
+    }
+
+    $action = New-ScheduledTaskAction `
+        -Execute "powershell.exe" `
+        -Argument "-WindowStyle Hidden -Command `"Mount-VHD -Path '$vhdFilePath' -ErrorAction SilentlyContinue`""
+
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId "SYSTEM" `
+        -LogonType ServiceAccount `
+        -RunLevel Highest
+
+    # -TaskPath is explicit so the task lands where the lookup above looks, and the description carries the VHDX
+    # path because until now nothing stamped these tasks with anything identifying at all -- which is why finding
+    # them has to be a pattern match over their arguments. A person reading the Task Scheduler gets an answer too.
+    Register-ScheduledTask `
+        -TaskName $taskName `
+        -TaskPath '\' `
+        -Action $action `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Description "DrivEnv-Win automatic mount for $vhdFilePath" `
+        -Force | Out-Null
+
+    Write-Info "Registered mount task '$taskName' for '$vhdFilePath'."
 }
-
-$action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-WindowStyle Hidden -Command `"Mount-VHD -Path '$vhdFilePath' -ErrorAction SilentlyContinue`""
-
-$trigger = New-ScheduledTaskTrigger -AtStartup
-
-$principal = New-ScheduledTaskPrincipal `
-    -UserId "SYSTEM" `
-    -LogonType ServiceAccount `
-    -RunLevel Highest
-
-Register-ScheduledTask `
-    -TaskName $taskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Principal $principal `
-    -Description "Automatically mounts development VHDX at startup." `
-    -Force | Out-Null
+else
+{
+    # Removed rather than left running: a task nobody asked for, mounting a drive at every boot, is exactly the
+    # kind of thing that survives for years because it is invisible.
+    if ($ownedTasks.Count -gt 0)
+    {
+        foreach ($existing in $ownedTasks)
+        {
+            Unregister-ScheduledTask -TaskName $existing.TaskName -TaskPath $existing.TaskPath -Confirm:$false
+            Write-Info ("Automatic mount not requested (environment.automount_at_startup = false); removed '{0}{1}'." -f $existing.TaskPath, $existing.TaskName)
+        }
+        Write-Info "This drive will no longer mount by itself. Mount-VHD -Path '$vhdFilePath' still works."
+    }
+    else
+    {
+        Write-Info "Automatic mount not requested (environment.automount_at_startup = false); nothing registered."
+    }
+}
 
 Write-Info "STEP 9: OK"
 

@@ -58,13 +58,25 @@ A drive that mounts under one letter and contains everything a build needs:
 Plus launchers on the drive itself — a `.bat` for Windows and a bash bootstrap for the MSYS2 shell — so the
 environment is entered the same way by a person, a script or a CI job.
 
-Nothing is installed system-wide and the machine's global `PATH` is never touched. Step 1 does make exactly two
-changes outside the drive, both by design and both worth knowing about:
+Nothing is installed system-wide and the machine's global `PATH` is never touched. It does leave four marks outside
+the drive, all by design and all worth knowing about. The first two are switchable; the last two are not:
 
-- a **desktop shortcut** to the VHDX file, so the drive can be remounted with a double click;
+- **desktop shortcuts** — one to the VHDX (step 1) so the drive can be remounted with a double click, one to the
+  environment launcher (step 2). Both governed by `create_desktop_shortcuts`, and turning it off on a drive that
+  already has them removes them;
+- a **scheduled task** that mounts the VHDX at startup, named after the volume label and running as SYSTEM.
+  Governed by `automount_at_startup`, with the same removal behaviour. Without it the drive still mounts with
+  `Mount-VHD` or by opening the VHDX;
 - `HKCU\...\Explorer\AutoplayHandlers\DisableAutoplay` is set to `1` while the disk is attached and back to `0`
   afterwards, to stop Windows opening an AutoPlay dialog mid-run. Note that it is restored to `0` rather than to
-  whatever it was before, so a deliberately disabled AutoPlay setting will come back enabled.
+  whatever it was before, so a deliberately disabled AutoPlay setting will come back enabled;
+- two **Microsoft Defender path exclusions**, added unconditionally: the directory holding the VHDX, and the
+  drive letter itself. Both are needed — excluding the container does nothing for files opened as `<letter>:\`.
+
+> The mount task is identified by the VHDX it mounts, not by its name, so regenerating a drive replaces its own
+> task and cannot touch anyone else's. Tasks left by *earlier* generations under different labels are found and
+> replaced by the same rule — but a task for a VHDX that no longer exists is not pruned, because nothing in a run
+> for one environment should be deleting state belonging to another.
 
 ---
 
@@ -304,6 +316,8 @@ an edited file, and worth considerably more before a step that takes an hour tha
 | `custom_path_entries` | Extra `PATH` components, in order |
 | `custom_folders` | Extra directories to create, relative to the drive root |
 | `append_windows_system_path` | Append the Windows system directories to `BASE_PATH` |
+| `create_desktop_shortcuts` | Put the VHDX and launcher shortcuts on the desktop. Default `true` |
+| `automount_at_startup` | Register the scheduled task that mounts the drive at boot. Default `true` |
 | `proxy_url` | Proxy for the downloads, or empty for none |
 | `install_testing_material`, `install_installation_material` | Whether to copy `testing/` and `installation/` to the drive |
 | `verification` | What step 5 checks — see below |
@@ -429,6 +443,32 @@ A package may declare its own, because the ports that need throttling are not th
 `max_install_attempts` still works and now sets the **length** of the schedule, at either level: it truncates a
 longer one, and extends a shorter one by repeating its last entry, which is the careful one. With neither key the
 behaviour is what it always was — first attempt at vcpkg's concurrency, every attempt after it serialised.
+
+#### `cleanup.buildtrees` — what step 4 throws away when it is done
+
+`none` (the default, and what this generator has always done), `logs`, or `all`. Nothing is deleted unless
+you ask.
+
+`buildtrees` is where every port is unpacked, configured and compiled, and on a finished 29-package drive it
+is **12.0 GB** against 1.2 GB of vcpkg staging and 382 MB of binary cache. It is scratch: no part of it
+enters a package ABI. `logs` deletes each port's source and build subdirectories and keeps the log files
+sitting directly in its directory — for a port that succeeded on its *first* attempt those logs exist
+nowhere else, because step 4 only copies logs to the drive from the failed-attempt branch. `all` deletes the
+port directories whole.
+
+> ⚠️ **`DEVSYSTEM_BUILDTREES` points at this same directory, so your own projects build here too.** On a
+> real drive that was 537 MB across fifteen directories sitting beside 89 vcpkg ports. Cleanup never touches
+> them: a port is identified by the `vcpkg_abi_info.txt` vcpkg leaves at the top of its directory, not by its
+> name. Measured on that drive, all 89 ports carry the stamp and none of the other directories does.
+
+Two things it costs, so they are not discovered afterwards. Every installed DLL carries DWARF paths into its
+port's `src/` — 153 of them in `libopencv_core4.dll` alone — so a debugger can no longer step into
+third-party sources; the libraries load and link exactly as before. And the binary cache does not make a
+later rebuild free in general: it is keyed on ABI, so anything that moves an ABI (a triplet edit, a baseline
+bump) rebuilds from source whether or not this ever ran.
+
+The cleanup runs only after a successful, uncancelled step 4, and a failure inside it warns rather than
+failing the run.
 
 #### `buildtrees_root` — a hard limit, not a preference
 

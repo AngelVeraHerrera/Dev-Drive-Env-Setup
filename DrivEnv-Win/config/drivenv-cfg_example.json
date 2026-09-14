@@ -44,6 +44,8 @@
             ]
         },
         "append_windows_system_path": true,
+        "create_desktop_shortcuts": true,
+        "automount_at_startup": true,
         "proxy_url": ""
     },
     "msys2": {
@@ -80,6 +82,7 @@
         },
         "target": { "triplet": "x64-mingw-ucrt-dynamic-release" },
         "buildtrees_root": "bt",
+        "cleanup": { "buildtrees": "none" },
         "install_schedule": [{}, { "concurrency": 4 }, { "concurrency": 1 }],
         "packages": [
             { "name": "fmt" },

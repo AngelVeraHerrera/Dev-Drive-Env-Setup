@@ -1514,29 +1514,74 @@ Write-Info "Writing environment variables to $envFilePath"
 # replace, so the orphaned line just stays. Measured on a real drive, which had two of them.
 Set-DrivEnvFileValues -Path $envFilePath -Lines $envLines -Section "msys2" -Retire @("MINGW_ROOT")
  
-# Shortcut 
-$volume = Get-Volume -DriveLetter $driveLetterOnly -ErrorAction SilentlyContinue
-$volumeLabel = if ($volume -and $volume.FileSystemLabel) { $volume.FileSystemLabel } else { $driveLetterOnly }
-$shortcutPath = [System.IO.Path]::Combine([Environment]::GetFolderPath("Desktop"), "${devEnvName} Environment.lnk")
+# Shortcut
+#
+# $targetPath IS SHARED by the two shortcuts below and is deliberately assigned outside the guard. Drawing the
+# guard so that it swallowed this line would leave the drive-root shortcut -- which is not optional -- pointing
+# at an empty target: a .lnk that exists, opens, and does nothing.
 $targetPath = Join-Path "$devDrive" (("env/launcher/{0}_env_launcher.bat" -f $devEnvName).ToLower())
 
-
-if (Test-Path $shortcutPath) 
+# Presence first, then cast: absent means TRUE here, and a bare [bool] of a missing property is $false. Read
+# beside its only use rather than with the other flags at the top, because this is the only place it matters.
+$createDesktopShortcuts = $true
+if ($Cfg.environment.PSObject.Properties.Name -contains "create_desktop_shortcuts")
 {
-    Remove-Item $shortcutPath -Force
-    Write-Info "Existing shortcut removed."
+    $createDesktopShortcuts = [bool]$Cfg.environment.create_desktop_shortcuts
 }
 
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $targetPath
-$shortcut.WorkingDirectory = $devDrive
-$shortcut.WindowStyle = 1
-$shortcut.IconLocation = "$targetPath,0"
-$shortcut.Save()
+$shortcutPath = [System.IO.Path]::Combine([Environment]::GetFolderPath("Desktop"), "${devEnvName} Environment.lnk")
 
-Write-Info "Shortcut created on desktop."
+if ($createDesktopShortcuts)
+{
+    if (Test-Path $shortcutPath)
+    {
+        Remove-Item $shortcutPath -Force
+        Write-Info "Existing shortcut removed."
+    }
 
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $targetPath
+    $shortcut.WorkingDirectory = $devDrive
+    $shortcut.WindowStyle = 1
+    $shortcut.IconLocation = "$targetPath,0"
+    $shortcut.Save()
+
+    Write-Info "Shortcut created on desktop."
+}
+else
+{
+    # Matched on target, not on name, for the same reason step 1 does it: the file is named after the
+    # environment and this generator should only delete what it can show it wrote.
+    if (Test-Path $shortcutPath)
+    {
+        try
+        {
+            $probe = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+            if ($probe.TargetPath -eq $targetPath)
+            {
+                Remove-Item $shortcutPath -Force
+                Write-Info "Desktop shortcuts not requested (environment.create_desktop_shortcuts = false); removed '$shortcutPath'."
+            }
+            else
+            {
+                Write-Warn "'$shortcutPath' exists but points at '$($probe.TargetPath)', not at this environment's launcher. Left alone."
+            }
+        }
+        catch
+        {
+            Write-Warn ("Could not inspect '{0}', so it was left alone: {1}" -f $shortcutPath, $_.Exception.Message)
+        }
+    }
+    else
+    {
+        Write-Info "Desktop shortcuts not requested (environment.create_desktop_shortcuts = false); nothing created on the desktop."
+    }
+}
+
+# NOT OPTIONAL, and not governed by a key named after the desktop: this one lands on the generated drive itself.
+# It is part of the artifact -- it is what makes a drive handed to somebody else explain how to enter it -- and
+# it costs a kilobyte on a volume measured in gigabytes.
 $shortcutPath = [System.IO.Path]::Combine($devDrive, ("{0}_env_launcher.lnk" -f $devEnvName).ToLower())
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
