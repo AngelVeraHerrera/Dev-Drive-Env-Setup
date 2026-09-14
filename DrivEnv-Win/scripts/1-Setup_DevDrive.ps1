@@ -822,13 +822,39 @@ catch {
 # --------------------------------------------------------------------
 # Two more things that cost build performance, and neither needs administrator rights
 # --------------------------------------------------------------------
-# CONTENT INDEXING. Windows Search indexing a build volume is pure waste: it reads every object file and every
-# generated header the moment they are written, and nothing ever searches for them. The switch is the
-# NotContentIndexed attribute on the volume ROOT -- the same bit the drive's own properties dialog toggles with
-# "Allow files on this drive to have contents indexed in addition to file properties".
+# CONTENT INDEXING. Windows Search reading every object file and generated header the moment it is written is
+# pure waste on a build volume, and nothing ever searches for them. What follows sets the NotContentIndexed
+# attribute on the volume ROOT -- the same bit the drive's properties dialog toggles with "Allow files on this
+# drive to have contents indexed in addition to file properties".
 #
-# On a real Dev Drive this is close to a no-op, because Windows Search does not index ReFS volumes anyway. It
-# matters for the NTFS branch, which is what use_dev_drive=false selects.
+# BE CLEAR ABOUT WHAT THAT DOES AND DOES NOT BUY, because this comment used to claim more than the bit delivers
+# and the claim survived unchallenged for a long time.
+#
+# IT DOES NOT KEEP ANYTHING OUT OF THE INDEX. It suppresses CONTENT extraction; the item is still crawled and
+# still indexed by name, path and properties. Measured on this machine against the live catalogue through
+# Search.CollatorDSO: ten indexed items come back carrying 0x2000 in the index's OWN stored
+# System.FileAttributes -- 0x2020 and 0x2011 among them -- so the crawler processed them while the bit was set
+# and kept the row anyway.
+#
+# ITS REACH IS ALSO SMALLER THAN IT LOOKS. The bit is per-object and inherited only at CREATION time, so any
+# extractor that writes its own attributes per entry overwrites it. Measured on a finished drive: N:\vcpkg and
+# everything under it carries the bit (2000 of 2000 sampled), and N:\msys64 carries it on 0 of 2000 -- the
+# 7-Zip SFX that unpacks MSYS2 sets attributes per entry, and this is not a race, since the attribute goes on
+# two minutes before that extraction starts.
+#
+# WHAT ACTUALLY KEEPS A DEV DRIVE OUT OF THE INDEX is the indexer's crawl scope, and nothing in this repository
+# controls, checks or can keep it. Measured here: 61 file:/// rules under the CrawlScopeManager, every one of
+# them on C:, and a SYSTEMINDEX query returns zero rows for N: under two query shapes while the C: control
+# returns rows. WSearch is Running and actively crawling, so that zero is a real exclusion and not a dormant
+# indexer. One pass through Indexing Options > Modify would make the whole drive crawlable and this attribute
+# would not stop it.
+#
+# So why keep setting it? Because it is free, it is what the properties dialog does, and suppressing content
+# extraction on the objects that do inherit it is a real if partial saving. It is simply not the guarantee.
+#
+# The Dev Drive case is UNTESTED here rather than known: Windows Search is said not to index ReFS volumes, but
+# this machine is Windows 10 19045, where `fsutil devdrv query` reports the verb does not exist, so the branch
+# use_dev_drive=true selects cannot be exercised at all.
 #
 # THE RECYCLE BIN. A deleted file on a volume with a recycle bin is moved into $RECYCLE.BIN rather than freed,
 # so a build that deletes intermediates keeps paying for them in space, and vcpkg deletes a great many: a
@@ -842,22 +868,22 @@ try {
 
     if (Test-Path $driveRoot)
     {
-        Write-Info "Disabling content indexing on $driveRoot ..."
+        Write-Info "Suppressing content indexing on $driveRoot ..."
         $rootItem = Get-Item $driveRoot -Force
         if ($rootItem.Attributes -band [System.IO.FileAttributes]::NotContentIndexed)
         {
-            Write-Info "Content indexing was already disabled."
+            Write-Info "Content indexing of file contents was already suppressed on the volume root."
         }
         else
         {
             $rootItem.Attributes = $rootItem.Attributes -bor [System.IO.FileAttributes]::NotContentIndexed
-            Write-Info "Content indexing disabled."
+            Write-Info "Content indexing of file contents suppressed on the volume root. Note this does not remove the volume from the Windows Search crawl scope."
         }
     }
 }
 catch {
     # Not fatal. A drive that gets indexed is a slower drive, not a broken one.
-    Write-Warn ("Could not disable content indexing: {0}" -f $_.Exception.Message)
+    Write-Warn ("Could not suppress content indexing: {0}" -f $_.Exception.Message)
 }
 
 try {
