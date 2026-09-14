@@ -102,6 +102,21 @@ function Get-DrivEnvConfigSchema
 
     $installSchedule = @{ type = 'array'; item = $installAttempt }
 
+    # HOW LONG TO WAIT BEFORE A RETRY, in seconds, growing with the attempt number: the gap before attempt N is
+    # this value times N-1, so 30 gives 0, 30, 60, 90. Absent or 0 means retry immediately, which is what this
+    # generator has always done.
+    #
+    # WHY IT GROWS RATHER THAN BEING FLAT. The schedule above handles the failures that are resource-shaped, and
+    # for those a pause buys nothing -- lowering concurrency is what changes the odds. This exists for the other
+    # kind, seen on a real run: a proxy returned 504 for a GitHub tarball, and every subsequent attempt came back
+    # 504 in under a second, which is not a timeout but a cached negative response being served straight back.
+    # Those windows are measured in minutes, so the four attempts finished inside fifty seconds and never had a
+    # chance. A flat five seconds would not have helped either; reaching past a minute is what would.
+    #
+    # It costs nothing on a healthy run -- the gap only happens after a failure -- and the waiting is
+    # interruptible, so Ctrl-C during it still stops the run promptly.
+    $retryDelay = @{ type = 'int'; min = 0 }
+
     # LAYERED OVERLAY PORTS, resolved per port from that port's triplet.
     #
     # Shaped as an ordered ARRAY rather than a map from triplet to layers, because the validator has no node
@@ -297,6 +312,9 @@ function Get-DrivEnvConfigSchema
             # and sets the LENGTH: it truncates a longer schedule, and extends a shorter one by repeating its
             # last entry, which is the conservative one.
             install_schedule = $installSchedule
+
+            # Seconds to wait before a retry, growing with the attempt number. See where it is declared.
+            retry_delay_seconds = $retryDelay
 
             overlay_ports = @{ type = 'array'; item = $overlayLayerSet }
 

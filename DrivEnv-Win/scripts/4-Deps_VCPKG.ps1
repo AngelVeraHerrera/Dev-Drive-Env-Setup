@@ -1193,6 +1193,18 @@ if ($Cfg.vcpkg.PSObject.Properties.Name -contains "max_install_attempts")
     }
 }
 
+# Off unless asked for, which is what this generator has always done.
+$retryDelaySeconds = 0
+if ($Cfg.vcpkg.PSObject.Properties.Name -contains "retry_delay_seconds")
+{
+    $retryDelaySeconds = [int]$Cfg.vcpkg.retry_delay_seconds
+}
+if ($retryDelaySeconds -gt 0)
+{
+    Write-Info ("Retry delay: {0} s times the attempt number, so {1}." -f $retryDelaySeconds,
+                (((1..($installSchedule.Count)) | ForEach-Object { "{0} s" -f ($retryDelaySeconds * ($_ - 1)) }) -join ', '))
+}
+
 # WHERE VCPKG UNPACKS AND COMPILES, and why it is not left at vcpkg's default.
 #
 # vcpkg builds under <root>/buildtrees/<port>/<triplet>-rel/. With this triplet name that prefix is 69
@@ -1307,6 +1319,30 @@ foreach ($port in $portSpecs)
 
         if ($attempt -gt 1)
         {
+            # THE PAUSE GROWS WITH THE ATTEMPT, and it is off unless asked for. The concurrency ladder above
+            # answers the resource-shaped failures; this answers the other kind. Measured on a real run: a proxy
+            # returned 504 for a GitHub tarball and then served that same 504 back in under a second to every
+            # later attempt -- a cached negative response, not a timeout -- so all four attempts finished inside
+            # fifty seconds and never had a chance. Those windows last minutes, which is why the gap grows
+            # instead of being flat.
+            $waitSeconds = $retryDelaySeconds * ($attempt - 1)
+
+            if ($waitSeconds -gt 0)
+            {
+                Write-Warn ("Waiting {0} s before attempt {1} (vcpkg.retry_delay_seconds = {2})." -f
+                            $waitSeconds, $attempt, $retryDelaySeconds)
+
+                # SLICED, NOT ONE LONG SLEEP. A single Start-Sleep would make Ctrl-C unresponsive for the whole
+                # wait, which on the last attempt of a long schedule is minutes of a run that looks hung.
+                for ($waited = 0; $waited -lt $waitSeconds; $waited++)
+                {
+                    if (Test-CancelRequested) { break }
+                    Start-Sleep -Seconds 1
+                }
+
+                if (Test-CancelRequested) { $cancelledRun = $true; break }
+            }
+
             Write-Warn ("Retrying '{0}', attempt {1} of {2}, at concurrency {3}." -f
                         $port.Spec, $attempt, $portAttempts, (Format-InstallSchedule $concurrency))
         }
@@ -1382,8 +1418,36 @@ $concurrencyLine
         #     make: gcc: No such file or directory
         # a missing binary, invariant under concurrency, and invisible in the log that was being read. Quoting
         # the tail here costs nothing and puts the cause next to the failure.
+        # WHICH PORT ACTUALLY FAILED is not necessarily the one that was asked for, and saying only the latter
+        # sends the reader to a build tree with nothing wrong in it.
+        #
+        # vcpkg installs a spec's whole dependency tree, so "qtbase failed" routinely means a transitive
+        # dependency did. Seen on a real run: qtbase reported as failed on all four attempts when the thing that
+        # broke was md4c, whose tarball download 504'd through a proxy. Everything in n:\buildtrees\qtbase was
+        # healthy, and that is where this pointed.
+        #
+        # vcpkg names it plainly -- "error: building <port>:<triplet> failed with:" -- and that line is already
+        # in this run's log, because Invoke-Msys2Script mirrors the output there. So read it back rather than
+        # restructuring the invocation to capture it: the last such line is the port that stopped this attempt.
+        $failedPortName = $port.Name
+        if ($globalLogFile -and (Test-Path -LiteralPath $globalLogFile))
+        {
+            $recent = @(Get-Content -LiteralPath $globalLogFile -Tail 600 -ErrorAction SilentlyContinue)
+            for ($i = $recent.Count - 1; $i -ge 0; $i--)
+            {
+                $m = [regex]::Match([string]$recent[$i], 'error:\s+building\s+([A-Za-z0-9_.+-]+)(?:\[[^\]]*\])?:')
+                if ($m.Success) { $failedPortName = $m.Groups[1].Value; break }
+            }
+        }
+
+        if ($failedPortName -ne $port.Name)
+        {
+            Write-Error ("The port that actually failed is '{0}', a dependency pulled in by '{1}'." -f
+                         $failedPortName, $port.Spec)
+        }
+
         $portLogDir = Convert-ToWinPath ($buildtreesRoot -replace '^/([A-Za-z])/', '$1:/')
-        $portLogDir = Join-Path $portLogDir $port.Name
+        $portLogDir = Join-Path $portLogDir $failedPortName
 
         if (Test-Path -LiteralPath $portLogDir)
         {

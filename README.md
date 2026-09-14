@@ -450,6 +450,18 @@ A package may declare its own, because the ports that need throttling are not th
 longer one, and extends a shorter one by repeating its last entry, which is the careful one. With neither key the
 behaviour is what it always was — first attempt at vcpkg's concurrency, every attempt after it serialised.
 
+#### `retry_delay_seconds` — for the failures a lower concurrency cannot fix
+
+Seconds to wait before a retry, multiplied by the attempt number: `30` gives gaps of 0, 30, 60, 90 s. Absent
+or `0` retries immediately, which is the default and what this generator has always done. The wait costs
+nothing on a healthy run, since it only happens after a failure, and it is interruptible.
+
+`install_schedule` above answers the failures that are resource-shaped, where lowering concurrency is what
+changes the odds. This answers the other kind. Measured on a real run: a proxy returned **504** for a GitHub
+tarball, and every later attempt got that same 504 back in under a second — a cached negative response,
+not a timeout. All four attempts finished inside fifty seconds and never had a chance. That is also why the
+gap grows rather than being flat: those windows last minutes, so a flat five seconds would not have helped.
+
 #### `cleanup.buildtrees` — what step 4 throws away when it is done
 
 `none` (the default, and what this generator has always done), `logs`, or `all`. Nothing is deleted unless

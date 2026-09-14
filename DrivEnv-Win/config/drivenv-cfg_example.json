@@ -84,6 +84,7 @@
         "buildtrees_root": "bt",
         "cleanup": { "buildtrees": "none" },
         "install_schedule": [{}, { "concurrency": 4 }, { "concurrency": 1 }],
+        "retry_delay_seconds": 0,
         "packages": [
             { "name": "fmt" },
             { "name": "pkgconf" },

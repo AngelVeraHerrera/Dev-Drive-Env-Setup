@@ -80,6 +80,7 @@
         "buildtrees_root": "bt",
         "cleanup": { "buildtrees": "logs" },
         "max_install_attempts": 3,
+        "retry_delay_seconds": 30,
         "install_schedule": [{}, { "concurrency": 8 }, { "concurrency": 1 }],
         "overlay_ports": [
             { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
