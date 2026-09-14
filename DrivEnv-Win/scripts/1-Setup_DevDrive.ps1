@@ -1256,7 +1256,23 @@ Start-Sleep -Milliseconds 300
 
 Write-Info "STEP 9: Configure automatic mount at startup."
 
-$taskName = $driveLabel
+# THE NAME CARRIES THE LETTER, so two environments that share a label do not share a task.
+#
+# It used to be the bare volume label, and that collides exactly where a person would expect it not to: generate
+# two drives with the same dev_drive_label on different letters and the second Register-ScheduledTask -Force
+# overwrites the first. The first drive silently stops mounting itself, with a task still sitting there under the
+# name you would go looking for, pointing at the other VHDX.
+#
+# Label plus letter is enough. Two drives cannot hold the same letter at once, so the pair is unique across
+# everything that can be mounted together; and if the same label and letter are ever reused for a different
+# VHDX, the lookup below replaces that task anyway, which is the right answer since both cannot be mounted.
+#
+# RENAMING IS SAFE ONLY BECAUSE THE LOOKUP IS BY ACTION. A rename normally strands the old task: the new run
+# registers a new name and never touches the old one, so an upgraded machine ends up with two tasks mounting the
+# same file. Get-DrivEnvMountTaskForVhd finds the old one by the VHDX in its action, whatever it is called, and
+# the loop below unregisters it first. The prefix also makes these identifiable in Task Scheduler, which nothing
+# has ever done -- until now the only way to tell one of ours apart was to read its arguments.
+$taskName = "DrivEnv_{0}_{1}" -f $driveLabel, $driveLetter
 
 # WHATEVER IT IS CALLED, if it mounts this VHDX it belongs to this environment and this run replaces it. The
 # previous version looked the task up by label alone, which missed a task left behind by a drive regenerated

@@ -64,19 +64,24 @@ the drive, all by design and all worth knowing about. The first two are switchab
 - **desktop shortcuts** — one to the VHDX (step 1) so the drive can be remounted with a double click, one to the
   environment launcher (step 2). Both governed by `create_desktop_shortcuts`, and turning it off on a drive that
   already has them removes them;
-- a **scheduled task** that mounts the VHDX at startup, named after the volume label and running as SYSTEM.
-  Governed by `automount_at_startup`, with the same removal behaviour. Without it the drive still mounts with
-  `Mount-VHD` or by opening the VHDX;
+- a **scheduled task** that mounts the VHDX at startup, running as SYSTEM. Governed by `automount_at_startup`,
+  with the same removal behaviour. Without it the drive still mounts with `Mount-VHD` or by opening the VHDX;
 - `HKCU\...\Explorer\AutoplayHandlers\DisableAutoplay` is set to `1` while the disk is attached and back to `0`
   afterwards, to stop Windows opening an AutoPlay dialog mid-run. Note that it is restored to `0` rather than to
   whatever it was before, so a deliberately disabled AutoPlay setting will come back enabled;
 - two **Microsoft Defender path exclusions**, added unconditionally: the directory holding the VHDX, and the
   drive letter itself. Both are needed — excluding the container does nothing for files opened as `<letter>:\`.
 
-> The mount task is identified by the VHDX it mounts, not by its name, so regenerating a drive replaces its own
-> task and cannot touch anyone else's. Tasks left by *earlier* generations under different labels are found and
-> replaced by the same rule — but a task for a VHDX that no longer exists is not pruned, because nothing in a run
-> for one environment should be deleting state belonging to another.
+> The mount task is named `DrivEnv_<label>_<letter>` and is identified by the VHDX it mounts, not by its name.
+> Regenerating a drive replaces its own task whatever that task was called, so a rename or an upgrade from an
+> older version leaves nothing stranded, and two environments sharing a label no longer overwrite each other.
+>
+> A task whose VHDX no longer exists is **not** pruned by a generation run: nothing done for one environment
+> should delete state belonging to another, and a VHDX that is merely moved would cost somebody their mount
+> task without being asked. `Manage-MountTasks.ps1` is where that cleanup lives — it lists every startup
+> mount task on the machine, marks each `live`, `orphan` or `offline`, and removes the orphans on request.
+> It needs elevation to so much as *read*: these tasks run as SYSTEM, and `Get-ScheduledTask` omits them from
+> a non-elevated caller silently, so an unelevated run would confidently report none.
 
 ---
 
@@ -141,6 +146,7 @@ Nothing stops you running a step on its own — that is all the runner does:
 | Path | What lives there |
 | --- | --- |
 | `Generate-DrivEnv.ps1` | The entry point |
+| `Manage-MountTasks.ps1` | Lists the startup mount tasks on this machine and removes the orphaned ones |
 | `config/` | The configuration you edit, and the two documented copies |
 | `scripts/` | The six steps and the two shared modules |
 | `scripts_env/` | Launchers and tool wrappers, copied onto the drive |
