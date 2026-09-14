@@ -11,7 +11,8 @@
 <h1 align="center">DrivEnv-Win</h1>
 
 <p align="center">
-  Builds a self-contained C++ development drive on Windows from a single JSON file, and then checks that it works.
+  Reproducible Windows C++ development environments from one JSON file: VHDX, pinned MSYS2 toolchain,
+  vcpkg with overlay ports, launchers, and a verification step that proves the result works.
 </p>
 
 ---
