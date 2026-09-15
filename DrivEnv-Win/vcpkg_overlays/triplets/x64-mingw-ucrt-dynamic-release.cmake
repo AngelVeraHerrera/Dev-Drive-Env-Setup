@@ -14,6 +14,30 @@ set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE dynamic)
 set(VCPKG_CMAKE_SYSTEM_NAME MinGW)
 
+# GLIB NEEDS ITS PE TLS DIRECTORY BACK, and this is not a clang problem despite where it was first seen.
+#
+# glib prints "GLib-CRITICAL **: TLS callback not invoked" from every process that loads it, and it is a true
+# positive: the DLL ships with no PE TLS directory, so the loader never calls the callback glib registered and
+# glib's per-thread cleanup never runs. Measured: one kernel handle leaked per GLib thread that exits, against
+# zero on a build whose directory is intact.
+#
+# glib's non-MSVC branch of G_DEFINE_TLS_CALLBACK only places the callback pointer in section .CRT$XLCE, where
+# the MSVC branch also emits /INCLUDE:_tls_used. _tls_used lives in tlssup.o inside libmingw32.a, and current
+# mingw-w64-crt no longer references it from crt2.o or dllcrt2.o, so lazy archive-member extraction never pulls
+# it in. Verified on a GCC/ld.bfd drive: its glib has no TLS directory either, while a sibling library linked
+# seconds later in the same session has one, because one of its own translation units drags tlssup.o in by
+# accident. The discriminator is the crt vintage at link time, not the compiler -- which is why this guard
+# belongs here as much as on the clang triplet.
+#
+# -u forces the linker to treat _tls_used as undefined, which extracts tlssup.o and gives the image a TLS
+# directory. Scoped to glib: nothing else in the installed tree carries the construct, and C++ thread_local
+# teardown does not depend on this array, since mingw-w64 dispatches __mingw_TLScallback from DllMainCRTStartup.
+#
+# Delete once the baseline carries glib >= 2.89.4, where GLib MR !5283 landed.
+if(PORT STREQUAL "glib")
+    set(VCPKG_LINKER_FLAGS "${VCPKG_LINKER_FLAGS} -Wl,-u,_tls_used")
+endif()
+
 # Policies suitable for MinGW
 set(VCPKG_POLICY_ALLOW_OBSOLETE_MSVCRT enabled)
 set(VCPKG_POLICY_DLLS_WITHOUT_LIBS enabled)
