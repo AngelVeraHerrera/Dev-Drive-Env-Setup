@@ -453,21 +453,26 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
 <!-- CONTACT -->
 ## Author / Contact
 
-**Degoras Project Team**
+**Degoras Project Team** — Real Instituto y Observatorio de la Armada (ROA)
 
-Ángel Vera Herrera — Real Instituto y Observatorio de la Armada (ROA) — [avera@roa.es](mailto:avera@roa.es)
+* Ángel Vera Herrera — [avera@roa.es](mailto:avera@roa.es)
+* Jesús Relinque Madroñal
+
+**Collaborators**
+
+* David Abuín Sánchez
 
 Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
 
 <!-- ACKNOWLEDGMENTS -->
 ## Acknowledgments
 
-* [https://armada.defensa.gob.es/ArmadaPortal/page/Portal/ArmadaEspannola/cienciaobservatorio/prefLang-es/](https://armada.defensa.gob.es/ArmadaPortal/page/Portal/ArmadaEspannola/cienciaobservatorio/prefLang-es/)
-* [https://www.msys2.org/](https://www.msys2.org/)
-* [https://vcpkg.io/](https://vcpkg.io/)
-* [https://www.qt.io/](https://www.qt.io/)
-* [https://shields.io/](https://shields.io/)
-* [https://github.com/othneildrew/Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+* [Real Instituto y Observatorio de la Armada (ROA)](https://armada.defensa.gob.es/ArmadaPortal/page/Portal/ArmadaEspannola/cienciaobservatorio/prefLang-es/)
+* [MSYS2](https://www.msys2.org/)
+* [vcpkg](https://vcpkg.io/)
+* [Qt](https://www.qt.io/)
+* [Shields.io](https://shields.io/)
+* [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
