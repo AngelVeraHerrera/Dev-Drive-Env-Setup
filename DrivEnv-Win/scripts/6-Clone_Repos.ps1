@@ -3,7 +3,7 @@
 # --------------------------------------------------------------------
 # Authors: Angel Vera Herrera
 # Updated: 28/08/2026
-# Version: 1.0.0
+# Version: 3.0.0
 # --------------------------------------------------------------------
 # License: MIT
 # ====================================================================
@@ -430,7 +430,7 @@ Write-NoFormat "  WORKSPACE REPOSITORIES CLONE SCRIPT"
 Write-NoFormat "-----------------------------------------------------------------"
 Write-NoFormat "  Authors: Angel Vera Herrera"
 Write-NoFormat "  Updated: 28/08/2026"
-Write-NoFormat "  Version: 1.0.0"
+Write-NoFormat "  Version: 3.0.0"
 Write-NoFormat "================================================================="
 Write-NoFormat "Parameters (Loaded from JSON):"
 Write-NoFormat "-----------------------------------------------------------------"
