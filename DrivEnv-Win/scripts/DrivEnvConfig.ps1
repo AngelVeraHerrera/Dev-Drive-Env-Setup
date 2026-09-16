@@ -1,4 +1,4 @@
-# ====================================================================
+﻿# ====================================================================
 # DRIVENV CONFIGURATION VALIDATION
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
@@ -253,9 +253,14 @@ function Get-DrivEnvConfigSchema
             #
             # 'arch' is optional now: every subsystem in the table carries its own default, and getting it
             # wrong is how you ask clangarm64 for x86_64 packages.
+            #
+            # NOT 'required' SINCE 3.0.0, and the requirement did not go away -- it moved. A configuration that
+            # declares 'toolchains' puts its target inside each profile, so demanding one here would reject the
+            # very shape the feature exists for. Test-DrivEnvRules enforces it where it can still be true for both
+            # shapes: the RESOLVED configuration of every generated toolchain must have one, and a configuration
+            # with no 'toolchains' must have one right here, which is the 2.x rule unchanged.
             target   = @{
                 type     = 'object'
-                required = $true
                 fields   = @{
                     profile        = @{ type = 'string'; notEmpty = $true }
                     subsystem      = @{ type = 'string'; notEmpty = $true }
@@ -271,7 +276,11 @@ function Get-DrivEnvConfigSchema
                     base_url       = $stringNode
                 }
             }
-            packages = @{ type = 'array'; required = $true; item = $msys2Package }
+            # Also no longer 'required', and for the same reason as target above: with 'toolchains' present the
+            # shared list here holds the tools and each profile adds its compilers, and a configuration is free to
+            # put every package in the profiles. The resolved check in Test-DrivEnvRules is what still refuses an
+            # environment with no packages at all.
+            packages = @{ type = 'array'; item = $msys2Package }
         }
     }
 
@@ -288,10 +297,12 @@ function Get-DrivEnvConfigSchema
                     baseline_commit = $stringNode
                 }
             }
+            # Not 'required' since 3.0.0: the triplet is the one value that MUST differ between two toolchains on
+            # one drive, so with 'toolchains' present it lives in the profile. Same enforcement as msys2.target --
+            # every resolved toolchain must end up with one.
             target   = @{
-                type     = 'object'
-                required = $true
-                fields   = @{ triplet = $reqString }
+                type   = 'object'
+                fields = @{ triplet = $reqString }
             }
             packages = @{ type = 'array'; required = $true; item = $vcpkgPackage }
 
@@ -416,10 +427,85 @@ function Get-DrivEnvConfigSchema
         }
     }
 
+    # ONE TOOLCHAIN'S WORTH OF OVERRIDES, layered onto everything above.
+    #
+    # WHY A PROFILE AND NOT A SECOND CONFIGURATION FILE. Measured on the two real files this repository already
+    # carries: drivenv-cfg.json (clang64) and drivenv-cfg_ucrt.json (ucrt64) differ in EIGHT leaves out of 69 and
+    # are byte-identical everywhere else -- the same installer, the same eleven tool packages, the same vcpkg
+    # baseline, the same twenty-nine ports with the same features, the same workspace. Two files means ~95% of a
+    # configuration duplicated so that six values can differ, and every edit after that is two edits or a drift.
+    #
+    # THE FIELD SET IS DELIBERATELY SMALL. Only what is genuinely a property of the toolchain lives here:
+    #
+    #   msys2.target              the subsystem's three names, its arch and its compiler family
+    #   msys2.packages            the compiler packages, whose pins differ per subsystem (the ucrt config pins
+    #                             the mingw-w64 runtime at r375 and the clang one at r302 -- not a typo, they
+    #                             really do track separately)
+    #   vcpkg.target              the triplet, which is what makes installed/<triplet> a different tree
+    #   environment.verification  the per-toolchain assertions: 'clang --version' is not a check a ucrt drive
+    #                             can pass
+    #
+    # A PROFILE MIRRORS THE BASE'S OWN KEY PATHS EXACTLY, which is why the verification block is written under
+    # 'environment' here rather than loose at the top. That is what lets one generic merge do the whole job with
+    # no special case per key -- and it is also the restriction, since 'environment' in a profile admits ONLY
+    # verification. There is one drive, so dev_drive_letter, dev_drive_label and dev_env_name are properties of
+    # that drive and a toolchain has no business overriding them.
+    #
+    # msys2.source is NOT here: one MSYS2 installer per drive, and both subsystems live inside that one msys64
+    # with one pacman database -- which is what makes a shared drive work at all. vcpkg.packages is not here
+    # either: the two real configurations already agree on all twenty-nine ports, and a per-toolchain port list
+    # would mean the two environments could not be compared. Widening a field set later breaks no configuration,
+    # so both can be added the day something actually needs them.
+    $toolchainProfile = @{
+        type   = 'object'
+        fields = @{
+            environment  = @{
+                type   = 'object'
+                fields = @{ verification = $verification }
+            }
+            msys2        = @{
+                type   = 'object'
+                fields = @{
+                    # Indexed, not dotted, for the reason given at the top of this function: a schema node is a
+                    # Hashtable and dot access falls through to the Hashtable's OWN members whenever the key is
+                    # missing. 'fields' and 'target' do not collide today; writing it this way means a rename
+                    # that made one collide would fail loudly instead of silently yielding the wrong node.
+                    target   = $msys2['fields']['target']
+                    packages = @{ type = 'array'; item = $msys2Package }
+                }
+            }
+            vcpkg        = @{
+                type   = 'object'
+                fields = @{ target = $vcpkg['fields']['target'] }
+            }
+        }
+    }
+
+    # A MAP AND NOT AN ARRAY, so the id IS the key and cannot disagree with an 'id' field beside it. The validator's
+    # map branch does not check key names -- that is what lets a user call a toolchain whatever they like -- so the
+    # ids are checked in Test-DrivEnvRules instead, where the reason can be explained: an id becomes a path segment
+    # in the .env name, the launcher name and DEVSYSTEM_BUILDTREES.
+    #
+    # Note the map branch recurses into this object node, so 'required' and unknown-key detection DO work inside a
+    # profile: only a 'required' written on the map's own valueNode would be inert.
+    $toolchains = @{ type = 'map'; valueNode = $toolchainProfile }
+
+    # WHICH OF THEM THIS RUN PRODUCES, in order. Separate from 'toolchains' on purpose: what is DEFINED and what is
+    # BUILT are different questions, and keeping them apart is what makes "just the clang one today" a one-token
+    # edit rather than a deletion. Absent means no dual environment at all, which is exactly a 2.x configuration.
+    $generate = @{ type = 'array'; item = @{ type = 'string'; notEmpty = $true } }
+
     return @{
         type     = 'object'
         required = $true
-        fields   = @{ environment = $environment; msys2 = $msys2; vcpkg = $vcpkg; workspace = $workspace }
+        fields   = @{
+            environment = $environment
+            msys2       = $msys2
+            vcpkg       = $vcpkg
+            workspace   = $workspace
+            toolchains  = $toolchains
+            generate    = $generate
+        }
     }
 }
 
@@ -508,6 +594,155 @@ function Get-DrivEnvEditDistance
     }
 
     return $prev[$m]
+}
+
+# --------------------------------------------------------------------
+# TOOLCHAIN RESOLUTION
+# --------------------------------------------------------------------
+#
+# A 3.0.0 configuration can carry more than one toolchain, and every one of the six steps still wants to read
+# ONE. So nothing below the resolution boundary knows about 'toolchains' at all: a step calls
+# Resolve-DrivEnvToolchain once, immediately after Test-DrivEnvConfig, and from there on reads
+# $Cfg.msys2.target.subsystem and $Cfg.vcpkg.target.triplet as the scalars they have always been -- because
+# after projection they ARE scalars. That is the whole trick, and it is why this feature does not reach into
+# 1600-line scripts to add a loop around every read.
+
+function Test-DrivEnvIsObject
+{
+    # @brief True for a JSON object, false for arrays, strings, numbers and $null.
+    # @note ConvertFrom-Json yields PSCustomObject for every JSON object in PowerShell 5.1. Checked by type and
+    #       not by "has properties", because a string has properties too and would merge instead of replacing.
+    param ($Value)
+    return ($Value -is [System.Management.Automation.PSCustomObject])
+}
+
+function Merge-DrivEnvValue
+{
+    # @brief Layers one override value onto one base value and returns the result. Recurses.
+    #
+    # ONE RULE, NO EXCEPTIONS: objects merge key by key, ARRAYS APPEND, everything else replaces.
+    #
+    # Appending is the right default because every array a profile can reach is a list of things to DO, not a
+    # setting to pick: msys2.packages is "install these too" (the shared tools plus this toolchain's compilers),
+    # check_tools is "assert these too", check_commands and check_gstreamer_elements likewise. There is no array
+    # in the profile's field set where replacing would be the natural reading, so a single rule is honest rather
+    # than a simplification -- and a rule with no exceptions is one nobody has to look up.
+    #
+    # @param Base     the value from the shared configuration; may be $null
+    # @param Override the value from the toolchain profile; may be $null
+    param ($Base, $Override)
+
+    if ($null -eq $Override) { return $Base }
+    if ($null -eq $Base)     { return $Override }
+
+    if (($Base -is [System.Array]) -and ($Override -is [System.Array]))
+    {
+        # THE COMMA IS LOad-BEARING. PowerShell UNROLLS a collection on the way out of a function, so a plain
+        # `return @(...)` hands back the ELEMENT when the result holds one, and $null when it holds none --
+        # measured here: [1] + [] came back as an Int64 and [] + [] came back as $null. A caller that then asks
+        # for .Count gets 1 for the scalar and 1 for the $null (because @($null).Count is 1 too), so nothing
+        # complains and the configuration is quietly wrong. `,@(...)` wraps the array in a one-element array,
+        # which unrolling then peels back to the array itself.
+        #
+        # This was invisible in testing for a long time because every array in a real configuration has two or
+        # more entries; it bites exactly the small edge cases a profile is most likely to produce.
+        return ,@(@($Base) + @($Override))
+    }
+
+    if ((Test-DrivEnvIsObject $Base) -and (Test-DrivEnvIsObject $Override))
+    {
+        $merged = New-Object PSObject
+        foreach ($p in $Base.PSObject.Properties)
+        {
+            Add-Member -InputObject $merged -MemberType NoteProperty -Name $p.Name -Value $p.Value
+        }
+
+        foreach ($p in $Override.PSObject.Properties)
+        {
+            $name = $p.Name
+            if (@($merged.PSObject.Properties.Name) -contains $name)
+            {
+                $merged.$name = Merge-DrivEnvValue -Base $merged.$name -Override $p.Value
+            }
+            else
+            {
+                Add-Member -InputObject $merged -MemberType NoteProperty -Name $name -Value $p.Value
+            }
+        }
+        return $merged
+    }
+
+    return $Override
+}
+
+function Get-DrivEnvGenerateList
+{
+    # @brief The toolchain ids this configuration asks to be produced, in order.
+    # @return An array of ids, EMPTY for a configuration that declares no toolchains -- which is every 2.x file
+    #         and is not an error: it means "one environment, described right here", exactly as before.
+    param ($Cfg)
+
+    # Every return is comma-wrapped for the reason spelled out in Merge-DrivEnvValue: without it a 'generate'
+    # naming ONE toolchain comes back as a String rather than a one-element array, and a caller iterating it
+    # would walk the characters of the id.
+    if ($null -eq $Cfg) { return ,@() }
+    if (@($Cfg.PSObject.Properties.Name) -notcontains 'generate') { return ,@() }
+
+    return ,@($Cfg.generate | Where-Object { $_ -is [string] -and -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Resolve-DrivEnvToolchain
+{
+    # @brief Projects a multi-toolchain configuration down to the single-toolchain configuration for one id.
+    #
+    # Returns a DEEP COPY with the profile merged in and the 'toolchains' and 'generate' keys removed, so what
+    # comes back is shaped exactly like a 2.x configuration and every existing reader works on it unchanged.
+    #
+    # The copy is made by round-tripping through JSON rather than by hand. It is not the fastest way to clone an
+    # object, and it is the only one that is certainly TOTAL: the configuration is whatever ConvertFrom-Json
+    # produced, nested to arbitrary depth, and a hand-written cloner that missed a case would hand one step a
+    # reference into another step's configuration. This runs once per step, not once per port.
+    #
+    # @param Cfg The parsed configuration, already validated.
+    # @param Id  The toolchain id. An id this configuration does not declare returns the base unchanged rather
+    #            than throwing: Test-DrivEnvRules has already reported an unknown id as a configuration problem,
+    #            and a helper that throws in a second voice only buries the first message.
+    param ($Cfg, [string]$Id)
+
+    $copy = $Cfg | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json
+
+    $tcProfile = $null
+    if (@($copy.PSObject.Properties.Name) -contains 'toolchains')
+    {
+        $tc = $copy.toolchains
+        if ((Test-DrivEnvIsObject $tc) -and (@($tc.PSObject.Properties.Name) -contains $Id))
+        {
+            $tcProfile = $tc.$Id
+        }
+    }
+
+    if (Test-DrivEnvIsObject $tcProfile)
+    {
+        foreach ($p in $tcProfile.PSObject.Properties)
+        {
+            $name = $p.Name
+            if (@($copy.PSObject.Properties.Name) -contains $name)
+            {
+                $copy.$name = Merge-DrivEnvValue -Base $copy.$name -Override $p.Value
+            }
+            else
+            {
+                Add-Member -InputObject $copy -MemberType NoteProperty -Name $name -Value $p.Value
+            }
+        }
+    }
+
+    foreach ($k in @('toolchains', 'generate'))
+    {
+        if (@($copy.PSObject.Properties.Name) -contains $k) { $copy.PSObject.Properties.Remove($k) }
+    }
+
+    return $copy
 }
 
 function Get-DrivEnvToolchainRoot
@@ -1045,6 +1280,200 @@ function Test-DrivEnvRules
             {
                 $Problems.Add("${path}.version: required when mode is 'pinned' (package '$($p.name)')")
             }
+        }
+    }
+
+    # ----------------------------------------------------------------
+    # TOOLCHAINS
+    # ----------------------------------------------------------------
+    # Everything a schema node cannot say. The map node validates each PROFILE completely -- required fields,
+    # unknown keys, types -- but it cannot look at a key NAME, cannot compare two profiles with each other, and
+    # cannot see what a profile becomes once it is layered onto the shared configuration. All three matter here.
+
+    $rootNames    = @($Config.PSObject.Properties.Name)
+    $hasToolchains = $rootNames -contains 'toolchains'
+    $hasGenerate   = $rootNames -contains 'generate'
+
+    # THE TWO KEYS ARE A PAIR. One without the other is always a mistake, and a silent one: 'toolchains' alone
+    # would build nothing from them and look like it worked, 'generate' alone names ids that do not exist.
+    if ($hasToolchains -and -not $hasGenerate)
+    {
+        $Problems.Add("generate: required when 'toolchains' is present -- name which of them to produce")
+    }
+    if ($hasGenerate -and -not $hasToolchains)
+    {
+        $Problems.Add("toolchains: required when 'generate' is present")
+    }
+
+    if ($hasToolchains -and $hasGenerate -and (Test-DrivEnvIsObject $Config.toolchains))
+    {
+        # Piped, not @($Config.toolchains.PSObject.Properties.Name), for the reason the walker's own comment
+        # gives: on an object with NO properties the member access yields $null and @($null) is an array holding
+        # one null, so an empty "toolchains": {} made the id loop below run once with $id = $null and report a
+        # syntax problem against a key nobody wrote. Piping yields nothing for nothing.
+        $declared = @($Config.toolchains.PSObject.Properties | ForEach-Object { $_.Name })
+
+        # An id is not just a label: it becomes a path segment in <name>_<id>_env_variables.env, in the launcher
+        # file name and in DEVSYSTEM_BUILDTREES. A space or a slash there produces a file nobody can open and a
+        # directory nobody meant.
+        foreach ($id in $declared)
+        {
+            if ($id -notmatch '^[A-Za-z0-9][A-Za-z0-9_.\-]*$')
+            {
+                $Problems.Add("toolchains.${id}: id must start alphanumeric and hold only letters, digits, '_', '.' or '-' -- it names files and folders")
+            }
+        }
+
+        $wanted = @($Config.generate)
+        if ($wanted.Count -eq 0)
+        {
+            $Problems.Add("generate: must name at least one toolchain")
+        }
+
+        $seen = @{}
+        $i = 0
+        foreach ($id in $wanted)
+        {
+            $path = "generate[$i]"
+            $i++
+
+            if ($id -isnot [string]) { continue }   # the type walk has already reported this one
+
+            if ($declared -notcontains $id)
+            {
+                $sug = Get-DrivEnvSuggestion -Name $id -Candidates $declared
+                if ($sug) { $Problems.Add("${path}: '$id' is not a declared toolchain. Did you mean '$sug'?") }
+                else      { $Problems.Add("${path}: '$id' is not a declared toolchain") }
+                continue
+            }
+
+            if ($seen.ContainsKey($id)) { $Problems.Add("${path}: '$id' is named more than once") }
+            $seen[$id] = $true
+        }
+
+        # A pinned package with no version, inside a profile. The base list is checked above; this is the same
+        # check with the path the user would have to edit, rather than the path of the merged result.
+        foreach ($id in $declared)
+        {
+            $pkgs = $Config.toolchains.$id.msys2.packages
+            if ($null -eq $pkgs) { continue }
+
+            $j = 0
+            foreach ($p in @($pkgs))
+            {
+                $path = "toolchains.${id}.msys2.packages[$j]"
+                $j++
+                if (("$($p.mode)".Trim().ToLowerInvariant() -eq 'pinned') -and [string]::IsNullOrWhiteSpace($p.version))
+                {
+                    $Problems.Add("${path}.version: required when mode is 'pinned' (package '$($p.name)')")
+                }
+            }
+        }
+    }
+
+    # WHAT EACH GENERATED TOOLCHAIN ACTUALLY BECOMES. msys2.target, msys2.packages and vcpkg.target stopped being
+    # 'required' in the schema when they became things a profile may supply, so this is where the requirement
+    # still lives -- checked on the RESOLVED configuration, which is the only place the answer is knowable.
+    #
+    # Two toolchains must also differ in the two values that give them separate homes on one drive: the subsystem
+    # names msys64/<subsystem> and DEVSYSTEM_TOOLCHAIN_ROOT, the triplet names vcpkg/installed/<triplet> and
+    # buildtrees/<port>/<triplet>-rel. Two ids sharing either would quietly write one environment through two
+    # names, which is the failure this whole design exists to make impossible.
+    # DISTINCT ids only. A duplicate in 'generate' is already reported above as its own problem, and resolving it
+    # twice would make the collision checks below announce that a toolchain collides with ITSELF -- three
+    # messages for one mistake, two of them nonsense.
+    $ids  = @()
+    $once = @{}
+    foreach ($g in (Get-DrivEnvGenerateList -Cfg $Config))
+    {
+        if (-not $once.ContainsKey($g)) { $once[$g] = $true; $ids += $g }
+    }
+    if ($ids.Count -eq 0) { $ids = @($null) }        # a 2.x configuration: check it exactly as it stands
+
+    $subsystems = @{}
+    $triplets   = @{}
+
+    foreach ($id in $ids)
+    {
+        $label = if ($null -eq $id) { "" } else { " (toolchain '$id')" }
+
+        $resolved = $null
+        try   { $resolved = if ($null -eq $id) { $Config } else { Resolve-DrivEnvToolchain -Cfg $Config -Id $id } }
+        catch { continue }                           # malformed beyond projection; the type walk said so already
+        if ($null -eq $resolved) { continue }
+
+        $target = $resolved.msys2.target
+        if ($null -eq $target)
+        {
+            $Problems.Add("msys2.target: required${label}")
+        }
+        elseif ([string]::IsNullOrWhiteSpace($target.subsystem) -and [string]::IsNullOrWhiteSpace($target.profile))
+        {
+            $Problems.Add("msys2.target: one of 'subsystem' or the legacy 'profile' is required${label}")
+        }
+        else
+        {
+            # COMPARE THE PREFIX, NOT THE SPELLING. 'subsystem: ucrt64' and the legacy 'profile: ucrt' name the
+            # same /ucrt64 directory, the same MSYSTEM and the same DEVSYSTEM_TOOLCHAIN_ROOT -- the legacy key
+            # means exactly "<profile>64", as the msys2.target comment above records. Keying on the raw text
+            # would let those two pass as different toolchains and then write one environment through two names,
+            # which is the single failure this check exists to prevent.
+            $effective = if (-not [string]::IsNullOrWhiteSpace($target.subsystem)) { "$($target.subsystem)" }
+                         else                                                      { "$($target.profile)64" }
+
+            $key = $effective.Trim().ToLowerInvariant()
+            if ($null -ne $id)
+            {
+                if ($subsystems.ContainsKey($key)) { $Problems.Add("toolchains.${id}.msys2.target: resolves to the same MSYS2 prefix '$effective' as toolchain '$($subsystems[$key])' -- two toolchains cannot share one") }
+                else { $subsystems[$key] = $id }
+            }
+        }
+
+        # NULL AND EMPTY ARE DIFFERENT QUESTIONS AND @() ANSWERS NEITHER. @($null).Count is 1, not 0, so testing
+        # the wrapped list alone reported an absent 'msys2.packages' as present-and-fine -- the exact shape of
+        # silent under-doing this file exists to refuse, and a regression the moment 'required' left the schema.
+        $pkgs = $resolved.msys2.packages
+        if (($null -eq $pkgs) -or (@($pkgs | Where-Object { $null -ne $_ }).Count -eq 0))
+        {
+            $Problems.Add("msys2.packages: required and must not be empty${label}")
+        }
+
+        # Only the ABSENT target is reported here. When vcpkg.target exists the schema's own required+notEmpty on
+        # 'triplet' has already spoken, and repeating it would give one mistake two messages in two voices.
+        $vcpkgTarget = $resolved.vcpkg.target
+        if ($null -eq $vcpkgTarget)
+        {
+            $Problems.Add("vcpkg.target: required${label}")
+        }
+        elseif ($null -ne $id)
+        {
+            $triplet = "$($vcpkgTarget.triplet)"
+            if (-not [string]::IsNullOrWhiteSpace($triplet))
+            {
+                $key = $triplet.Trim().ToLowerInvariant()
+                if ($triplets.ContainsKey($key)) { $Problems.Add("toolchains.${id}.vcpkg.target.triplet: '$triplet' collides with toolchain '$($triplets[$key])' -- two toolchains cannot share one installed tree") }
+                else { $triplets[$key] = $id }
+            }
+        }
+
+        # ONE PACKAGE, ONE PIN. Arrays APPEND, so a profile that re-states a package the shared list already
+        # names does not override it -- it adds a second entry, and step 2 then installs two versions of one
+        # package with whichever wins decided by ordering. Same name AND same repo is the test: the shipped
+        # configurations deliberately carry 'make' twice, once from mingw and once from msys, and those are
+        # genuinely two different packages.
+        $byKey = @{}
+        $j = 0
+        foreach ($p in @($resolved.msys2.packages))
+        {
+            $j++
+            if ($null -eq $p) { continue }
+
+            $repo = "$($p.repo)".Trim().ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($repo)) { $repo = 'mingw' }     # step 2's own default
+            $key = "$("$($p.name)".Trim().ToLowerInvariant())|$repo"
+
+            if ($byKey.ContainsKey($key)) { $Problems.Add("msys2.packages: '$($p.name)' from repo '$repo' appears twice${label} -- a profile ADDS to the shared list, it does not replace an entry in it") }
+            else { $byKey[$key] = $j }
         }
     }
 }
