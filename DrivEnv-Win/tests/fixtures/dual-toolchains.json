@@ -1,0 +1,155 @@
+{
+    "environment": {
+        "dev_drive_label": "DEV_DEGORAS_SLR",
+        "dev_drive_letter": "N",
+        "dev_env_name": "DegorasSLR",
+        "vhd_root": "C:/DevDrives",
+        "vhd_size_gb": 80,
+        "use_dev_drive": false,
+        "force_diskpart": true,
+        "vhd_fixed": true,
+        "custom_variables": {
+            "GST_PLUGIN_PATH": "${VCPKG_ROOT}/installed/${VCPKG_DEFAULT_TRIPLET}/plugins/gstreamer",
+            "GST_REGISTRY": "${DEVDRIVE_LETTER}/logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/registry.x86_64.bin",
+            "GST_DEBUG_DUMP_DOT_DIR": "${DEVDRIVE_LETTER}/logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/dot",
+            "GST_DEBUG_FILE": "${DEVDRIVE_LETTER}/logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/gst-debug.log",
+            "GST_DEBUG": "2",
+            "GSTREAMER_TEST_HOST_IP": "192.168.102.50",
+            "GSTREAMER_TEST_PORT": "5500"
+        },
+        "custom_path_entries": [],
+        "custom_folders": ["logs/gstreamer", "workspace_degoras"],
+        "install_testing_material": true,
+        "install_installation_material": true,
+        "append_windows_system_path": false,
+        "create_desktop_shortcuts": true,
+        "automount_at_startup": true,
+        "proxy_url": "",
+        "verification": {
+            "check_packages": true,
+            "check_dll_load": true,
+            "check_tools": ["vcpkg", "cmake", "ninja", "gdb", "curl", "pkgconf", "gst-inspect-1.0"],
+            "check_commands": [
+                { "run": "cmake --version", "expect": "cmake version" },
+                { "run": "ninja --version", "expect": "" }
+            ],
+            "check_gstreamer_elements": ["videotestsrc", "rtpbin", "mfvideosrc"]
+        }
+    },
+
+    "msys2": {
+        "source": {
+            "url": "https://github.com/msys2/msys2-installer/releases/download/2026-08-30/msys2-base-x86_64-20260830.sfx.exe",
+            "sha256": ""
+        },
+        "packages": [
+            { "name": "cmake",     "mode": "pinned", "version": "4.4.2-2" },
+            { "name": "ninja",     "mode": "pinned", "version": "1.13.2-1" },
+            { "name": "make",      "mode": "pinned", "version": "4.4.1-5" },
+            { "name": "make",      "mode": "pinned", "version": "4.4.1-3", "repo": "msys", "file_arch": "x86_64" },
+            { "name": "gdb",       "mode": "pinned", "version": "17.2-1" },
+            { "name": "diffutils", "mode": "pinned", "version": "3.12-1" },
+            { "name": "ripgrep",   "mode": "pinned", "version": "15.2.0-1" },
+            { "name": "curl",      "mode": "pinned", "version": "8.21.0-2" },
+            { "name": "doxygen",   "mode": "pinned", "version": "1.18.0-1" },
+            { "name": "7zip",      "mode": "pinned", "version": "26.02-1" },
+            { "name": "ntldd",     "mode": "pinned", "version": "r19.7fb9365-4" }
+        ]
+    },
+
+    "vcpkg": {
+        "source": {
+            "repository_url": "https://github.com/microsoft/vcpkg.git",
+            "baseline_mode": "fixed",
+            "baseline_commit": "7ff71c68261ecf3b60cdb8772f2e6759ee0a71b1"
+        },
+        "buildtrees_root": "bt",
+        "cleanup": { "buildtrees": "logs" },
+        "max_install_attempts": 4,
+        "retry_delay_seconds": 30,
+        "install_schedule": [{}, { "concurrency": 12 }, { "concurrency": 8 }, { "concurrency": 1 }],
+        "overlay_ports": [
+            { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
+            { "triplet": "x64-mingw-ucrt-dynamic-release",  "layers": ["ports.ucrt", "ports"] },
+            { "triplet": "*",                               "layers": ["ports"] }
+        ],
+        "packages": [
+            { "name": "fmt" },
+            { "name": "zlib" },
+            { "name": "openssl" },
+            { "name": "ffmpeg", "features": ["avcodec", "avformat", "swscale"] },
+            { "name": "gstreamer", "features": ["plugins-base", "plugins-good"] },
+            { "name": "qtbase", "features": ["gui", "widgets"], "install_schedule": [{ "concurrency": 4 }, { "concurrency": 1 }] }
+        ]
+    },
+
+    "workspace": {
+        "default_folder": "workspace_degoras",
+        "repositories": [
+            { "url": "https://github.com/DegorasProject/DegorasSLR.git", "ref": "develop", "optional": true }
+        ]
+    },
+
+    "toolchains": {
+        "clang": {
+            "msys2": {
+                "target": {
+                    "subsystem": "clang64",
+                    "package_prefix": "mingw-w64-clang-x86_64",
+                    "repo_subpath": "mingw/clang64",
+                    "arch": "x86_64",
+                    "family": "clang",
+                    "base_url": "https://repo.msys2.org"
+                },
+                "packages": [
+                    { "name": "clang",         "mode": "pinned", "version": "22.1.8-2" },
+                    { "name": "llvm",          "mode": "pinned", "version": "22.1.8-2" },
+                    { "name": "lld",           "mode": "pinned", "version": "22.1.8-2" },
+                    { "name": "libc++",        "mode": "pinned", "version": "22.1.8-1" },
+                    { "name": "compiler-rt",   "mode": "pinned", "version": "22.1.8-2" },
+                    { "name": "headers",       "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" },
+                    { "name": "crt",           "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" },
+                    { "name": "libwinpthread", "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" },
+                    { "name": "winpthreads",   "mode": "pinned", "version": "14.0.0.r302.gd7f3c5201-1" }
+                ]
+            },
+            "vcpkg": { "target": { "triplet": "x64-mingw-clang-dynamic-release" } },
+            "environment": {
+                "verification": {
+                    "check_tools": ["clang", "clang++", "lld"],
+                    "check_commands": [{ "run": "clang --version", "expect": "clang version" }]
+                }
+            }
+        },
+
+        "ucrt": {
+            "msys2": {
+                "target": {
+                    "subsystem": "ucrt64",
+                    "package_prefix": "mingw-w64-ucrt-x86_64",
+                    "repo_subpath": "mingw/ucrt64",
+                    "arch": "x86_64",
+                    "family": "gcc",
+                    "base_url": "https://repo.msys2.org"
+                },
+                "packages": [
+                    { "name": "gcc",           "mode": "pinned", "version": "16.2.0-3" },
+                    { "name": "gcc-libs",      "mode": "pinned", "version": "16.2.0-3" },
+                    { "name": "headers",       "mode": "pinned", "version": "14.0.0.r375.g9c1abbbf5-1" },
+                    { "name": "crt",           "mode": "pinned", "version": "14.0.0.r375.g9c1abbbf5-1" },
+                    { "name": "libwinpthread", "mode": "pinned", "version": "14.0.0.r375.g9c1abbbf5-1" },
+                    { "name": "winpthreads",   "mode": "pinned", "version": "14.0.0.r375.g9c1abbbf5-1" }
+                ]
+            },
+            "vcpkg": { "target": { "triplet": "x64-mingw-ucrt-dynamic-release" } },
+            "environment": {
+                "verification": {
+                    "check_tools": ["gcc", "g++"],
+                    "check_commands": [{ "run": "gcc --version", "expect": "gcc" }]
+                }
+            }
+        }
+    },
+
+    "generate": ["clang", "ucrt"]
+}
