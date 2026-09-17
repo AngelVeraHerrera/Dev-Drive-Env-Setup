@@ -216,6 +216,59 @@ Check "re-pinning a shared package is caught" (HasProblem $c "'cmake' from repo 
 Check "only the offending toolchain is named" (@(Test-DrivEnvConfig -Config $c | Where-Object { $_ -like '*appears twice*' }).Count -eq 1)
 Check "the deliberate mingw+msys 'make' pair does NOT fire" ((Test-DrivEnvConfig -Config $dual).Count -eq 0) ("-> " + ((Test-DrivEnvConfig -Config $dual) -join ' | '))
 
+Write-Host "=== 12. THE @() TRAP, IN BOTH DIRECTIONS ==="
+# Get-DrivEnvGenerateList comma-wraps its return so it always yields an array. That guarantee is exactly what
+# makes the repository's usual defensive @(...) wrap WRONG here: @() collects the one emitted object -- which is
+# the array -- into a new array. It reached the runner as a Toolchain column reading "System.Object[]" and one
+# launch carrying -Toolchain "clang ucrt". Both halves are asserted so neither can be "fixed" back.
+$bare    = Get-DrivEnvGenerateList -Cfg $dual
+$wrapped = @(Get-DrivEnvGenerateList -Cfg $dual)
+Check "unwrapped gives the ids"            (($bare.Count -eq 2) -and ($bare[0] -eq 'clang'))
+Check "wrapping in @() NESTS, so do not"   (($wrapped.Count -eq 1) -and ($wrapped[0] -is [System.Array]))
+
+Check "relative config resolves under config/" ((Resolve-DrivEnvConfigPath -ConfigFile 'x.json' -GeneratorRoot 'V:\gen') -eq 'V:\gen\config\x.json')
+Check "absolute config is taken as given"      ((Resolve-DrivEnvConfigPath -ConfigFile 'D:\a\b.json' -GeneratorRoot 'V:\gen') -eq 'D:\a\b.json')
+
+Write-Host "=== 13. THE RUNNER'S PLAN (via -DryRun, which launches nothing) ==="
+$runner  = Join-Path $root 'Generate-DrivEnv.ps1'
+$dualCfg = Join-Path $fixtures 'dual-toolchains.json'
+
+function PlanOrder
+{
+    # The "Order" line of a dry run, e.g. "1 2:clang 3:clang ... 6".
+    param([string[]]$Arguments)
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner @Arguments -DryRun 2>&1
+    $line = $out | Where-Object { $_ -match '^\s*Order\s*:' } | Select-Object -First 1
+    if (-not $line) { return "" }
+    return ($line -replace '^\s*Order\s*:\s*', '').Trim()
+}
+
+Check "dual: toolchain-major, drive steps once" `
+    ((PlanOrder @('-ConfigFile', $dualCfg)) -eq '1 2:clang 3:clang 4:clang 5:clang 2:ucrt 3:ucrt 4:ucrt 5:ucrt 6')
+
+Check "dual, -Toolchain ucrt -From 4" `
+    ((PlanOrder @('-ConfigFile', $dualCfg, '-From', '4', '-Toolchain', 'ucrt')) -eq '4:ucrt 5:ucrt 6')
+
+Check "dual, -Skip 3 leaves a hole in each toolchain" `
+    ((PlanOrder @('-ConfigFile', $dualCfg, '-Skip', '3')) -eq '1 2:clang 4:clang 5:clang 2:ucrt 4:ucrt 5:ucrt 6')
+
+# A 2.x configuration prints no Order line at all, because there is nothing to order: the plan is the step list.
+Check "2.x: no toolchain ordering is printed" ((PlanOrder @('-ConfigFile', 'drivenv-cfg_example.json')) -eq "")
+
+Write-Host "=== 14. A STEP'S OWN -Toolchain HANDLING (step 5, -ValidateOnly, nothing is touched) ==="
+function StepCode
+{
+    param([string[]]$Arguments)
+    $null = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\5-Verify_Env.ps1') @Arguments -ValidateOnly 2>&1
+    return $LASTEXITCODE
+}
+
+Check "dual without -Toolchain is refused"      ((StepCode @('-ConfigFile', $dualCfg)) -eq 1)
+Check "dual with a real id is accepted"         ((StepCode @('-ConfigFile', $dualCfg, '-Toolchain', 'ucrt')) -eq 0)
+Check "dual with an unknown id is refused"      ((StepCode @('-ConfigFile', $dualCfg, '-Toolchain', 'msvc')) -eq 1)
+Check "2.x without -Toolchain still works"      ((StepCode @('-ConfigFile', 'drivenv-cfg_example.json')) -eq 0)
+Check "2.x with -Toolchain is refused"          ((StepCode @('-ConfigFile', 'drivenv-cfg_example.json', '-Toolchain', 'ucrt')) -eq 1)
+
 Write-Host ""
 Write-Host "================ $script:pass passed, $script:fail failed ================"
 if ($script:fail -gt 0) { exit 1 }

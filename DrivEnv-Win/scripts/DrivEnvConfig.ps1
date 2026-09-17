@@ -607,6 +607,29 @@ function Get-DrivEnvEditDistance
 # after projection they ARE scalars. That is the whole trick, and it is why this feature does not reach into
 # 1600-line scripts to add a loop around every read.
 
+function Resolve-DrivEnvConfigPath
+{
+    # @brief Turns a -ConfigFile value into the path that will actually be read.
+    #
+    # A relative name resolves against config/, NOT against the caller's working directory: these scripts are
+    # routinely launched by double-click and from elsewhere, and resolving against the cwd would silently pick a
+    # different configuration depending on where the shell happened to be. config/ rather than the script's own
+    # directory because the steps moved into scripts/ and the configuration did not follow them -- one place for
+    # the files a person edits, one for the files a person runs.
+    #
+    # The six steps each carry their own copy of this rule, written before this file existed. This is the one
+    # the RUNNER uses, so that the thing choosing which configuration to hand the steps cannot disagree with
+    # them about which file that is. The steps should be moved onto it too; until they are, any change to the
+    # rule has to be made in seven places, and that is exactly the split that produced the buildtrees_root bug.
+    #
+    # @param ConfigFile     The value as given: a bare name, a relative path, or an absolute one.
+    # @param GeneratorRoot  The generator root, i.e. the directory holding both scripts/ and config/.
+    param ([string]$ConfigFile, [string]$GeneratorRoot)
+
+    if ([System.IO.Path]::IsPathRooted($ConfigFile)) { return $ConfigFile }
+    return (Join-Path (Join-Path $GeneratorRoot "config") $ConfigFile)
+}
+
 function Test-DrivEnvIsObject
 {
     # @brief True for a JSON object, false for arrays, strings, numbers and $null.
@@ -683,8 +706,16 @@ function Get-DrivEnvGenerateList
     param ($Cfg)
 
     # Every return is comma-wrapped for the reason spelled out in Merge-DrivEnvValue: without it a 'generate'
-    # naming ONE toolchain comes back as a String rather than a one-element array, and a caller iterating it
-    # would walk the characters of the id.
+    # naming ONE toolchain comes back as a String rather than a one-element array, and a caller indexing [0]
+    # would get the letter 'c' instead of 'clang'.
+    #
+    # DO NOT WRAP A CALL TO THIS IN @(...). That is the house idiom everywhere else in this repository and here
+    # it is exactly wrong: the comma makes this emit ONE object which happens to be an array, so @() collects
+    # that one object into a NEW array and you get a one-element array holding an array. Measured:
+    #   $x = Get-DrivEnvGenerateList -Cfg $c     ->  Count 2, $x[0] = 'clang'      (String)
+    #   $x = @(Get-DrivEnvGenerateList -Cfg $c)  ->  Count 1, $x[0] = Object[]     (nested)
+    # This function already guarantees an array, so the wrap buys nothing and costs correctness. Assign it, or
+    # iterate it, directly.
     if ($null -eq $Cfg) { return ,@() }
     if (@($Cfg.PSObject.Properties.Name) -notcontains 'generate') { return ,@() }
 
