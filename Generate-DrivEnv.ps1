@@ -180,7 +180,7 @@ if (-not (Test-Path -LiteralPath $configPath))
 
 try
 {
-    $cfg = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+    $cfg = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json
 }
 catch
 {
@@ -282,6 +282,7 @@ if ($missing.Count -gt 0)
 
 Write-Banner "DRIVENV GENERATION"
 Write-Host ("  Configuration : {0}" -f $ConfigFile)
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $cfg; if ($metaLine) { Write-Host ("  {0}" -f $metaLine) }
 Write-Host ("  Scripts       : {0}" -f $scriptDir)
 Write-Host ("  Steps         : {0}" -f (($selected | ForEach-Object { $_.Number }) -join ", "))
 if ($toolchains.Count -gt 0)

@@ -1,4 +1,10 @@
 {
+    "metadata": {
+        "name": "Full reference", "version": "1.0.0", "date": "2026-10-20", "author": "Your Name",
+        "description": "Every optional key spelled out",
+        "notes": ["Free notes, one string each"]
+    },
+    "git": { "user_name": "Your Name", "user_email": "you@example.com" },
     "environment": {
         "dev_drive_label": "DEV_DEGORAS_SLR_CLANG",
         "dev_drive_letter": "L",
@@ -21,7 +27,6 @@
         "custom_path_entries": ["${CUDA_PATH}"],
         "custom_folders": ["logs/gstreamer/dot", "logs/gstreamer/registry", "workspace_vcpkg_patches"],
         "install_testing_material": true,
-        "install_installation_material": true,
         "verification": {
             "check_packages": true,
             "check_dll_load": true,

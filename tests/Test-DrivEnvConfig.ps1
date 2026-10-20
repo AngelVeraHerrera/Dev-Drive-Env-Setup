@@ -40,7 +40,7 @@ function Check
     else     { $script:fail++; Write-Host "  FAIL  $Name   $Detail" }
 }
 
-function Load       { param([string]$Path) return (Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json) }
+function Load       { param([string]$Path) return (Get-Content -Raw -LiteralPath $Path -Encoding UTF8 | ConvertFrom-Json) }
 function Clone      { param($o) return ($o | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json) }
 function HasProblem { param($cfg, [string]$needle) return @(Test-DrivEnvConfig -Config $cfg | Where-Object { $_ -like "*$needle*" }).Count -gt 0 }
 
@@ -1076,7 +1076,7 @@ Check "fixed, nobody recorded: the configured one, silently" (($d.Commit -ceq $f
 # No numbered step builds a per-toolchain name of its own any more: a name built anywhere but the table is a file
 # some other step cannot find.
 $builders = @()
-foreach ($f in (Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Filter '[1-6]-*.ps1'))
+foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Filter '*.ps1' | Where-Object { $_.Name -match '^[1-6]-' }))
 {
     foreach ($hit in (Select-String -LiteralPath $f.FullName -Pattern "_env_variables\.env[`"']|_env_launcher\.(bat|lnk)[`"']|Environment\.lnk[`"']"))
     {
@@ -1814,6 +1814,36 @@ Check "...asks twice -- YES, then the label -- elevates itself, and refuses whil
     (($srcRm -match "Read-Host `"Type YES to continue`"\) -cne 'YES'") -and ($srcRm -match '-cne \$label\)') -and ($srcRm -match '-Verb RunAs') -and ($srcRm -match 'Programs are running from the drive'))
 Check "...dismounts before deleting, never deletes what it could not dismount, and runs Manage-MountTasks.ps1 -Remove" `
     (($srcRm.IndexOf('Dismount-DiskImage') -lt $srcRm.IndexOf('Remove-Item -LiteralPath $vhd')) -and ($srcRm -match 'it could not be dismounted') -and ($srcRm -match "Manage-MountTasks\.ps1'\) -Remove"))
+
+Write-Host "=== 42. METADATA AND GIT IDENTITY ==="
+$aName = "$([char]0xC1)ngel Vera Herrera"
+$mg = Clone $example
+$mg | Add-Member -NotePropertyName git -NotePropertyValue ([pscustomobject]@{ user_name = $aName; user_email = 'angelvh.engr@gmail.com' }) -Force
+Check "metadata and git validate" ((Test-DrivEnvConfig -Config $mg).Count -eq 0) ("-> " + ((Test-DrivEnvConfig -Config $mg) -join '; '))
+$bad = Clone $mg; $bad.metadata | Add-Member -NotePropertyName date -NotePropertyValue '20/10/2026' -Force
+Check "...a date not YYYY-MM-DD refused" (HasProblem $bad 'metadata.date')
+$bad = Clone $mg; $bad.metadata | Add-Member -NotePropertyName versoin -NotePropertyValue '1' -Force
+Check "...an unknown metadata key refused" (HasProblem $bad 'versoin')
+$bad = Clone $mg; $bad.git = Obj '{"user_name":"X"}'
+Check "...git without user_email refused" (HasProblem $bad 'git.user_email')
+$bad = Clone $mg; $bad.git = Obj '{"user_name":"X","user_email":"not-an-email"}'
+Check "...an e-mail without @ and domain refused" (HasProblem $bad 'git.user_email')
+$gl = @(Get-DrivEnvGitSystemConfigLines -Proxy 'http://p:8080' -Git $mg.git)
+Check "gitconfig: proxy, identity and useConfigOnly" (($gl -contains '[http]') -and ($gl -contains "`tproxy = http://p:8080") -and ($gl -contains '[user]') -and
+    ($gl -contains "`tname = $aName") -and ($gl -contains "`temail = angelvh.engr@gmail.com") -and ($gl -contains "`tuseConfigOnly = true"))
+Check "...identity only: no [http]; neither: nothing to write" ((@(Get-DrivEnvGitSystemConfigLines -Git $mg.git) -notcontains '[http]') -and (@(Get-DrivEnvGitSystemConfigLines).Count -eq 0))
+Check "metadata summary line, empty without metadata" (((Get-DrivEnvMetadataSummary -Cfg $mg) -ceq 'Configuration: Example dual drive 1.0.0 (2026-10-20)') -and ((Get-DrivEnvMetadataSummary -Cfg (Load $base)) -ceq ''))
+Check "metadata record lines, blank notes skipped" ((Joined @(Get-DrivEnvMetadataLines -Cfg (Obj '{"metadata":{"name":"N","notes":["a"," ","b"]}}'))) -ceq 'name: N|notes:|  - a|  - b')
+# FOUND WHILE ADDING THIS: Windows PowerShell 5.1 reads a BOM-less file as ANSI unless told otherwise, so a name
+# with an accent reached the steps mangled. Every step and the runner read the configuration as UTF-8.
+$uj = Join-Path ([System.IO.Path]::GetTempPath()) ("drivenv-utf8-" + [guid]::NewGuid().ToString('N') + '.json')
+[System.IO.File]::WriteAllText($uj, ('{"git":{"user_name":"' + $aName + '"}}'), (New-Object System.Text.UTF8Encoding($false)))
+$ur = (Get-Content -Path $uj -Raw -Encoding UTF8 | ConvertFrom-Json).git.user_name
+Remove-Item -LiteralPath $uj -Force
+$readers = @(Select-String -Path (@(Join-Path $root 'Generate-DrivEnv.ps1') + @(Get-ChildItem (Join-Path $root 'scripts\*.ps1') | Where-Object { $_.Name -match '^[1-7]-' } | ForEach-Object FullName)) -Pattern 'Get-Content.*\| ConvertFrom-Json')
+Check "the configuration is read as UTF-8 by the runner and every step" (($ur -ceq $aName) -and ($readers.Count -eq 8) -and (@($readers | Where-Object { $_.Line -notmatch '-Encoding UTF8' }).Count -eq 0))
+$src2g = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts\2-Setup_MSYS2.ps1')
+Check "...and step 2 writes the drive's gitconfig from it, as UTF-8" (($src2g -match 'Get-DrivEnvGitSystemConfigLines -Proxy \$proxyUrl -Git \$Cfg\.git') -and ($src2g -match 'WriteAllLines\(\$gitConfigPath'))
 
 # SKIPPED IS SAID, and counted: a clean-looking summary over cases that did not run is how a gap hides. With
 # DRIVENV_REQUIRE_BASH=1 a skip is a failure, for a machine that is expected to have the bash.

@@ -218,7 +218,7 @@ if (-not (Test-Path -LiteralPath $cfgPath))
     Abort-WithError
 }
 
-try { $Cfg = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json }
+try { $Cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json }
 catch
 {
     Write-Error "Configuration is not valid JSON: $($_.Exception.Message)"
@@ -239,6 +239,7 @@ if ($cfgProblems.Count -gt 0)
 }
 
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # --------------------------------------------------------------------
 # TOOLCHAIN PROJECTION

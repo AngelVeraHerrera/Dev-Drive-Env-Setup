@@ -421,23 +421,7 @@ function Configure-MSYS2Proxy
 
     Set-Content -Path $dirmngrConf -Encoding ASCII -Value $dirmngrLines
     Write-Info "dirmngr.conf created at: $dirmngrConf"
-
-    # 3) Proxy for git, in etc/gitconfig: the setup steps run git.exe directly from PowerShell (vcpkg clone, step 6)
-    # and never source the profile.d script above. A user's ~/.gitconfig still overrides it.
-    Write-Info "Configuring git proxy for the drive..."
-
-    $gitConfigPath = Join-Path $Msys2Root "etc\gitconfig"
-
-    $gitConfigLines = @(
-        "# DevSystem - git system configuration for this drive."
-        "# Written by 2-Setup_MSYS2.ps1 from environment.proxy_url. Edit the JSON, not this file:"
-        "# regenerating the environment overwrites it."
-        "[http]"
-        "`tproxy = $Proxy"
-    )
-
-    Set-Content -Path $gitConfigPath -Encoding ASCII -Value $gitConfigLines
-    Write-Info "git system config created at: $gitConfigPath"
+    # 3) git's proxy goes into etc/gitconfig, written below with the git identity.
 }
 
 # CONFIGURATION
@@ -461,7 +445,7 @@ if (-not (Test-Path $ConfigPath))
 
 try 
 {
-    $Cfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $Cfg = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 } catch 
 {
     Write-Error "Invalid JSON in $ConfigPath"
@@ -482,6 +466,7 @@ if ($cfgProblems.Count -gt 0)
 }
 
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # --------------------------------------------------------------------
 # TOOLCHAIN PROJECTION
@@ -927,6 +912,16 @@ try {
 catch {
     Write-Error ("Proxy configuration failed: {0}" -f $_.Exception.Message)
     Abort-WithError
+}
+
+# The drive's git system config (proxy and identity): the setup steps run git.exe directly and never source
+# profile.d. ~/.gitconfig and repository configs still override it. UTF-8: names are not ASCII.
+$gitSysLines = @(Get-DrivEnvGitSystemConfigLines -Proxy $proxyUrl -Git $Cfg.git)
+if ($gitSysLines.Count -gt 0)
+{
+    $gitConfigPath = Join-Path $msys2Path "etc\gitconfig"
+    [System.IO.File]::WriteAllLines($gitConfigPath, [string[]]$gitSysLines, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Info "git system config written: $gitConfigPath"
 }
 
 # Terminal config. Unconditional, unlike the proxy above: every drive gets a terminal, whether or not it sits

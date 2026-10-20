@@ -290,7 +290,7 @@ if (-not (Test-Path $ConfigPath))
 
 try
 {
-    $Cfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $Cfg = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 catch
 {
@@ -312,6 +312,7 @@ if ($cfgProblems.Count -gt 0)
 }
 
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # ONE RULE for the folder: Resolve-DrivEnvWorkspaceFolder, the one step 1 creates and step 2 publishes as
 # DEVSYSTEM_WORKSPACE. This step used to normalise the setting by a rule of its own, which refused a leading slash

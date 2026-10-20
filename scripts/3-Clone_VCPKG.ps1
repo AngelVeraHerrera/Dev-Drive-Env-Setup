@@ -359,7 +359,7 @@ if (-not (Test-Path $ConfigPath))
 
 try
 {
-    $Cfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $Cfg = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 catch
 {
@@ -381,6 +381,7 @@ if ($cfgProblems.Count -gt 0)
 }
 
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # --------------------------------------------------------------------
 # TOOLCHAIN PROJECTION

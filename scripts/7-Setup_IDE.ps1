@@ -135,6 +135,7 @@ if ($cfgProblems.Count -gt 0)
     Abort-WithError
 }
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # What to set up, resolved in one place: where Qt Creator and sdktool are, which drive directories, which toolchains.
 $qt = Get-DrivEnvQtCreatorSetup -Cfg $Cfg

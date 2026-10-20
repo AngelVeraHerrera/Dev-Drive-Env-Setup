@@ -136,7 +136,7 @@ function Get-DrivEnvConfigSchema
             custom_path_entries           = @{ type = 'array'; item = $stringNode }
             custom_folders                = @{ type = 'array'; item = $stringNode }
             install_testing_material      = $boolNode
-            install_installation_material = $boolNode
+            install_installation_material = $boolNode   # ignored since 3.0.0 (no installation/ tree); accepted for older files
             append_windows_system_path    = $boolNode
 
             # The only things put on the host rather than the drive, so they are switchable. Both default to TRUE:
@@ -338,10 +338,35 @@ function Get-DrivEnvConfigSchema
         }
     }
 
+    # The drive's git identity, written by step 2 into msys64/etc/gitconfig: the default when neither ~/.gitconfig nor
+    # a repository sets one, so git never invents a <user>@<host> identity (useConfigOnly).
+    $git = @{
+        type   = 'object'
+        fields = @{
+            user_name  = @{ type = 'string'; required = $true; notEmpty = $true }
+            user_email = @{ type = 'string'; required = $true; notEmpty = $true; pattern = '^[^@\s]+@[^@\s]+\.[^@\s]+$' }
+        }
+    }
+
+    # What this configuration is. Shown in every step's log and recorded on the drive (step 4).
+    $metadata = @{
+        type   = 'object'
+        fields = @{
+            name        = @{ type = 'string'; notEmpty = $true }
+            version     = @{ type = 'string'; notEmpty = $true }
+            date        = @{ type = 'string'; pattern = '^\d{4}-\d{2}-\d{2}$' }
+            author      = @{ type = 'string'; notEmpty = $true }
+            description = $stringNode
+            notes       = @{ type = 'array'; item = $stringNode }
+        }
+    }
+
     return @{
         type     = 'object'
         required = $true
         fields   = @{
+            metadata        = $metadata
+            git             = $git
             environment     = $environment
             msys2           = $msys2
             vcpkg           = $vcpkg
@@ -1498,6 +1523,55 @@ function Get-DrivEnvDriveEnvValues
         DEVSYSTEM_DEPLOYS   = $drive + '/deploys'
         DEVSYSTEM_WORKSPACE = $drive + '/' + $workspace
     }
+}
+
+function Get-DrivEnvGitSystemConfigLines
+{
+    # @brief The drive's msys64/etc/gitconfig: [http] proxy from environment.proxy_url and [user] from 'git'.
+    # @return The file's lines, or an empty array when there is neither (the file is then left alone).
+    param ([string]$Proxy = "", $Git = $null)
+
+    $lines = @()
+    if (-not [string]::IsNullOrWhiteSpace($Proxy)) { $lines += @('[http]', ("`tproxy = {0}" -f $Proxy.Trim())) }
+    if ($Git -and -not [string]::IsNullOrWhiteSpace([string]$Git.user_name) -and -not [string]::IsNullOrWhiteSpace([string]$Git.user_email))
+    {
+        $lines += @('[user]', ("`tname = {0}" -f ([string]$Git.user_name).Trim()), ("`temail = {0}" -f ([string]$Git.user_email).Trim()), "`tuseConfigOnly = true")
+    }
+    if ($lines.Count -eq 0) { return @() }
+    return @('# Git system configuration of this drive, written by step 2 from the JSON (environment.proxy_url, git).',
+             '# Edit the JSON, not this file: regenerating the environment overwrites it.') + $lines
+}
+
+function Get-DrivEnvMetadataLines
+{
+    # @brief The configuration's 'metadata' as "key: value" lines (notes as "  - note"), for the drive's records.
+    # @return The lines, or an empty array without metadata.
+    param ($Cfg)
+
+    $m = $Cfg.metadata
+    if (-not $m) { return @() }
+    $out = @()
+    foreach ($k in 'name', 'version', 'date', 'author', 'description')
+    {
+        $v = ([string]$m.$k).Trim()
+        if ($v) { $out += ('{0}: {1}' -f $k, $v) }
+    }
+    $notes = @($m.notes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($notes.Count -gt 0) { $out += 'notes:'; $out += @($notes | ForEach-Object { "  - $_" }) }
+    return $out
+}
+
+function Get-DrivEnvMetadataSummary
+{
+    # @brief One log line naming the configuration: "Configuration: <name> <version> (<date>, <author>)", or "".
+    param ($Cfg)
+
+    $m = $Cfg.metadata
+    if (-not $m) { return "" }
+    $head = (@([string]$m.name, [string]$m.version) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' '
+    $tail = (@([string]$m.date, [string]$m.author) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ', '
+    if (-not $head -and -not $tail) { return "" }
+    return ("Configuration: {0}{1}" -f $head, $(if ($tail) { " ($tail)" } else { "" })).Replace(':  (', ': (')
 }
 
 function Get-DrivEnvCustomFolders

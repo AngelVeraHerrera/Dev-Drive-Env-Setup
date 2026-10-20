@@ -171,7 +171,7 @@ if (-not (Test-Path $ConfigPath))
 
 try 
 {
-    $Cfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $Cfg = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 } catch 
 {
     Write-Error "Invalid JSON in ${ConfigPath}: $($_.Exception.Message)"
@@ -192,6 +192,7 @@ if ($cfgProblems.Count -gt 0)
 }
 
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # diskpart, fsutil and powershell.exe are called by name from System32: make sure PATH has it (appended, nothing shadowed).
 [void](Add-DrivEnvWindowsSystemPath -Report { param($m) Write-Info $m })

@@ -623,7 +623,7 @@ if (-not (Test-Path $ConfigPath))
 
 try
 {
-    $Cfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $Cfg = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 catch
 {
@@ -645,6 +645,7 @@ if ($cfgProblems.Count -gt 0)
 }
 
 Write-Info "Configuration validated against the schema: no problems."
+$metaLine = Get-DrivEnvMetadataSummary -Cfg $Cfg; if ($metaLine) { Write-Info $metaLine }
 
 # --------------------------------------------------------------------
 # TOOLCHAIN PROJECTION
@@ -1751,6 +1752,18 @@ try
 catch
 {
     Write-Warn "Could not copy the environment file: $($_.Exception.Message)"
+}
+
+# -- the configuration it was built from -------------------------------
+try
+{
+    Write-InventoryFile -Name (Get-DrivEnvRecordName -Name "configuration.txt" -Key $names.Key) `
+                        -Title ("CONFIGURATION -- toolchain {0}" -f $names.Key) `
+                        -Body (@("file: $ConfigPath") + @(Get-DrivEnvMetadataLines -Cfg $Cfg))
+}
+catch
+{
+    Write-Warn "Could not write the configuration record: $($_.Exception.Message)"
 }
 
 Write-Info "STEP 6: OK"

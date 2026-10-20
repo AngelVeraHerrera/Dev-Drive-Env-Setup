@@ -302,6 +302,30 @@ spells out the optional keys. Every step validates the file before using it.
 > ⚠️ **An unknown key is an error, not a default.** A typo such as `check_toolz` would otherwise silently check
 > nothing; the validator refuses the file and suggests the nearest key.
 
+### `metadata`
+
+Optional: what this configuration is. Every step prints it in its log, and step 4 records it on the drive
+(`<drive>:\installation\configuration_<subsystem>.txt`), so a drive tells which configuration built it.
+
+```json
+"metadata": {
+    "name": "Degoras dual", "version": "1.0.0", "date": "2026-10-20", "author": "Your Name",
+    "description": "clang64 + ucrt64 drive", "notes": ["vcpkg baseline 3cd21e48", "LLVM 23.1.3"]
+}
+```
+
+`date` is `YYYY-MM-DD`; every key is optional.
+
+### `git`
+
+Optional: the identity of the drive's git, written by step 2 into `<drive>:\msys64\etc\gitconfig` together with
+`useConfigOnly`, so a commit made on a machine with no git identity never gets an invented `<user>@<host>` one. Your
+`~/.gitconfig` and each repository's own configuration still take precedence.
+
+```json
+"git": { "user_name": "Your Name", "user_email": "you@example.com" }
+```
+
 ### `environment`
 
 | Key | Meaning |

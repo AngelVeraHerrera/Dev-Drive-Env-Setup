@@ -1,4 +1,8 @@
 {
+    "metadata": {
+        "name": "Example dual drive", "version": "1.0.0", "date": "2026-10-20",
+        "description": "clang64 + ucrt64 example"
+    },
     "environment": {
         "dev_drive_label": "DEV_DEGORAS_SLR_T1",
         "dev_drive_letter": "R",
@@ -21,7 +25,6 @@
         "custom_path_entries": ["${CUDA_PATH}"],
         "custom_folders": ["logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/dot", "workspace_vcpkg_patches"],
         "install_testing_material": true,
-        "install_installation_material": true,
         "verification": {
             "check_packages": true,
             "check_dll_load": true,
