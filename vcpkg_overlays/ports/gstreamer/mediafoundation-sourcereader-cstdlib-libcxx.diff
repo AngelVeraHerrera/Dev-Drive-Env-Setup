@@ -1,0 +1,12 @@
+diff --git a/subprojects/gst-plugins-bad/sys/mediafoundation/gstmfsourcereader.cpp b/subprojects/gst-plugins-bad/sys/mediafoundation/gstmfsourcereader.cpp
+index 6eb7f8e..fce06dd 100644
+--- a/subprojects/gst-plugins-bad/sys/mediafoundation/gstmfsourcereader.cpp
++++ b/subprojects/gst-plugins-bad/sys/mediafoundation/gstmfsourcereader.cpp
+@@ -30,6 +30,7 @@
+ #include <string>
+ #include <vector>
+ #include <algorithm>
++#include <cstdlib>
+ 
+ /* *INDENT-OFF* */
+ using namespace Microsoft::WRL;

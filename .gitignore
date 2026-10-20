@@ -3,20 +3,12 @@
 *product*/
 *todo*/
 *install*/
-# ...except the notes that must travel with the generator. The pattern above is for install_logs/;
-# installation/ is hand-written knowledge about what an environment needed, which is the opposite of a log.
-!installation/
-!installation/**
 *deploy*/
 
-# Cfg files. The pattern covers the working copy AND the hand-made backups beside it -- same
-# secretless-but-machine-specific content, and "drivenv-cfg - copia.json" is exactly what
-# Windows names one. The two documentation copies are named back in.
+# Machine-specific configurations; only the two documented ones are tracked.
 drivenv-cfg*.json
 !drivenv-cfg_example.json
 !drivenv-cfg_full-reference.json
-
-__pycache__/
 
 # Logs
 *.log
@@ -29,6 +21,7 @@ __pycache__/
 
 # Python
 *.idea
+__pycache__/
 
 # Docs.
 *Docs*/
@@ -36,8 +29,6 @@ __pycache__/
 
 # User config
 CMakeLists.txt.user
-# Per-developer CMake presets: they hard-code a drive letter and a triplet, so a committed one is wrong
-# for everybody except whoever committed it.
 CMakeUserPresets.json
 .vscode/*
 .qtcreator/*
@@ -77,3 +68,8 @@ CMakeUserPresets.json
 
 # Orig
 *.orig
+
+
+# Generator caches and run logs
+cache/
+logs/
