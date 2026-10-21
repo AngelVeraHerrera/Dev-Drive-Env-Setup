@@ -1,0 +1,232 @@
+{
+    "metadata": {
+        "name": "Degoras dual", "version": "1.0.0", "date": "2026-10-20", "author": "Ángel Vera Herrera",
+        "description": "clang64 + ucrt64 drive for the Degoras projects",
+        "notes": ["vcpkg baseline 3cd21e48", "LLVM 23.1.3, GCC 16.2.0"]
+    },
+    "git": { "user_name": "Ángel Vera Herrera", "user_email": "angelvh.engr@gmail.com" },
+    "environment": {
+        "dev_drive_label": "DEV_DEGORAS",
+        "dev_drive_letter": "D",
+        "dev_env_name": "Degoras",
+        "vhd_root": "C:/DevDrives",
+        "vhd_size_gb": 60,
+        "use_dev_drive": false,
+        "force_diskpart": true,
+        "vhd_fixed": false,
+        "custom_variables": {
+            "CUDA_PATH": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin",
+            "GST_PLUGIN_PATH": "${VCPKG_ROOT}/installed/${VCPKG_DEFAULT_TRIPLET}/plugins/gstreamer",
+            "GST_REGISTRY": "${DEVDRIVE_LETTER}/logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/registry.x86_64.bin",
+            "GST_DEBUG_DUMP_DOT_DIR": "${DEVDRIVE_LETTER}/logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/dot",
+            "GST_DEBUG_FILE": "${DEVDRIVE_LETTER}/logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/gst-debug.log",
+            "GST_DEBUG": "2",
+            "GSTREAMER_TEST_HOST_IP": "192.168.102.50",
+            "GSTREAMER_TEST_PORT": "5500"
+        },
+        "custom_path_entries": ["${CUDA_PATH}"],
+        "custom_folders": ["logs/gstreamer/${DEVSYSTEM_TOOLCHAIN_ID}/dot", "workspace_degoras"],
+        "install_testing_material": true,
+        "verification": {
+            "check_packages": true,
+            "check_dll_load": true,
+            "check_tools": [
+                "vcpkg", "cmake", "ninja", "gdb", "gst-inspect-1.0", "gst-launch-1.0", "gst-discoverer-1.0", "curl", "pkgconf",
+                "clang-tidy", "clangd", "cppcheck", "dot", "doxygen", "include-what-you-use"
+            ],
+            "check_commands": [
+                { "run": "gst-inspect-1.0 --version", "expect": "GStreamer" },
+                { "run": "curl --version", "expect": "curl" },
+                { "run": "pkgconf --version", "expect": "" },
+                { "run": "clang-tidy --version", "expect": "LLVM" },
+                { "run": "cppcheck --version", "expect": "Cppcheck" },
+                { "run": "dot -V", "expect": "graphviz" },
+                { "run": "doxygen --version", "expect": "" },
+                { "run": "include-what-you-use --version", "expect": "" }
+            ],
+            "check_gstreamer_elements": [
+                "videotestsrc", "audiotestsrc", "decodebin", "playbin", "matroskademux", "x264enc", "x265enc", "openh264enc",
+                "libde265dec", "d3d11h264dec", "d3d11h265dec", "d3d11videosink", "d3d11screencapturesrc", "nvh264enc",
+                "nvh264dec", "mfh264enc", "mfvideosrc", "rtph264pay", "rtph265pay", "rtpjitterbuffer", "udpsink", "udpsrc",
+                "srtsink", "hlssink2", "fpsdisplaysink", "avdec_h264", "avenc_aac", "glupload", "glimagesink"
+            ]
+        },
+        "append_windows_system_path": false,
+        "proxy_url": "http://192.168.1.68:8080"
+    },
+
+    "msys2": {
+        "source": { "url": "https://repo.msys2.org/distrib/msys2-x86_64-latest.sfx.exe", "sha256": "" },
+        "packages": [
+            { "name": "cmake", "mode": "pinned", "version": "4.4.4-3" },
+            { "name": "ninja", "mode": "pinned", "version": "1.13.2-1" },
+            { "name": "make", "mode": "pinned", "version": "4.4.1-5" },
+            { "name": "make", "mode": "pinned", "version": "4.4.1-3", "repo": "msys" },
+            { "name": "gdb", "mode": "pinned", "version": "18.1-3" },
+            { "name": "diffutils", "mode": "pinned", "version": "3.12-1" },
+            { "name": "ripgrep", "mode": "pinned", "version": "15.2.0-1" },
+            { "name": "curl", "mode": "pinned", "version": "8.23.0-1" },
+            { "name": "doxygen", "mode": "pinned", "version": "1.18.0-4" },
+            { "name": "7zip", "mode": "pinned", "version": "26.04-1" },
+            { "name": "ntldd", "mode": "pinned", "version": "r19.7fb9365-4" },
+            { "name": "clang-tools-extra", "mode": "pinned", "version": "23.1.3-1" },
+            { "name": "cppcheck", "mode": "pinned", "version": "2.21.0-1" },
+            { "name": "graphviz", "mode": "pinned", "version": "16.1.0-1" },
+            { "name": "include-what-you-use", "mode": "pinned", "version": "0.27-1" }
+        ]
+    },
+
+    "vcpkg": {
+        "source": {
+            "repository_url": "https://github.com/microsoft/vcpkg.git",
+            "baseline_mode": "fixed",
+            "baseline_commit": "3cd21e48a75f67acfef289da52893ce79144aaa1"
+        },
+        "buildtrees_root": "bt",
+        "cleanup": { "buildtrees": "logs" },
+        "install_schedule": [{}, { "concurrency": 12 }, { "concurrency": 8 }, { "concurrency": 1 }],
+        "overlay_ports": [
+            { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
+            { "triplet": "x64-mingw-ucrt-dynamic-release", "layers": ["ports.ucrt", "ports"] },
+            { "triplet": "*", "layers": ["ports"] }
+        ],
+        "packages": [
+            { "name": "fmt" },
+            { "name": "nlohmann-json" },
+            { "name": "zlib" },
+            { "name": "gettext", "features": ["core", "tools"] },
+            { "name": "openssl" },
+            { "name": "curl", "features": ["openssl", "ssh", "brotli", "c-ares", "zstd"] },
+            { "name": "spdlog" },
+            { "name": "libbson" },
+            { "name": "mongo-c-driver", "features": ["openssl"] },
+            { "name": "mongo-cxx-driver" },
+            { "name": "xerces-c" },
+            { "name": "fastfeat" },
+            { "name": "zeromq", "features": ["curve", "draft", "sodium"] },
+            { "name": "cppzmq" },
+            { "name": "grpc", "features": ["codegen"] },
+            { "name": "x264", "features": ["asm", "core", "gpl"] },
+            { "name": "x265" },
+            {
+                "name": "ffmpeg",
+                "features": ["avcodec", "avformat", "avfilter", "avdevice", "swresample", "swscale", "x264", "x265"],
+                "install_schedule": [{ "concurrency": 16 }, { "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 }]
+            },
+            {
+                "name": "gstreamer",
+                "features": [
+                    "nvcodec", "plugins-base", "plugins-good", "plugins-bad", "plugins-ugly", "gl", "gl-graphene", "gpl",
+                    "openh264", "x264", "x265", "libde265", "srt", "libav", "hls"
+                ]
+            },
+            { "name": "gst-rtsp-server" },
+            {
+                "name": "qtbase",
+                "features": [
+                    "gui", "thread", "widgets", "network", "opengl", "testlib", "openssl", "freetype", "png", "jpeg", "zstd",
+                    "concurrent", "windeployqt"
+                ],
+                "install_schedule": [{ "concurrency": 16 }, { "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 }]
+            },
+            { "name": "qt5compat" },
+            { "name": "qtshadertools" },
+            {
+                "name": "qtdeclarative",
+                "install_schedule": [{ "concurrency": 16 }, { "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 }]
+            },
+            { "name": "qtmultimedia", "features": ["ffmpeg", "widgets", "qml"] },
+            { "name": "qtgrpc" },
+            { "name": "qwt" },
+            { "name": "qt-advanced-docking-system" },
+            {
+                "name": "opencv4",
+                "features": ["tbb", "opengl", "jpeg", "png", "contrib", "qt"],
+                "install_schedule": [{ "concurrency": 16 }, { "concurrency": 8 }, { "concurrency": 4 }, { "concurrency": 1 }]
+            }
+        ]
+    },
+
+    "workspace": {
+        "default_folder": "workspace_degoras",
+        "repositories": [
+            { "url": "https://github.com/DegorasProjectTeam/DegorasHelloWorlds.git" }
+        ]
+    },
+
+    "toolchains": {
+        "clang": {
+            "msys2": {
+                "target": {
+                    "subsystem": "clang64", "package_prefix": "mingw-w64-clang-x86_64", "repo_subpath": "mingw/clang64",
+                    "arch": "x86_64", "family": "clang", "base_url": "https://repo.msys2.org"
+                },
+                "packages": [
+                    { "name": "headers", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-1" },
+                    { "name": "crt", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-1" },
+                    { "name": "libwinpthread", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-2" },
+                    { "name": "winpthreads", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-2" },
+                    { "name": "clang", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "clang-libs", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "llvm", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "llvm-libs", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "llvm-tools", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "lld", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "libc++", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "compiler-rt", "mode": "pinned", "version": "23.1.3-1" }
+                ]
+            },
+            "vcpkg": { "target": { "triplet": "x64-mingw-clang-dynamic-release" } },
+            "environment": {
+                "verification": {
+                    "check_tools": ["clang", "clang++", "lld"],
+                    "check_commands": [{ "run": "clang --version", "expect": "clang version" }]
+                }
+            }
+        },
+
+        "ucrt": {
+            "msys2": {
+                "target": {
+                    "subsystem": "ucrt64", "package_prefix": "mingw-w64-ucrt-x86_64", "repo_subpath": "mingw/ucrt64",
+                    "arch": "x86_64", "family": "gcc", "base_url": "https://repo.msys2.org"
+                },
+                "packages": [
+                    { "name": "headers", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-1" },
+                    { "name": "crt", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-1" },
+                    { "name": "libwinpthread", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-2" },
+                    { "name": "winpthreads", "mode": "pinned", "version": "14.0.0.r426.g4564ee4b5-2" },
+                    { "name": "gcc", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "gcc-libs", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "cc-libs", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "libgcc", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "libstdc++", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "libgomp", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "libatomic", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "libquadmath", "mode": "pinned", "version": "16.2.0-6" },
+                    { "name": "clang", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "clang-libs", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "llvm-libs", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "lld", "mode": "pinned", "version": "23.1.3-1" },
+                    { "name": "qt-creator", "mode": "pinned", "version": "20.0.2-2" }
+                ]
+            },
+            "vcpkg": { "target": { "triplet": "x64-mingw-ucrt-dynamic-release" } },
+            "environment": {
+                "verification": {
+                    "check_tools": ["gcc", "g++", "ld.lld", "qtcreator"],
+                    "check_commands": [{ "run": "gcc --version", "expect": "gcc" }]
+                }
+            }
+        }
+    },
+
+    "generate": ["clang", "ucrt"],
+
+    "ide_integration": {
+        "qtcreator": {
+            "source": "msys2", "subsystem": "ucrt64",
+            "register_in_user_settings": true, "user_settings_path": "%APPDATA%/QtProject"
+        }
+    }
+}
