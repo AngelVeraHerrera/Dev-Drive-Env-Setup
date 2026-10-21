@@ -1845,6 +1845,45 @@ Check "the configuration is read as UTF-8 by the runner and every step" (($ur -c
 $src2g = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts\2-Setup_MSYS2.ps1')
 Check "...and step 2 writes the drive's gitconfig from it, as UTF-8" (($src2g -match 'Get-DrivEnvGitSystemConfigLines -Proxy \$proxyUrl -Git \$Cfg\.git') -and ($src2g -match 'WriteAllLines\(\$gitConfigPath'))
 
+Write-Host "=== 43. vcpkg.cleanup: packages, downloads and binary cache ==="
+$cs = Get-DrivEnvCleanupSettings -Cfg (Load $base)
+Check "cleanup defaults: nothing removed" (($cs.Buildtrees -ceq 'none') -and -not $cs.Packages -and -not $cs.Downloads -and -not $cs.BinaryCache)
+$cc = Clone $example; $cc.vcpkg | Add-Member -NotePropertyName cleanup -NotePropertyValue (Obj '{"buildtrees":" LOGS ","packages":true,"downloads":true,"binary_cache":false}') -Force
+$cs = Get-DrivEnvCleanupSettings -Cfg $cc
+Check "...the keys read, buildtrees trimmed and lowered" (($cs.Buildtrees -ceq 'logs') -and $cs.Packages -and $cs.Downloads -and -not $cs.BinaryCache)
+Check "...and they validate" ((Test-DrivEnvConfig -Config $cc).Count -eq 0) ("-> " + ((Test-DrivEnvConfig -Config $cc) -join '; '))
+$cc.vcpkg.cleanup.packages = 'yes'
+Check "...a non-boolean refused" (HasProblem $cc 'vcpkg.cleanup.packages')
+$src4c = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts\4-Deps_VCPKG.ps1')
+Check "step 4: vcpkg\packages removed whole; downloads and binary cache only by the last toolchain; a summary" `
+    (($src4c -match 'Remove-Tree \$pkgRoot "vcpkg packages"') -and ($src4c -match 'if \(-not \$isLastToolchain\)') -and
+     ($src4c -match 'Reclaimed \{0:N1\} MB'))
+
+Write-Host "=== 44. PORTABILITY: categories, build tree kinds, estimates ==="
+. (Join-Path $root 'scripts\DrivEnvPortability.ps1')
+$tr = @('x64-mingw-clang-dynamic-release', 'x64-mingw-ucrt-dynamic-release')
+Check "build tree kinds: port by its stamp, user by its triplet name, detect_compiler internal, the rest unknown" (
+    ((Get-DrivEnvBuildtreeEntryKind -Name 'zlib' -FileNames @('x64-mingw-ucrt-dynamic-release.vcpkg_abi_info.txt', 'a.log') -Triplets $tr) -ceq 'port') -and
+    ((Get-DrivEnvBuildtreeEntryKind -Name 'X64-MINGW-UCRT-DYNAMIC-RELEASE' -Triplets $tr) -ceq 'user') -and
+    ((Get-DrivEnvBuildtreeEntryKind -Name 'detect_compiler' -Triplets $tr) -ceq 'internal') -and
+    ((Get-DrivEnvBuildtreeEntryKind -Name 'zlib' -FileNames @('a.log') -Triplets $tr) -ceq 'unknown'))
+$pc = Get-DrivEnvPortabilityCategories -Drive 'D:' -BuildtreesWin 'D:\bt' -BinaryCache 'D:\packages\vcpkg'
+$pcEnv = @($pc | Where-Object Key -eq 'environment')[0]
+Check "categories: safe, optional and keep, binary cache optional, every path its own entry" (
+    ((Joined @($pc | Where-Object Class -eq 'safe' | ForEach-Object Key)) -ceq 'vcpkg_packages|buildtree_ports|buildtree_internal|temp') -and
+    (@($pc | Where-Object Key -eq 'binary_cache')[0].Class -ceq 'optional') -and
+    ((Joined $pcEnv.Paths) -ceq 'D:\msys64|D:\vcpkg\installed|D:\env'))
+$ex = Get-DrivEnvExportExclusions -Categories $pc
+Check "export exclusions: every safe category always, vcpkg_packages first; no optional one by default" ((Joined $ex) -ceq 'vcpkg_packages|buildtree_ports|buildtree_internal|temp')
+Check "...-Full adds every optional one, -Exclude only those named" (
+    ((Joined (Get-DrivEnvExportExclusions -Categories $pc -Full)) -ceq 'vcpkg_packages|buildtree_ports|buildtree_internal|temp|downloads|user_builds|failure_logs|binary_cache') -and
+    ((Joined (Get-DrivEnvExportExclusions -Categories $pc -Exclude @('downloads'))) -ceq 'vcpkg_packages|buildtree_ports|buildtree_internal|temp|downloads'))
+Check "...a key that is not optional is refused, never silently kept or dropped" ((Throws { Get-DrivEnvExportExclusions -Categories $pc -Exclude @('environment') }) -and (Throws { Get-DrivEnvExportExclusions -Categories $pc -Exclude @('downlods') }))
+$srcEx = Get-Content -Raw -LiteralPath (Join-Path $root 'tools\Export-DevDrive.ps1')
+Check "export: reads the drive with robocopy into a new VHDX, never deletes on it, verifies read-only" (($srcEx -match 'create vdisk file=') -and ($srcEx -match "'/COPY:DAT'") -and
+    ($srcEx -notmatch '(?m)^[^#]*Remove-Item[^
+]*\$drive') -and ($srcEx -match 'Mount-DiskImage -ImagePath \$newVhd -Access ReadOnly'))
+
 # SKIPPED IS SAID, and counted: a clean-looking summary over cases that did not run is how a gap hides. With
 # DRIVENV_REQUIRE_BASH=1 a skip is a failure, for a machine that is expected to have the bash.
 Write-Host "================ $script:pass passed, $script:fail failed, $script:skip skipped ================"

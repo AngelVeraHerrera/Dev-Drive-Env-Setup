@@ -362,6 +362,8 @@ The repository, the baseline commit, the target triplet, the overlay layers and 
 | `install_schedule` | One entry per attempt, e.g. `[ {}, { "concurrency": 8 }, { "concurrency": 1 } ]`: retries with fewer parallel jobs, since the failures worth retrying are resource-shaped. Also per package |
 | `retry_delay_seconds` | Wait before a retry, times the attempt number. Default `0` |
 | `cleanup.buildtrees` | `none` (default), `logs` or `all`: what step 4 removes after a successful run. Your own builds in `<triplet>/` are never touched |
+| `cleanup.packages` | `true` removes `vcpkg\packages`, vcpkg's staging folder (recreated when a port is built). Its files are hardlinked into `installed`, so it frees names rather than space. Default `false` |
+| `cleanup.downloads`, `cleanup.binary_cache` | `true` empties `vcpkg\downloads` (re-downloaded when needed) or the binary cache (reinstalling then means building again). Shared, so done by the last generated toolchain. Default `false` |
 | `buildtrees_root` | Folder for build trees, default `bt`: short on purpose, because of the 260-character path limit |
 | `overlay_ports` | Overlay layers per triplet — see [Overlay ports](#overlay-ports) |
 
@@ -433,8 +435,9 @@ made. Failed ports keep one folder per attempt (`<drive>:\logs\vcpkg\<port>\atte
 because the first failure is usually the informative one.
 
 Step 4 writes the inventory to `<drive>:\installation\`, one set per toolchain: `vcpkg_packages_<subsystem>.txt` and
-`.json`, `msys2_packages_<subsystem>.txt`, `environment_<subsystem>.txt`, `verification_<subsystem>.txt`, and the
-drive's `vcpkg_baseline.txt`.
+`.json`, `msys2_packages_<subsystem>.txt`, `environment_<subsystem>.txt`, `configuration_<subsystem>.txt`,
+`verification_<subsystem>.txt`, and the drive's `vcpkg_baseline.txt`. Step 4's log ends with a cleanup summary: what
+each `vcpkg.cleanup` key removed, how much it freed, and what was kept and why.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

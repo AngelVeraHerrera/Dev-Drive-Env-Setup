@@ -1768,38 +1768,39 @@ catch
 
 Write-Info "STEP 6: OK"
 
-# STEP 7: Optional cleanup of the build trees.
+# STEP 7: Optional cleanup (build trees, package staging, downloads, binary cache).
 # --------------------------------------------------------------------
 #
 # Only reached by a successful, uncancelled run (failures exit through Abort-WithError), after step 4 verified every
-# port and step 6's vcpkg list finished. Nothing happens unless vcpkg.cleanup.buildtrees says so (default "none").
+# port and step 6's vcpkg list finished. Nothing is removed unless vcpkg.cleanup says so; a summary is always logged.
 
-$cleanupMode = "none"
-if ($Cfg.vcpkg.PSObject.Properties.Name -contains "cleanup" -and $Cfg.vcpkg.cleanup -and
-    ($Cfg.vcpkg.cleanup.PSObject.Properties.Name -contains "buildtrees"))
+$cleanup    = Get-DrivEnvCleanupSettings -Cfg $Cfg
+$summary    = @()   # one row per category: what went, how much, and what stayed and why
+$cleanStart = Get-Date
+
+function Get-TreeBytes { param([string]$Path) return [double](Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum }
+function Remove-Tree
 {
-    # Trimmed and lowered because the VALIDATOR compares that way -- it accepts " LOGS " as valid -- and a value
-    # that validates but matches no branch here would silently mean "none", which is the wrong kind of silence.
-    $cleanupMode = ([string]$Cfg.vcpkg.cleanup.buildtrees).Trim().ToLowerInvariant()
+    # Never fatal: a cleanup that fails after a good build must not fail the run. Returns the bytes freed.
+    param([string]$Path, [string]$What)
+    try { $b = Get-TreeBytes $Path; Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop; return $b }
+    catch { Write-Warn ("Could not remove {0} '{1}': {2}" -f $What, $Path, $_.Exception.Message); return 0 }
 }
 
-if ($cleanupMode -eq "none")
+Write-Info ("STEP 7: Cleanup (vcpkg.cleanup: buildtrees = {0}, packages = {1}, downloads = {2}, binary_cache = {3})." -f
+            $cleanup.Buildtrees, $cleanup.Packages, $cleanup.Downloads, $cleanup.BinaryCache)
+
+# -- build trees ---------------------------------------------------------
+if ($cleanup.Buildtrees -eq "none")
 {
-    Write-Info "STEP 7: Build trees kept (vcpkg.cleanup.buildtrees = none)."
+    $summary += [pscustomobject]@{ Category = "buildtrees"; Removed = 0; Bytes = 0; Note = "kept (buildtrees = none)" }
 }
 else
 {
-    Write-Info "STEP 7: Clean the build trees (vcpkg.cleanup.buildtrees = $cleanupMode)."
-
-    # ONE SOURCE FOR THE PATH. Resolve-DrivEnvBuildtreesRoot exists precisely so steps 1 and 4 cannot disagree
-    # about where this is; re-deriving it here would reintroduce the drift it was written to remove.
-    $buildtreesWin = (Resolve-DrivEnvBuildtreesRoot -Cfg $Cfg -DriveLetter $driveLetter `
-                                                    -Warn { param($m) Write-Warn $m }).Windows
-    $buildtreesWin = Convert-ToWinPath $buildtreesWin
-
+    $buildtreesWin = Convert-ToWinPath ((Resolve-DrivEnvBuildtreesRoot -Cfg $Cfg -DriveLetter $driveLetter -Warn { param($m) Write-Warn $m }).Windows)
     if (-not (Test-Path -LiteralPath $buildtreesWin))
     {
-        Write-Warn "Build trees root '$buildtreesWin' does not exist; nothing to clean."
+        $summary += [pscustomobject]@{ Category = "buildtrees"; Removed = 0; Bytes = 0; Note = "root '$buildtreesWin' does not exist" }
     }
     else
     {
@@ -1807,75 +1808,65 @@ else
         # (DEVSYSTEM_BUILDTREES). A port directory is recognised by the <triplet>.vcpkg_abi_info.txt vcpkg leaves in it
         # (measured: 89 of 89 ports, 0 of 16 other folders), never by name. Get-DrivEnvBuildtreeCleanupPlan then keeps
         # other toolchains' trees, and the shared src until the last generated toolchain.
-        $plans = @()
+        $plans   = @()
         $allDirs = @(Get-ChildItem -LiteralPath $buildtreesWin -Directory -ErrorAction SilentlyContinue)
         foreach ($dir in $allDirs)
         {
             # Named $abiStamps, not $stamp: further up, $stamp is the timestamp written into the records.
-            $abiStamps = @(Get-ChildItem -LiteralPath $dir.FullName -Filter "*.vcpkg_abi_info.txt" -File -ErrorAction SilentlyContinue |
-                           ForEach-Object { $_.Name })
+            $abiStamps = @(Get-ChildItem -LiteralPath $dir.FullName -Filter "*.vcpkg_abi_info.txt" -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
             if ($abiStamps.Count -eq 0) { continue }
-
             $subNames = @(Get-ChildItem -LiteralPath $dir.FullName -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
             $plan = Get-DrivEnvBuildtreeCleanupPlan -SubdirNames $subNames -FileNames $abiStamps -OwnTriplets $ownTriplets `
-                                                    -LastToolchain $isLastToolchain -Mode $cleanupMode -OtherTriplets $otherTriplets
+                                                    -LastToolchain $isLastToolchain -Mode $cleanup.Buildtrees -OtherTriplets $otherTriplets
             if ($plan.Candidate) { $plans += [pscustomobject]@{ Dir = $dir; Plan = $plan } }
         }
 
-        Write-Info ("Port directories to clean: {0}. Left alone (not vcpkg's, or another toolchain's): {1}. Triplets: {2}; {3}." -f
-                    $plans.Count, ($allDirs.Count - $plans.Count), ($ownTriplets -join ", "),
-                    $(if ($isLastToolchain) { "last toolchain of the drive, so shared sources go too" } else { "not the last toolchain, so shared sources stay" }))
-
         $freedBytes = 0
-        $cleanStart = Get-Date
-
         foreach ($entry in $plans)
         {
-            $dir  = $entry.Dir
-            $plan = $entry.Plan
-            try
-            {
-                if ($plan.RemoveWhole)
-                {
-                    $freedBytes += (Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
-                                    Measure-Object -Property Length -Sum).Sum
-                    Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction Stop
-                }
-                else
-                {
-                    # Remove the source and build trees; the logs in the port folder always stay (for a first-attempt
-                    # success they exist nowhere else).
-                    foreach ($subName in @($plan.RemoveDirs))
-                    {
-                        $sub = Join-Path $dir.FullName $subName
-                        $freedBytes += (Get-ChildItem -LiteralPath $sub -Recurse -File -Force -ErrorAction SilentlyContinue |
-                                        Measure-Object -Property Length -Sum).Sum
-                        Remove-Item -LiteralPath $sub -Recurse -Force -ErrorAction Stop
-                    }
-                }
-            }
-            catch
-            {
-                # A cleanup that fails after a good build must not turn a successful run into a failed one. It
-                # says what it could not remove and the run's exit code is untouched.
-                Write-Warn ("Could not clean '{0}': {1}" -f $dir.Name, $_.Exception.Message)
-            }
+            # 'logs' removes the source and build trees and keeps the logs in the port folder (for a first-attempt
+            # success they exist nowhere else); 'all' removes the folder.
+            if ($entry.Plan.RemoveWhole) { $freedBytes += Remove-Tree $entry.Dir.FullName "build tree" }
+            else { foreach ($subName in @($entry.Plan.RemoveDirs)) { $freedBytes += Remove-Tree (Join-Path $entry.Dir.FullName $subName) "build tree" } }
         }
 
-        # The root itself is never removed: step 1 creates it, vcpkg puts its vcpkg-running.lock in it, and a
-        # later `-From 4` expects to find it.
-        if (-not (Test-Path -LiteralPath $buildtreesWin))
-        {
-            New-Item -ItemType Directory -Path $buildtreesWin -Force | Out-Null
-            Write-Info "Re-created the build trees root."
-        }
+        # The root itself is never removed: step 1 creates it, vcpkg locks it, and a later `-From 4` expects it.
+        if (-not (Test-Path -LiteralPath $buildtreesWin)) { New-Item -ItemType Directory -Path $buildtreesWin -Force | Out-Null }
 
-        Write-Info ("Reclaimed {0:N1} MB in {1:N0} s. The binary cache at {2}:/packages/vcpkg was not touched." -f
-                    ($freedBytes / 1MB), ((Get-Date) - $cleanStart).TotalSeconds, $driveLetter)
+        $summary += [pscustomobject]@{ Category = "buildtrees ($($cleanup.Buildtrees))"; Removed = $plans.Count; Bytes = $freedBytes
+                                       Note = ("{0} folders kept: user builds, unstamped, or another toolchain's{1}" -f ($allDirs.Count - $plans.Count),
+                                               $(if ($isLastToolchain) { "" } else { "; shared sources kept for the next toolchain" })) }
     }
-
-    Write-Info "STEP 7: OK"
 }
+
+# -- vcpkg\packages: staging, hardlinked into installed (removing it frees names, not data) --
+if ($cleanup.Packages)
+{
+    $pkgRoot = Join-Path $vcpkgRootWin "packages"
+    $bytes   = 0
+    if (Test-Path -LiteralPath $pkgRoot) { $bytes = Remove-Tree $pkgRoot "vcpkg packages" }
+    $summary += [pscustomobject]@{ Category = "packages"; Removed = $(if (Test-Path -LiteralPath $pkgRoot) { 0 } else { 1 }); Bytes = $bytes; Note = "$pkgRoot (recreated by vcpkg when it builds)" }
+}
+
+# -- shared by every toolchain: removed by the last generated one ---------
+foreach ($shared in @(@{ On = $cleanup.Downloads;   Key = "downloads";    Path = (Join-Path $vcpkgRootWin "downloads") },
+                      @{ On = $cleanup.BinaryCache; Key = "binary_cache"; Path = $binaryCacheWin }))
+{
+    if (-not $shared.On) { continue }
+    if (-not $isLastToolchain)
+    {
+        $summary += [pscustomobject]@{ Category = $shared.Key; Removed = 0; Bytes = 0; Note = "kept: shared, cleaned by the last generated toolchain" }
+        continue
+    }
+    $bytes = 0; $count = 0
+    if (Test-Path -LiteralPath $shared.Path) { foreach ($item in @(Get-ChildItem -LiteralPath $shared.Path -Force)) { $bytes += Remove-Tree $item.FullName $shared.Key; $count++ } }
+    $summary += [pscustomobject]@{ Category = $shared.Key; Removed = $count; Bytes = $bytes; Note = $shared.Path }
+}
+
+foreach ($row in $summary) { Write-Info ("  {0,-18} removed {1,4}  {2,10:N1} MB  {3}" -f $row.Category, $row.Removed, ($row.Bytes / 1MB), $row.Note) }
+Write-Info ("Reclaimed {0:N1} MB in {1:N0} s." -f ((@($summary | ForEach-Object { $_.Bytes }) | Measure-Object -Sum).Sum / 1MB), ((Get-Date) - $cleanStart).TotalSeconds)
+if ($cleanup.BinaryCache -and $isLastToolchain) { Write-Warn "The vcpkg binary cache was emptied: reinstalling a port now means building it again." }
+Write-Info "STEP 7: OK"
 
 }   # end of the "not cancelled" block guarding steps 5 and 6
 

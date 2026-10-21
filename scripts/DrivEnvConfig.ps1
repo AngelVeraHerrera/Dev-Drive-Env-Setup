@@ -242,6 +242,12 @@ function Get-DrivEnvConfigSchema
                     # check entirely for a whitespace value (:910), so without it "" would validate silently and
                     # then fall through every branch of the reader. Same shape as msys2.target.family.
                     buildtrees = @{ type = 'string'; notEmpty = $true; allowed = @('none', 'logs', 'all') }
+                    # vcpkg\packages, vcpkg's staging folder: removed whole (its files are hardlinked into installed).
+                    packages     = $boolNode
+                    # Shared by every toolchain, so removed by the last generated one: vcpkg\downloads (re-downloaded
+                    # on demand) and the binary cache (reinstalling then means building again).
+                    downloads    = $boolNode
+                    binary_cache = $boolNode
                 }
             }
         }
@@ -1523,6 +1529,18 @@ function Get-DrivEnvDriveEnvValues
         DEVSYSTEM_DEPLOYS   = $drive + '/deploys'
         DEVSYSTEM_WORKSPACE = $drive + '/' + $workspace
     }
+}
+
+function Get-DrivEnvCleanupSettings
+{
+    # @brief vcpkg.cleanup with its defaults: @{ Buildtrees = 'none'|'logs'|'all'; Packages; Downloads; BinaryCache }.
+    param ($Cfg)
+
+    $c = $null
+    if ($Cfg -and $Cfg.vcpkg -and ($Cfg.vcpkg.PSObject.Properties.Name -contains 'cleanup')) { $c = $Cfg.vcpkg.cleanup }
+    $bt = 'none'
+    if ($c -and ($c.PSObject.Properties.Name -contains 'buildtrees')) { $bt = ([string]$c.buildtrees).Trim().ToLowerInvariant() }
+    return @{ Buildtrees = $bt; Packages = [bool]($c -and $c.packages); Downloads = [bool]($c -and $c.downloads); BinaryCache = [bool]($c -and $c.binary_cache) }
 }
 
 function Get-DrivEnvGitSystemConfigLines
