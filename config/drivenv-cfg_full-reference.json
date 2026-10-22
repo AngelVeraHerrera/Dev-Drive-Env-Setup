@@ -1,7 +1,7 @@
 {
     "metadata": {
         "name": "Full reference", "version": "1.0.0", "date": "2026-10-20", "author": "Your Name",
-        "description": "Every optional key spelled out",
+        "target_os": "Windows 11 24H2", "description": "Every optional key spelled out",
         "notes": ["Free notes, one string each"]
     },
     "git": { "user_name": "Your Name", "user_email": "you@example.com" },

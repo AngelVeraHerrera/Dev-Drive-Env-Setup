@@ -85,7 +85,7 @@ function Test-IsAdministrator
 function Get-DrivEnvMountTaskForVhd
 {
     # @brief Every scheduled task that mounts this VHDX, whatever its name: found by action, never by name (a name
-    # could match a vendor task). Parses the -Argument built at Register-ScheduledTask below; keep both in step.
+    # could match a vendor task). Parses the -Argument built below and by Import-DevDrive.ps1; keep them in step.
     # @param VhdPath Full path to the VHDX, compared normalised and case-insensitively.
     param ([string]$VhdPath)
 
@@ -99,9 +99,9 @@ function Get-DrivEnvMountTaskForVhd
         foreach ($action in @($task.Actions))
         {
             $arguments = [string]$action.Arguments
-            if ($arguments -notmatch 'Mount-VHD') { continue }
+            if ($arguments -notmatch 'Mount-VHD|Mount-DiskImage') { continue }
 
-            $m = [regex]::Match($arguments, "-Path\s+'([^']+)'")
+            $m = [regex]::Match($arguments, "-(?:Image)?Path\s+'([^']+)'")
             if (-not $m.Success) { continue }
 
             $candidate = $null
@@ -639,22 +639,11 @@ if ($useDevDrive)
         Abort-WithError
     }
 
-    Write-Info "Disabling antivirus for Dev Drive..."
-    $avOut = & fsutil devdrv enable /disallowAv 2>&1
-    if ($LASTEXITCODE -ne 0)
-    {
-        # Not fatal: the volume is already trusted and usable, only the antivirus exclusion did not take.
-        Write-Warn "fsutil devdrv enable /disallowAv reported exit ${LASTEXITCODE}: $avOut"
-    }
-
-    # Log what the volume actually got: /disallowAv is a global policy and may need a restart to apply.
+    # A trusted Dev Drive gets Defender's performance mode (asynchronous scanning), which Microsoft recommends over
+    # both /disallowAv (no antivirus filter on ANY Dev Drive) and path exclusions (no scanning at all).
+    # https://learn.microsoft.com/windows/dev-drive/  -- performance mode needs real-time protection on.
     $devdrvState = & fsutil devdrv query "$driveLetter`:" 2>&1
     Write-NoFormat ("  fsutil devdrv query: " + ($devdrvState -join " "))
-    if ("$devdrvState" -notmatch 'disallow|not allowed|no permitid')
-    {
-        Write-Warn "Antivirus filters may still be active on this Dev Drive."
-        Write-Warn "A restart can be required for the global /disallowAv policy to take effect."
-    }
 }
 else {
     Write-Info "STEP 4: Initialize disk and format as NTFS (Windows 10 / non-DevDrive)."
@@ -673,14 +662,17 @@ else {
 }
 
 # --------------------------------------------------------------------
-# Defender path exclusion, for BOTH branches
+# Defender path exclusion, NTFS only
 # --------------------------------------------------------------------
-# For both branches: /disallowAv alone left a Dev Drive scanned when it did not take effect, and the host-folder
-# exclusion does not cover files opened as <letter>:\. Also the only protection from third-party scanners.
+# A Dev Drive is covered by performance mode (above). On NTFS an exclusion is the only speed-up there is; the
+# host-folder exclusion does not cover files opened as <letter>:\.
 # Not the fix for openssl's "Permission denied" renaming Makefile: that is a race between its own concurrent
 # add-depends.pl runs, handled by step 3 (Update-VcpkgScriptPatches, serial retry).
 try {
-    if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
+    if ($useDevDrive) {
+        Write-Info "Dev Drive: no Defender exclusion; it is scanned in performance mode."
+    }
+    elseif (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
         Write-Info "Adding Microsoft Defender exclusion for ${driveLetter}:\ ..."
 
         # No `2>$null` here any more, and -ErrorAction Stop so the catch below actually sees a failure. The

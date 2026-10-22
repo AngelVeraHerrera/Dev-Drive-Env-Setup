@@ -16,10 +16,16 @@
 #   .\tools\Export-DevDrive.ps1 -ConfigFile drivenv-cfg.json -Destination E:\exports
 #   ... -Full            leave out every optional category (no questions)
 #   ... -Exclude downloads,user_builds    leave out these optional ones
+#   ... -Compress        compress the VHDX with zstd (about a third)
+#   ... -Archive         pack the package folder into one .zip to carry
+#   ... -RemoveProxy     the copy without the drive's proxy (another network)
 #   ... -Force           no confirmation
 #
-# Package: <Destination>\<label>_<stamp>\ with <label>.vhdx, manifest.json
-# and the logs. The copy carries the generator in <drive>:\env\generator.
+# Package: <Destination>\<label>_<stamp>\ with <label>.vhdx (or .vhdx.zst
+# and zstd\), manifest.json, the logs and Import-DevDrive.cmd/.ps1: copy
+# the folder (or the .zip, then Extract All) to the other PC and
+# double-click Import-DevDrive.cmd. The copy carries the generator in
+# <drive>:\env\generator.
 # Needs administrator rights (creating and attaching a VHDX); relaunches
 # itself elevated. -Diagnose needs none.
 # ====================================================================
@@ -33,6 +39,9 @@ param
     [switch]$Diagnose,                   # report only
     [switch]$Full,                       # leave out every optional category
     [string[]]$Exclude = @(),            # optional categories to leave out
+    [switch]$Compress,                   # zstd the VHDX
+    [switch]$Archive,                    # pack the package into one .zip
+    [switch]$RemoveProxy,                # the copy without environment.proxy_url
     [switch]$Force,                      # no confirmation
     [switch]$ElevatedChild               # internal: the elevated relaunch
 )
@@ -83,6 +92,9 @@ if (-not $Diagnose -and -not (Test-IsAdministrator))
                  '-Destination', ('"{0}"' -f $Destination), '-ElevatedChild')
     if ($Full) { $argList += '-Full' }
     if ($Exclude.Count) { $argList += @('-Exclude', ('"{0}"' -f ($Exclude -join ','))) }
+    if ($Compress) { $argList += '-Compress' }
+    if ($Archive) { $argList += '-Archive' }
+    if ($RemoveProxy) { $argList += '-RemoveProxy' }
     if ($Force) { $argList += '-Force' }
     try { $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList -Wait -PassThru } catch { Fail "Elevation was refused or failed; nothing was done." }
     exit $p.ExitCode
@@ -156,6 +168,32 @@ if (-not $Full -and $Exclude.Count -eq 0 -and -not $Force -and [Environment]::Us
         }
     }
 }
+$canAsk = -not $Force -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+if (-not $Archive -and $canAsk)
+{
+    $Archive = (Read-Host "Pack the package into one .zip file to carry it (the importer goes inside)? [y/N]") -match '^(y|s)'
+}
+# The .zip only bundles (stored); the size comes from zstd, so an archive always carries a compressed VHDX.
+if ($Archive) { $Compress = $true }
+elseif (-not $Compress -and $canAsk)
+{
+    $Compress = (Read-Host "Compress the VHDX with zstd (about a third of the size, under a minute)? [Y/n]") -notmatch '^n'
+}
+$proxyUrl = [string]$cfg.environment.proxy_url
+if (-not $RemoveProxy -and $proxyUrl -and $canAsk)
+{
+    $RemoveProxy = (Read-Host "The drive goes through the proxy $proxyUrl. Export it without the proxy (for a PC on another network)? [y/N]") -match '^(y|s)'
+}
+$tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+if ($Archive -and -not (Test-Path -LiteralPath $tar)) { Fail "-Archive needs Windows' tar.exe (Windows 10 1803 or later): $tar not found." }
+# zstd travels in the package for the import; the drive's own MSYS2 build (zstd.exe + libzstd.dll, nothing else).
+$zstdDir = $null
+if ($Compress)
+{
+    $zstdDir = @('ucrt64', 'clang64', 'mingw64') | ForEach-Object { Join-Path $drive "msys64\$_\bin" } |
+               Where-Object { (Test-Path -LiteralPath "$_\zstd.exe") -and (Test-Path -LiteralPath "$_\libzstd.dll") } | Select-Object -First 1
+    if (-not $zstdDir) { Fail "-Compress needs zstd on the drive (msys64\<subsystem>\bin\zstd.exe and libzstd.dll); none found." }
+}
 try { $excluded = Get-DrivEnvExportExclusions -Categories $cats -Full:$Full -Exclude $Exclude } catch { Fail $_.Exception.Message }
 $xd = @($always) + @($excluded | ForEach-Object { $dirs[$_] })
 $copyBytes = $total - (@($excluded | ForEach-Object { $sizes[$_] }) | Measure-Object -Sum).Sum
@@ -166,7 +204,8 @@ $pkg = Join-Path $Destination ("{0}_{1}" -f $label, $stamp)
 $newVhd = Join-Path $pkg ("{0}.vhdx" -f $label)
 $destRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Destination))
 $free = (New-Object System.IO.DriveInfo($destRoot)).AvailableFreeSpace
-if ($free -lt $copyBytes * 1.1 + 512MB) { Fail ("Not enough space on {0}: {1} free, about {2} needed." -f $destRoot, (GB $free), (GB ($copyBytes * 1.1 + 512MB))) }
+$need = $copyBytes * $(if ($Archive) { 2.2 } else { 1.1 }) + 512MB   # the .zip is written next to the folder before the folder goes
+if ($free -lt $need) { Fail ("Not enough space on {0}: {1} free, about {2} needed." -f $destRoot, (GB $free), (GB $need)) }
 if ((Get-Item -LiteralPath $destRoot).Attributes -band [IO.FileAttributes]::Compressed) { Warn "The destination is NTFS-compressed: Windows refuses to attach a VHDX stored compressed." }
 if (-not $Force)
 {
@@ -206,6 +245,22 @@ try
     New-Item -ItemType Directory -Path (Join-Path $gen 'config') -Force | Out-Null
     Copy-Item -LiteralPath $configPath -Destination (Join-Path $gen 'config') -Force
     Info "Generator and configuration embedded in the copy (env\generator)."
+
+    if ($RemoveProxy)
+    {
+        # Undo, in the copy, what step 2 wrote from environment.proxy_url: its profile.d script and dirmngr.conf (both
+        # written whole), the [http] proxy of etc/gitconfig (the git identity stays) and the value in the configuration.
+        Remove-Item -LiteralPath (Join-Path $mnt 'msys64\etc\profile.d\devsystem-proxy.sh'), (Join-Path $mnt 'msys64\etc\pacman.d\gnupg\dirmngr.conf') -Force -ErrorAction SilentlyContinue
+        $gc = Join-Path $mnt 'msys64\etc\gitconfig'
+        if (Test-Path -LiteralPath $gc)
+        {
+            $t = [regex]::Replace([IO.File]::ReadAllText($gc), '(?m)^[ \t]*proxy[ \t]*=.*(\r?\n|\z)', '')
+            [IO.File]::WriteAllText($gc, [regex]::Replace($t, '(?m)^\[http\][ \t]*(\r?\n)*(?=\[|\z)', ''), (New-Object System.Text.UTF8Encoding($false)))
+        }
+        $cf = Join-Path $gen ("config\{0}" -f (Split-Path -Leaf $configPath))
+        [IO.File]::WriteAllText($cf, [regex]::Replace([IO.File]::ReadAllText($cf), '("proxy_url"\s*:\s*)"[^"]*"', '$1""'), (New-Object System.Text.UTF8Encoding($false)))
+        Info "Proxy removed from the copy ($proxyUrl): MSYS2 profile, dirmngr, git and the configuration."
+    }
 }
 catch { Warn $_.Exception.Message; $err = $_.Exception.Message }
 finally
@@ -222,13 +277,13 @@ $manifest = [ordered]@{
     Format = 1; Created = (Get-Date).ToString('s'); Generator = '3.0.0'
     Source = [ordered]@{ Computer = $env:COMPUTERNAME; User = $env:USERNAME; Os = [Environment]::OSVersion.Version.ToString(); Vhdx = $vhd }
     Drive  = [ordered]@{ Label = $label; Letter = $letter; FileSystem = 'NTFS'; CapacityBytes = $image.Size; DevDrive = $false }
-    Vhdx   = [ordered]@{ File = (Split-Path -Leaf $newVhd); Bytes = (Get-Item -LiteralPath $newVhd).Length; Sha256 = $hash; Type = 'Dynamic' }
+    Vhdx   = [ordered]@{ File = (Split-Path -Leaf $newVhd); Bytes = (Get-Item -LiteralPath $newVhd).Length; Sha256 = $hash; Type = 'Dynamic'; Compression = $null; PackedBytes = $null }
     Config = [ordered]@{ File = (Split-Path -Leaf $configPath); Sha256 = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash; Metadata = $cfg.metadata }
     Toolchains = @(foreach ($t in $targets) { [ordered]@{ Id = $t.Id; Key = $t.Key; Triplet = $t.Triplet } })
+    Proxy  = [ordered]@{ Url = $proxyUrl; RemovedFromCopy = [bool]$RemoveProxy }
     LeftOut = @(foreach ($k in $excluded) { [ordered]@{ Category = $k; Bytes = $sizes[$k] } })
-    Requires = [ordered]@{ Letter = $letter; Windows = 'Windows 10 or 11 (NTFS)'; Admin = $true }
+    Requires = [ordered]@{ Letter = $letter; Windows = 'Windows 10 or 11; a Dev Drive import needs Windows 11 22H2'; Admin = $true }
 }
-[IO.File]::WriteAllText((Join-Path $pkg 'manifest.json'), ($manifest | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
 
 Info "Verifying: attaching the copy read-only..."
 try
@@ -241,6 +296,45 @@ try
 }
 catch { Fail "Could not attach the copy read-only: $($_.Exception.Message)" }
 
+if ($Compress)
+{
+    Info "Compressing the VHDX (zstd)..."
+    $zstdPkg = Join-Path $pkg 'zstd'
+    New-Item -ItemType Directory -Path $zstdPkg -Force | Out-Null
+    Copy-Item -LiteralPath "$zstdDir\zstd.exe", "$zstdDir\libzstd.dll" -Destination $zstdPkg
+    & (Join-Path $zstdPkg 'zstd.exe') -T0 -3 -q -o "$newVhd.zst" $newVhd
+    if ($LASTEXITCODE) { Fail "zstd failed (exit $LASTEXITCODE); the uncompressed package is still valid in $pkg." }
+    Remove-Item -LiteralPath $newVhd -Force
+    $manifest.Vhdx.Compression = 'zstd'
+    $manifest.Vhdx.PackedBytes = (Get-Item -LiteralPath "$newVhd.zst").Length
+    Info ("Compressed: {0} -> {1}." -f (GB $manifest.Vhdx.Bytes), (GB $manifest.Vhdx.PackedBytes))
+}
+[IO.File]::WriteAllText((Join-Path $pkg 'manifest.json'), ($manifest | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+
+# The importer runs from the package itself: nothing needs to be installed on the other PC.
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Import-DevDrive.ps1') -Destination $pkg
+[IO.File]::WriteAllText((Join-Path $pkg 'Import-DevDrive.cmd'), ("@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File ""%~dp0Import-DevDrive.ps1"" %*`r`n"))
+
 Copy-Item -LiteralPath $logFile -Destination (Join-Path $pkg 'export.log') -Force
 Log 'INFO' ("[OK] Package ready: {0} ({1}, SHA-256 {2}). The drive was not modified." -f $pkg, (GB $manifest.Vhdx.Bytes), $hash) 'Green'
+if ($Archive)
+{
+    # Windows' tar (libarchive) writes a true Store zip with Zip64 only where needed; .NET's ZipFile on PowerShell 5.1
+    # deflates even at NoCompression, and Compress-Archive stops at 2 GB.
+    $zip = "$pkg.zip"
+    Info "Packing the package into $zip (stored: the VHDX is already zstd'd)..."
+    & $tar -a -c -f $zip --options zip:compression=store -C (Split-Path -Parent $pkg) (Split-Path -Leaf $pkg)
+    if ($LASTEXITCODE) { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue; Fail "tar failed (exit $LASTEXITCODE). The package folder is intact." }
+    # Every file in, with its size, before the folder goes. Entry names use '/'.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $z = [IO.Compression.ZipFile]::OpenRead($zip)
+    try { $inZip = @{}; foreach ($e in $z.Entries) { $inZip[$e.FullName.Replace('/', '\')] = $e.Length } } finally { $z.Dispose() }
+    $base = (Split-Path -Parent $pkg).TrimEnd('\').Length + 1
+    $bad = @(Get-ChildItem -LiteralPath $pkg -Recurse -File | Where-Object { $inZip[$_.FullName.Substring($base)] -ne $_.Length })
+    if ($bad.Count) { Remove-Item -LiteralPath $zip -Force; Fail "The archive did not match the package ($($bad.Count) files); it was removed and the folder kept." }
+    Remove-Item -LiteralPath $pkg -Recurse -Force
+    Log 'INFO' ("[OK] Archive ready: {0} ({1})." -f $zip, (GB (Get-Item -LiteralPath $zip).Length)) 'Green'
+    Info "On the other PC: extract it (Extract All, or tar -xf <zip>) and double-click Import-DevDrive.cmd in the folder."
+}
+else { Info "On the other PC: copy the folder and double-click Import-DevDrive.cmd." }
 Exit-Window 0

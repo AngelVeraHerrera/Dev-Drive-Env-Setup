@@ -82,13 +82,13 @@ $image    = $null
 try { $image = Get-DiskImage -ImagePath $vhd -ErrorAction Stop } catch { }
 $attached = ($null -ne $image) -and $image.Attached
 
-# The startup task: identified by what it does -- Mount-VHD of THIS file -- as Manage-MountTasks.ps1 does it.
+# The startup task: identified by what it does -- Mount-VHD or Mount-DiskImage of THIS file -- as Manage-MountTasks.ps1 does it.
 $tasks = @()
 foreach ($t in @(Get-ScheduledTask -TaskPath '\' -ErrorAction SilentlyContinue))
 {
     foreach ($a in @($t.Actions))
     {
-        $m = [regex]::Match([string]$a.Arguments, "Mount-VHD.*-Path\s+['""]([^'""]+)['""]")
+        $m = [regex]::Match([string]$a.Arguments, "Mount-(?:VHD|DiskImage).*-(?:Image)?Path\s+['""]([^'""]+)['""]")
         if ($m.Success -and ($m.Groups[1].Value.TrimEnd('\') -ieq $vhd)) { $tasks += $t; break }
     }
 }

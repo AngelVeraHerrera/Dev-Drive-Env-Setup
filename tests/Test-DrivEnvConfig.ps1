@@ -1832,8 +1832,8 @@ $gl = @(Get-DrivEnvGitSystemConfigLines -Proxy 'http://p:8080' -Git $mg.git)
 Check "gitconfig: proxy, identity and useConfigOnly" (($gl -contains '[http]') -and ($gl -contains "`tproxy = http://p:8080") -and ($gl -contains '[user]') -and
     ($gl -contains "`tname = $aName") -and ($gl -contains "`temail = angelvh.engr@gmail.com") -and ($gl -contains "`tuseConfigOnly = true"))
 Check "...identity only: no [http]; neither: nothing to write" ((@(Get-DrivEnvGitSystemConfigLines -Git $mg.git) -notcontains '[http]') -and (@(Get-DrivEnvGitSystemConfigLines).Count -eq 0))
-Check "metadata summary line, empty without metadata" (((Get-DrivEnvMetadataSummary -Cfg $mg) -ceq 'Configuration: Example dual drive 1.0.0 (2026-10-20)') -and ((Get-DrivEnvMetadataSummary -Cfg (Load $base)) -ceq ''))
-Check "metadata record lines, blank notes skipped" ((Joined @(Get-DrivEnvMetadataLines -Cfg (Obj '{"metadata":{"name":"N","notes":["a"," ","b"]}}'))) -ceq 'name: N|notes:|  - a|  - b')
+Check "metadata summary line, empty without metadata" (((Get-DrivEnvMetadataSummary -Cfg $mg) -ceq 'Configuration: Example dual drive 1.0.0 (2026-10-20), target Windows 10 / 11') -and ((Get-DrivEnvMetadataSummary -Cfg (Load $base)) -ceq ''))
+Check "metadata record lines, blank notes skipped" ((Joined @(Get-DrivEnvMetadataLines -Cfg (Obj '{"metadata":{"name":"N","target_os":"W11","notes":["a"," ","b"]}}'))) -ceq 'name: N|target_os: W11|notes:|  - a|  - b')
 # FOUND WHILE ADDING THIS: Windows PowerShell 5.1 reads a BOM-less file as ANSI unless told otherwise, so a name
 # with an accent reached the steps mangled. Every step and the runner read the configuration as UTF-8.
 $uj = Join-Path ([System.IO.Path]::GetTempPath()) ("drivenv-utf8-" + [guid]::NewGuid().ToString('N') + '.json')
@@ -1881,8 +1881,7 @@ Check "...-Full adds every optional one, -Exclude only those named" (
 Check "...a key that is not optional is refused, never silently kept or dropped" ((Throws { Get-DrivEnvExportExclusions -Categories $pc -Exclude @('environment') }) -and (Throws { Get-DrivEnvExportExclusions -Categories $pc -Exclude @('downlods') }))
 $srcEx = Get-Content -Raw -LiteralPath (Join-Path $root 'tools\Export-DevDrive.ps1')
 Check "export: reads the drive with robocopy into a new VHDX, never deletes on it, verifies read-only" (($srcEx -match 'create vdisk file=') -and ($srcEx -match "'/COPY:DAT'") -and
-    ($srcEx -notmatch '(?m)^[^#]*Remove-Item[^
-]*\$drive') -and ($srcEx -match 'Mount-DiskImage -ImagePath \$newVhd -Access ReadOnly'))
+    ($srcEx -notmatch '(?m)^[^#]*Remove-Item[^\r\n]*\$drive') -and ($srcEx -match 'Mount-DiskImage -ImagePath \$newVhd -Access ReadOnly'))
 
 # SKIPPED IS SAID, and counted: a clean-looking summary over cases that did not run is how a gap hides. With
 # DRIVENV_REQUIRE_BASH=1 a skip is a failure, for a machine that is expected to have the bash.

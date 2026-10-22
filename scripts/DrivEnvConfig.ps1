@@ -362,6 +362,7 @@ function Get-DrivEnvConfigSchema
             version     = @{ type = 'string'; notEmpty = $true }
             date        = @{ type = 'string'; pattern = '^\d{4}-\d{2}-\d{2}$' }
             author      = @{ type = 'string'; notEmpty = $true }
+            target_os   = $stringNode    # free text, informational
             description = $stringNode
             notes       = @{ type = 'array'; item = $stringNode }
         }
@@ -1569,7 +1570,7 @@ function Get-DrivEnvMetadataLines
     $m = $Cfg.metadata
     if (-not $m) { return @() }
     $out = @()
-    foreach ($k in 'name', 'version', 'date', 'author', 'description')
+    foreach ($k in 'name', 'version', 'date', 'author', 'target_os', 'description')
     {
         $v = ([string]$m.$k).Trim()
         if ($v) { $out += ('{0}: {1}' -f $k, $v) }
@@ -1581,15 +1582,16 @@ function Get-DrivEnvMetadataLines
 
 function Get-DrivEnvMetadataSummary
 {
-    # @brief One log line naming the configuration: "Configuration: <name> <version> (<date>, <author>)", or "".
+    # @brief One log line naming the configuration: "Configuration: <name> <version> (<date>, <author>), target <os>", or "".
     param ($Cfg)
 
     $m = $Cfg.metadata
     if (-not $m) { return "" }
     $head = (@([string]$m.name, [string]$m.version) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' '
     $tail = (@([string]$m.date, [string]$m.author) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ', '
-    if (-not $head -and -not $tail) { return "" }
-    return ("Configuration: {0}{1}" -f $head, $(if ($tail) { " ($tail)" } else { "" })).Replace(':  (', ': (')
+    $os   = ([string]$m.target_os).Trim()
+    if (-not $head -and -not $tail -and -not $os) { return "" }
+    return ("Configuration: {0}{1}{2}" -f $head, $(if ($tail) { " ($tail)" } else { "" }), $(if ($os) { ", target $os" } else { "" })).Replace(':  (', ': (')
 }
 
 function Get-DrivEnvCustomFolders

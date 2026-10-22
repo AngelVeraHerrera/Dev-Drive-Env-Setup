@@ -36,6 +36,7 @@
     <li><a href="#overlay-ports">Overlay ports</a></li>
     <li><a href="#logs-and-records">Logs and records</a></li>
     <li><a href="#drive-maintenance">Drive maintenance</a></li>
+    <li><a href="#moving-a-drive-to-another-pc">Moving a drive to another PC</a></li>
     <li><a href="#not-installed-by-the-generator">Not installed by the generator</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#license">License</a></li>
@@ -184,13 +185,13 @@ checks it all before creating anything.
 | Path | What lives there |
 | --- | --- |
 | `Generate-DrivEnv.ps1` | The entry point |
-| `config/` | Your configuration (`drivenv-cfg.json`, not tracked) and two documented copies |
+| `config/` | Your configuration (`drivenv-cfg.json`, not tracked) and documented copies (example, full reference, Degoras) |
 | `scripts/` | The seven steps and the shared modules |
 | `drive/launchers/` | Launcher templates copied onto the drive |
 | `drive/samples/` | Hand-run checks, copied to `<drive>:\testing` |
 | `vcpkg_overlays/` | Overlay ports and triplets ([README](vcpkg_overlays/README.md)) |
-| `tools/` | `Manage-MountTasks.ps1`, `Remove-DevDrive.ps1`, `Restore-QtCreatorSettings.ps1` |
-| `tests/` | The generator's own test suite (`tests\Test-DrivEnvConfig.ps1`) |
+| `tools/` | `Export-DevDrive.ps1`, `Import-DevDrive.ps1`, `Manage-MountTasks.ps1`, `Remove-DevDrive.ps1`, `Restore-QtCreatorSettings.ps1` |
+| `tests/` | The generator's own test suite (`tests\Test-DrivEnvConfig.ps1`); `tests\Sandbox-Portability.ps1` (elevated) exports and imports a throwaway drive |
 | `cache/`, `logs/` | MSYS2 download cache and run logs (not tracked) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -310,11 +311,12 @@ Optional: what this configuration is. Every step prints it in its log, and step 
 ```json
 "metadata": {
     "name": "Degoras dual", "version": "1.0.0", "date": "2026-10-20", "author": "Your Name",
-    "description": "clang64 + ucrt64 drive", "notes": ["vcpkg baseline 3cd21e48", "LLVM 23.1.3"]
+    "target_os": "Windows 10 / 11", "description": "clang64 + ucrt64 drive", "notes": ["vcpkg baseline 3cd21e48", "LLVM 23.1.3"]
 }
 ```
 
-`date` is `YYYY-MM-DD`; every key is optional.
+`date` is `YYYY-MM-DD`; every key is optional. `target_os` is free text, for people: the Windows this configuration
+is meant for. It is shown in the logs and by the import; nothing is checked against it.
 
 ### `git`
 
@@ -415,8 +417,13 @@ build reports.
 ## Overlay ports
 
 `vcpkg_overlays/ports/` carries the ports that do not build correctly on these toolchains as published, each with the
-reason and the condition to retire it in [`vcpkg_overlays/README.md`](vcpkg_overlays/README.md). Layers are chosen per
-triplet:
+reason and the condition to retire it in [`vcpkg_overlays/README.md`](vcpkg_overlays/README.md).
+
+> **Scope.** The overlays are made for one environment: vcpkg baseline `3cd21e48`, the two MinGW dynamic-release
+> triplets, Clang 23.1.3 (clang64) and GCC 16.2.0 (ucrt64), and the Degoras package set. Elsewhere they are untested
+> and may be obsolete. What is covered and what is not: [Where they apply](vcpkg_overlays/README.md#where-they-apply).
+
+Layers are chosen per triplet:
 
 ```json
 "overlay_ports": [
@@ -483,6 +490,51 @@ Convert-VHD -Path "C:\DevDrives\DEV_EXAMPLE.vhdx" -DestinationPath "C:\DevDrives
 
 `Resize-VHD`, `Optimize-VHD` and `Convert-VHD` come with the Hyper-V PowerShell module.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Moving a drive to another PC
+
+`tools\Export-DevDrive.ps1` packs a drive for another PC, and the package carries its own importer: the other PC
+needs nothing installed. Both run elevated (they relaunch themselves): Windows lets only administrators create and
+attach virtual disks.
+
+**Export.** The drive is only read. It is copied into a new dynamic VHDX inside the package, leaving out what vcpkg
+regenerates:
+
+```powershell
+.\tools\Export-DevDrive.ps1 -ConfigFile drivenv-cfg.json -Diagnose                    # sizes per category; writes nothing
+.\tools\Export-DevDrive.ps1 -ConfigFile drivenv-cfg.json -Destination E:\exports -Full -Archive
+```
+
+| Option | Effect |
+| --- | --- |
+| (always) | Left out: `vcpkg\packages` (hardlinks of `installed`), port build trees, `detect_compiler`, `tmp` |
+| `-Full` | Also left out: vcpkg downloads, your build trees (`bt\<triplet>`), logs of failed ports, the binary cache. `-Exclude` picks some |
+| `-Compress` | The VHDX compressed with zstd (measured: 10.4 GB to 3.1 GB in 14 s) |
+| `-Archive` | The package as one `.zip`, stored, not deflated; implies `-Compress` |
+| `-RemoveProxy` | The copy without `environment.proxy_url`, for a PC on another network |
+
+Without options it asks. The package holds the VHDX, `manifest.json` (hashes, toolchains, what was left out), the logs
+and `Import-DevDrive.cmd`; the drive carries the generator and its configuration in `<drive>:\env\generator`.
+
+**Import.** On the other PC, extract the `.zip` and double-click `Import-DevDrive.cmd`
+(or `Import-DevDrive.ps1 -Destination <folder> -Mode Image|DevDrive -Force`). It checks the SHA-256, then:
+
+- **Dev Drive** (Windows 11 22H2 or later, offered there): a new Dev Drive VHDX with the files copied into it,
+  trusted, so Defender scans it in performance mode.
+- **Image** (Windows 10, or by choice): the exported VHDX as it is (NTFS), with a Defender exclusion as step 1 adds.
+
+Then it registers the startup mount task (it asks), hands the git repositories to the importing user (git refuses
+repositories owned by another account), points the embedded configuration at the new VHDX, and validates with step
+5; step 7 (Qt Creator kits for this user) on request. The record goes to `<drive>:\installation\import_<stamp>.log`;
+exit code 2 means imported, but step 5 reported problems.
+
+**The drive letter must be free.** Paths inside the drive name it, including paths compiled into some DLLs (OpenSSL,
+gettext), so a drive is never moved to another letter. If the letter is taken, the import says what holds it and
+stops before writing anything: free it (Disk Management > Change Drive Letter and Paths) and run it again.
+
 ## Not installed by the generator
 
 - **Microsoft HEVC Video Extension** (Microsoft Store): Media Foundation's H.265 encoder and decoder come from the
@@ -499,6 +551,7 @@ Convert-VHD -Path "C:\DevDrives\DEV_EXAMPLE.vhdx" -DestinationPath "C:\DevDrives
 - [x] Several toolchains per drive (clang64 + ucrt64)
 - [x] Qt Creator kits per toolchain, optionally in your own Qt Creator
 - [x] Tools to restore Qt Creator settings and remove a drive
+- [x] Export a drive to another PC and import it there, as a Dev Drive on Windows 11
 - [ ] Benchmark script: the drive against `C:` for small-file I/O and a real vcpkg/CMake build
 - [ ] Defender check in step 5: Dev Drive trust (`fsutil devdrv query`) and the exclusions, in the report
 - [ ] vcpkg asset caching (`X_VCPKG_ASSET_SOURCES`) on a network share, so a drive rebuilds when upstream URLs

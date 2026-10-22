@@ -41,8 +41,8 @@ function Test-IsAdministrator
 
 function Get-MountTaskInventory
 {
-    # @brief Every scheduled task with a Mount-VHD action, its path and that path's state.
-    # Found by action, not by name. Parses the -Argument step 1 builds: keep both in step.
+    # @brief Every scheduled task with a Mount-VHD or Mount-DiskImage action, its path and that path's state.
+    # Found by action, not by name. Parses the -Argument step 1 and Import-DevDrive.ps1 build: keep them in step.
 
     $inventory = @()
 
@@ -51,12 +51,12 @@ function Get-MountTaskInventory
         foreach ($action in @($task.Actions))
         {
             $arguments = [string]$action.Arguments
-            if ($arguments -notmatch 'Mount-VHD') { continue }
+            if ($arguments -notmatch 'Mount-VHD|Mount-DiskImage') { continue }
 
-            $m = [regex]::Match($arguments, "-Path\s+'([^']+)'")
+            $m = [regex]::Match($arguments, "-(?:Image)?Path\s+'([^']+)'")
             if (-not $m.Success)
             {
-                $m = [regex]::Match($arguments, '-Path\s+"([^"]+)"')
+                $m = [regex]::Match($arguments, '-(?:Image)?Path\s+"([^"]+)"')
             }
             if (-not $m.Success) { continue }
 

@@ -6,6 +6,26 @@ documented in its portfile head or patch header. Update this file in the same co
 
 **Policy:** everything is built **dynamic**. The static triplet stays available, but nothing uses it.
 
+## Where they apply
+
+These overlays are made for one environment: the one the Degoras configuration builds
+([`config/drivenv-cfg_degoras.json`](../config/drivenv-cfg_degoras.json)). They stay in the repository because every
+drive of that kind needs them; outside it they are untested.
+
+| | Validated with |
+| --- | --- |
+| vcpkg baseline | `3cd21e48a75f67acfef289da52893ce79144aaa1`; each overlay is the official port at this commit plus a delta |
+| Triplets | `x64-mingw-clang-dynamic-release`, `x64-mingw-ucrt-dynamic-release` (dynamic, release only) |
+| Toolchains | MSYS2 clang64: Clang 23.1.3 with libc++. MSYS2 ucrt64: GCC 16.2.0 with libstdc++. mingw-w64 14.0.0 (r426) |
+| Packages | the 29 of the Degoras configuration with its features: Qt 6.11.2, GStreamer 1.28.7, OpenCV 4.14.0, FFmpeg, gRPC, ZeroMQ, the MongoDB drivers... |
+| Host | Windows 10 Pro 22H2 (build 19045), NTFS drive. Not yet built on Windows 11 |
+
+Not covered: MSVC triplets (`x64-windows*`), static or debug builds, other baselines or compiler versions, Linux
+and macOS. A newer baseline can make an overlay obsolete, or turn it into a downgrade: after every baseline bump run
+`compare_overlay_vs_upstream.py` ([Checking the overlays](#checking-the-overlays)) and retire what it reports. To reuse
+one overlay elsewhere, take it only if your baseline ships the version in the table below, and read its retire
+condition first.
+
 ## Active overlays
 
 | Port | Version | Delta | Why | Retire when |

@@ -1,6 +1,6 @@
 {
     "metadata": {
-        "name": "Example dual drive", "version": "1.0.0", "date": "2026-10-20",
+        "name": "Example dual drive", "version": "1.0.0", "date": "2026-10-20", "target_os": "Windows 10 / 11",
         "description": "clang64 + ucrt64 example"
     },
     "environment": {
