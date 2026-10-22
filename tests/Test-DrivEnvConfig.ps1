@@ -315,7 +315,7 @@ Check "Set-Msys2InstalledPins writes ONLY the installed pins" `
     (($inner.Count -eq 1) -and ($inner[0].Extent.Text -match '-Packages \$protect\b') -and ($fromSel.Count -eq 1))
 $src2   = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts\2-Setup_MSYS2.ps1')
 $sorted = @($pinWrites | Sort-Object { $_.Extent.StartOffset })
-$upg    = $src2.IndexOf('"upgrade_core.sh"'); $pinU = $src2.IndexOf('"pacman -U --noconfirm "'); $latest = $src2.IndexOf('# Install LATEST packages')
+$upg    = $src2.IndexOf('Running core system upgrade pass'); $pinU = $src2.IndexOf('"-U --noconfirm "'); $latest = $src2.IndexOf('# Install LATEST packages')
 Check "...the first before the core upgrade, the second between the pinned and the latest installs" `
     (($sorted.Count -eq 2) -and ($upg -gt 0) -and ($sorted[0].Extent.StartOffset -lt $upg) -and
      ($sorted[1].Extent.StartOffset -gt $pinU) -and ($sorted[1].Extent.StartOffset -lt $latest))
@@ -1892,6 +1892,26 @@ $bad = Clone $ov; $bad.vcpkg.PSObject.Properties.Remove('overlay_root')
 Check "...layers without vcpkg.overlay_root refused" (HasProblem $bad 'vcpkg.overlay_root')
 $none = Clone $bad; $none.vcpkg.PSObject.Properties.Remove('overlay_ports')
 Check "...no overlays at all is a valid configuration" ((Test-DrivEnvConfig -Config $none).Count -eq 0)
+
+# Step 2's Invoke-Pacman, taken from the script: a failure (an HTTP 429 from a mirror, say) is retried, the last code
+# comes back when every attempt fails, and pass 1 of the core upgrade gets a single attempt.
+$s2Ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts\2-Setup_MSYS2.ps1'), [ref]$null, [ref]$null)
+$pacmanFn = $s2Ast.Find({ param($n) ($n -is [System.Management.Automation.Language.FunctionDefinitionAst]) -and ($n.Name -eq 'Invoke-Pacman') }, $true)
+& {
+    function Write-Info { }
+    function Start-Sleep { }
+    function Invoke-Msys2Bash { param($BashPath, $Command) $script:pacCalls++; $script:pacCmd = $Command; return $script:pacCodes[$script:pacCalls - 1] }
+    . ([scriptblock]::Create($pacmanFn.Extent.Text))
+    $script:pacCodes = @(1, 1, 0); $script:pacCalls = 0
+    $ok = Invoke-Pacman -BashPath 'bash' -Arguments '-S --noconfirm x'
+    Check "pacman retries: two failures then success -> 0 after 3 runs; English messages, download timeout disabled" (($ok -eq 0) -and ($script:pacCalls -eq 3) -and
+        ($script:pacCmd -ceq 'LC_ALL=C pacman --disable-download-timeout -S --noconfirm x'))
+    $script:pacCodes = @(1, 1, 1); $script:pacCalls = 0
+    $ko = Invoke-Pacman -BashPath 'bash' -Arguments '-Syu --noconfirm'
+    $script:pacCodes = @(1); $script:pacCalls = 0
+    $one = Invoke-Pacman -BashPath 'bash' -Arguments '-Syu --noconfirm' -Attempts 1
+    Check "...every attempt failing returns the last code after 3; -Attempts 1 runs once" (($ko -eq 1) -and ($one -eq 1) -and ($script:pacCalls -eq 1))
+}
 
 # Enable-DrivEnvGitTrust (steps 3, 4, 6): process environment only, appended after an entry already there, once.
 $gitEnv = @{}; foreach ($k in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1') { $gitEnv[$k] = [Environment]::GetEnvironmentVariable($k) }

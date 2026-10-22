@@ -281,14 +281,17 @@ function Invoke-Msys2Bash
 
 function Invoke-Pacman
 {
-    # @brief Run a pacman operation with bounded retries (mirrors stall, .sig files 404); returns the last exit code.
-    # --disable-download-timeout always: otherwise one slow mirror aborts the whole transaction.
+    # @brief Run a pacman operation with bounded retries (mirrors stall, .sig files 404, rate limits answer HTTP 429);
+    # returns the last exit code. The pause grows with the attempt (10 s, then 20 s): a rate limit needs one, and the
+    # same command run again a minute later is what has always worked by hand.
+    # --disable-download-timeout always: otherwise one slow mirror aborts the whole transaction. LC_ALL=C: messages in
+    # English, the same on every PC and searchable, and none of the localized quotes the log turned into mojibake.
     param
     (
         [Parameter(Mandatory=$true)][string]$BashPath,
         [Parameter(Mandatory=$true)][string]$Arguments,
         [int]$Attempts     = 3,
-        [int]$DelaySeconds = 5
+        [int]$DelaySeconds = 10
     )
 
     $code = 1
@@ -296,13 +299,13 @@ function Invoke-Pacman
     {
         if ($try -gt 1) { Write-Info "pacman attempt $try of $Attempts..." }
 
-        $code = Invoke-Msys2Bash -BashPath $BashPath -Command ("pacman --disable-download-timeout " + $Arguments)
+        $code = Invoke-Msys2Bash -BashPath $BashPath -Command ("LC_ALL=C pacman --disable-download-timeout " + $Arguments)
         if ($code -eq 0) { return 0 }
 
         if ($try -lt $Attempts)
         {
-            Write-Info "pacman failed with exit code $code. Retrying in $DelaySeconds seconds."
-            Start-Sleep -Seconds $DelaySeconds
+            Write-Info ("pacman failed with exit code {0}. Retrying in {1} seconds." -f $code, ($DelaySeconds * $try))
+            Start-Sleep -Seconds ($DelaySeconds * $try)
         }
     }
 
@@ -814,32 +817,43 @@ foreach ($item in $downloads)
     if (-not (Test-Path $item.Path))
     {
         Write-Info "Downloading ($($item.Name)): $($item.Url)"
-        try
-        {
-            $webParams = @{
-                Uri       = $item.Url
-                OutFile   = $item.Path
-                UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-            }
-
-            if (-not [string]::IsNullOrWhiteSpace($proxyUrl)) {
-                $webParams["Proxy"] = $proxyUrl
-            }
-
-            $oldProgress = $ProgressPreference
-            $ProgressPreference = 'SilentlyContinue'
-
-            Invoke-WebRequest @webParams
-
-            $ProgressPreference = $oldProgress
+        $webParams = @{
+            Uri       = $item.Url
+            OutFile   = $item.Path
+            UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
-        catch
-        {
-            # Remove the partial file before aborting, or the next run treats it as a completed download.
-            Remove-Item -LiteralPath $item.Path -Force -ErrorAction SilentlyContinue
-            Write-Error ("Failed to download: {0}. Error: {1}" -f $item.Url, $_.Exception.Message)
-            Abort-WithError
+
+        if (-not [string]::IsNullOrWhiteSpace($proxyUrl)) {
+            $webParams["Proxy"] = $proxyUrl
         }
+
+        # Three attempts, as pacman gets: repo.msys2.org answers a burst of downloads with HTTP 429 (rate limit), and
+        # the same request a little later succeeds.
+        $oldProgress = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        for ($try = 1; $try -le 3; $try++)
+        {
+            try
+            {
+                Invoke-WebRequest @webParams
+                break
+            }
+            catch
+            {
+                # Remove the partial file, or the next run treats it as a completed download.
+                Remove-Item -LiteralPath $item.Path -Force -ErrorAction SilentlyContinue
+                if ($try -lt 3)
+                {
+                    Write-Info ("Download failed ({0}). Retrying in {1} seconds." -f $_.Exception.Message, (10 * $try))
+                    Start-Sleep -Seconds (10 * $try)
+                    continue
+                }
+                $ProgressPreference = $oldProgress
+                Write-Error ("Failed to download: {0}. Error: {1}" -f $item.Url, $_.Exception.Message)
+                Abort-WithError
+            }
+        }
+        $ProgressPreference = $oldProgress
     }
     else
     {
@@ -991,26 +1005,19 @@ $pacnewPath   = $pacmanConf + ".pacnew"
 $pacnewBefore = Test-Path -LiteralPath $pacnewPath
 Set-Msys2InstalledPins -Msys2Root $msys2Path -BashPath $bashPath -Pins $ignoreUnion -When "before the core upgrade"
 
-$coreUpdateScript = Join-Path $env:TEMP "upgrade_core.sh"
-Set-Content -Path $coreUpdateScript -Encoding ASCII -Value @'
-pacman -Sy --noconfirm --disable-download-timeout
-pacman -Su --noconfirm --disable-download-timeout
-'@
-$coreScriptUnix = $coreUpdateScript -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
-
-for ($i = 1; $i -le 3; $i++) 
+for ($i = 1; $i -le 3; $i++)
 {
     Write-Info "Running core system upgrade pass $i..."
-    $code = Invoke-Msys2Bash -BashPath $bashPath -Command ("sh '{0}'" -f $coreScriptUnix)
+    # Pass 1 may end in 1 by design (a core update that wants a fresh shell), and the next pass repeats it, so it gets
+    # one attempt; the later passes get the network retries before a failure counts.
+    $code = Invoke-Pacman -BashPath $bashPath -Arguments "-Syu --noconfirm" -Attempts $(if ($i -eq 1) { 1 } else { 3 })
     if (($i -eq 1 -and $code -ne 0 -and $code -ne 1) -or
-        ($i -gt 1 -and $code -ne 0)) 
+        ($i -gt 1 -and $code -ne 0))
     {
         Write-Error "Core upgrade failed on pass $i (exit code $code)."
         Abort-WithError
     }
 }
-
-Remove-Item $coreUpdateScript -Force
 
 # An upgrade of pacman itself never overwrites a pacman.conf that was edited -- and on a drive with pins installed
 # the line above edits it -- so it stays in force; pacman puts its new default beside it as pacman.conf.pacnew
@@ -1078,8 +1085,8 @@ foreach ($p in $msysPackages)
 if ($pinnedFiles.Count -gt 0)
 {
     Write-Info "Installing pinned packages via pacman -U..."
-    $installPinnedCmd = "pacman -U --noconfirm " + ($pinnedFiles -join " ")
-    $code = Invoke-Msys2Bash -BashPath $bashPath -Command $installPinnedCmd
+    # Through the retries too: the files are local, but their dependencies come from the mirrors.
+    $code = Invoke-Pacman -BashPath $bashPath -Arguments ("-U --noconfirm " + ($pinnedFiles -join " "))
     if ($code -ne 0) {
         Write-Error "Pinned package installation failed (exit code $code)."
         Abort-WithError
