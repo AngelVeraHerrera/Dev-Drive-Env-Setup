@@ -244,7 +244,7 @@ if ($repos.Count) { Info ("Repositories now owned by {0}: {1}" -f $me, (($repos 
 
 if ($autoMount)
 {
-    # Mount-DiskImage, not step 1's Mount-VHD: it needs no Hyper-V. Manage-MountTasks.ps1 and Remove-DevDrive.ps1 parse it.
+    # The same task as step 1 registers (Mount-DiskImage: no Hyper-V needed). Manage-MountTasks.ps1 and Remove-DevDrive.ps1 parse it.
     $taskName = "DrivEnv_{0}_{1}" -f $label, $letter
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-WindowStyle Hidden -Command `"Mount-DiskImage -ImagePath '$target' -ErrorAction SilentlyContinue`""
     Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $action -Trigger (New-ScheduledTaskTrigger -AtStartup) `

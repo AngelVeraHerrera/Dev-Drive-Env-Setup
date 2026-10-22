@@ -114,10 +114,12 @@ $meta = Get-DrivEnvMetadataSummary -Cfg $cfg; if ($meta) { Info $meta }
 $image = $null; try { $image = Get-DiskImage -ImagePath $vhd -ErrorAction Stop } catch { }
 $vol = $null; try { $vol = Get-Volume -DriveLetter $letter -ErrorAction Stop } catch { }
 if (-not ($image -and $image.Attached -and $vol)) { Fail "The drive is not mounted at ${letter}: from $vhd. Mount it first." }
-if ($vol.FileSystem -ne 'NTFS') { Fail "Only NTFS drives are exported for now ($($vol.FileSystem) found): a Dev Drive (ReFS) export needs Windows 11 and is not implemented yet." }
+# A Dev Drive (ReFS) is copied file by file into an NTFS package like any other: NTFS mounts on Windows 10 and 11, a
+# ReFS image only on the same or a newer Windows 11; the import makes a Dev Drive again wherever the PC allows one.
+if (@('NTFS', 'ReFS') -notcontains $vol.FileSystem) { Fail "Only NTFS and Dev Drive (ReFS) drives are exported; ${letter}: is $($vol.FileSystem)." }
 $fileBytes = (Get-Item -LiteralPath $vhd).Length
 $usedBytes = $vol.Size - $vol.SizeRemaining
-Info ("VHDX {0}: file {1}; volume NTFS, capacity {2}, used {3}." -f $vhd, (GB $fileBytes), (GB $vol.Size), (GB $usedBytes))
+Info ("VHDX {0}: file {1}; volume {2}, capacity {3}, used {4}." -f $vhd, (GB $fileBytes), $vol.FileSystem, (GB $vol.Size), (GB $usedBytes))
 
 # -- what would be copied ----------------------------------------------------------------
 $btWin    = ((Resolve-DrivEnvBuildtreesRoot -Cfg $cfg -DriveLetter $letter).Windows).Replace('/', '\')
@@ -276,7 +278,7 @@ $hash = (Get-FileHash -LiteralPath $newVhd -Algorithm SHA256).Hash
 $manifest = [ordered]@{
     Format = 1; Created = (Get-Date).ToString('s'); Generator = '3.0.0'
     Source = [ordered]@{ Computer = $env:COMPUTERNAME; User = $env:USERNAME; Os = [Environment]::OSVersion.Version.ToString(); Vhdx = $vhd }
-    Drive  = [ordered]@{ Label = $label; Letter = $letter; FileSystem = 'NTFS'; CapacityBytes = $image.Size; DevDrive = $false }
+    Drive  = [ordered]@{ Label = $label; Letter = $letter; FileSystem = $vol.FileSystem; CapacityBytes = $image.Size; DevDrive = ($vol.FileSystem -eq 'ReFS') }
     Vhdx   = [ordered]@{ File = (Split-Path -Leaf $newVhd); Bytes = (Get-Item -LiteralPath $newVhd).Length; Sha256 = $hash; Type = 'Dynamic'; Compression = $null; PackedBytes = $null }
     Config = [ordered]@{ File = (Split-Path -Leaf $configPath); Sha256 = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash; Metadata = $cfg.metadata }
     Toolchains = @(foreach ($t in $targets) { [ordered]@{ Id = $t.Id; Key = $t.Key; Triplet = $t.Triplet } })

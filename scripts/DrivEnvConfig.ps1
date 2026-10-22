@@ -1561,6 +1561,24 @@ function Get-DrivEnvGitSystemConfigLines
              '# Edit the JSON, not this file: regenerating the environment overwrites it.') + $lines
 }
 
+function Enable-DrivEnvGitTrust
+{
+    # @brief Lets the git this run starts (directly, or through vcpkg and bash) use repositories another account owns:
+    # git refuses them as "dubious ownership", e.g. on a drive imported from another PC. Process environment only
+    # (GIT_CONFIG_COUNT is the command scope, which safe.directory honours): nothing is written, the user's git keeps
+    # its own check. Appends to a count already set; idempotent.
+    $n = 0
+    [void][int]::TryParse([string]$env:GIT_CONFIG_COUNT, [ref]$n)
+    for ($i = 0; $i -lt $n; $i++)
+    {
+        if (([Environment]::GetEnvironmentVariable("GIT_CONFIG_KEY_$i") -eq 'safe.directory') -and
+            ([Environment]::GetEnvironmentVariable("GIT_CONFIG_VALUE_$i") -eq '*')) { return }
+    }
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_KEY_$n", 'safe.directory')
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_VALUE_$n", '*')
+    $env:GIT_CONFIG_COUNT = [string]($n + 1)
+}
+
 function Get-DrivEnvMetadataLines
 {
     # @brief The configuration's 'metadata' as "key: value" lines (notes as "  - note"), for the drive's records.

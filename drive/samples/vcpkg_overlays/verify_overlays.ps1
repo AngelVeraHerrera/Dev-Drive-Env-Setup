@@ -46,7 +46,11 @@ if (-not $Root) {
     }
     $Root = Join-Path $env:VCPKG_ROOT ("installed/" + $env:VCPKG_DEFAULT_TRIPLET)
 }
-if (-not $Mingw) { $Mingw = 'S:/msys64/ucrt64' }
+if (-not $Mingw) {
+    Write-Output "DEVSYSTEM_TOOLCHAIN_ROOT is not set. Run this from the environment launcher,"
+    Write-Output "or pass -Mingw <drive>/msys64/<subsystem> explicitly."
+    exit 1
+}
 
 $script:checks = 0
 $script:failed = 0

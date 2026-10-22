@@ -1883,6 +1883,14 @@ $srcEx = Get-Content -Raw -LiteralPath (Join-Path $root 'tools\Export-DevDrive.p
 Check "export: reads the drive with robocopy into a new VHDX, never deletes on it, verifies read-only" (($srcEx -match 'create vdisk file=') -and ($srcEx -match "'/COPY:DAT'") -and
     ($srcEx -notmatch '(?m)^[^#]*Remove-Item[^\r\n]*\$drive') -and ($srcEx -match 'Mount-DiskImage -ImagePath \$newVhd -Access ReadOnly'))
 
+# Enable-DrivEnvGitTrust (steps 3, 4, 6): process environment only, appended after an entry already there, once.
+$gitEnv = @{}; foreach ($k in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1') { $gitEnv[$k] = [Environment]::GetEnvironmentVariable($k) }
+$env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.autocrlf'; $env:GIT_CONFIG_VALUE_0 = 'false'
+Enable-DrivEnvGitTrust; Enable-DrivEnvGitTrust
+Check "git trust: safe.directory=* appended after an existing entry, and only once" (($env:GIT_CONFIG_COUNT -eq '2') -and ($env:GIT_CONFIG_KEY_0 -eq 'core.autocrlf') -and
+    ($env:GIT_CONFIG_KEY_1 -eq 'safe.directory') -and ($env:GIT_CONFIG_VALUE_1 -eq '*'))
+foreach ($k in $gitEnv.Keys) { [Environment]::SetEnvironmentVariable($k, $gitEnv[$k]) }
+
 # SKIPPED IS SAID, and counted: a clean-looking summary over cases that did not run is how a gap hides. With
 # DRIVENV_REQUIRE_BASH=1 a skip is a failure, for a machine that is expected to have the bash.
 Write-Host "================ $script:pass passed, $script:fail failed, $script:skip skipped ================"

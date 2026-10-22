@@ -806,6 +806,48 @@ else
                  "machines that lose the race. Re-run 3-Clone_VCPKG.ps1, or add the pattern by hand")
 }
 
+# ====================================================================
+# CHECK 7: how Microsoft Defender treats the drive
+# ====================================================================
+# Speed, not correctness, so never "fail": a drive Defender scans on access builds correctly, only slower. A trusted
+# Dev Drive should get performance mode; an NTFS drive the exclusion step 1 adds. Reading the exclusion list and
+# fsutil devdrv need an elevated run; without one the check says so instead of guessing.
+
+Write-Info "CHECK: Microsoft Defender on the drive."
+
+$defName = "${driveLetter}:\"
+try
+{
+    $mpStatus = Get-MpComputerStatus -ErrorAction Stop
+    $volume   = Get-Volume -DriveLetter $driveLetter -ErrorAction Stop
+    if (-not $mpStatus.RealTimeProtectionEnabled)
+    {
+        Add-Result -Group "defender" -Name $defName -State "ok" -Detail "real-time protection is off: nothing scans on access"
+    }
+    elseif ($volume.FileSystem -eq 'ReFS')
+    {
+        # fsutil's text is localized: the raw answer goes into the detail, whatever the verdict.
+        $devdrv = ((& fsutil.exe devdrv query "${driveLetter}:" 2>&1) -join ' ').Trim()
+        $fsutilCode = $LASTEXITCODE
+        $trusted = ($devdrv -match 'trusted developer volume|volumen de desarrollador de confianza') -and ($devdrv -notmatch 'not trusted|untrusted|no es de confianza')
+        $perfMode = (Get-MpPreference -ErrorAction Stop).PerformanceModeStatus -ne 1
+        if ($fsutilCode) { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "fsutil devdrv query needs an elevated run: $devdrv" }
+        elseif ($trusted -and $perfMode) { Add-Result -Group "defender" -Name $defName -State "ok" -Detail "trusted Dev Drive, performance mode on" }
+        else { Add-Result -Group "defender" -Name $defName -State "skip" -Detail ("Dev Drive {0}, performance mode {1}: scanned synchronously. fsutil devdrv trust ${driveLetter}: (elevated) fixes the trust. [{2}]" -f $(if ($trusted) { 'trusted' } else { 'NOT trusted' }), $(if ($perfMode) { 'on' } else { 'off' }), $devdrv) }
+    }
+    else
+    {
+        $exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
+        if ("$exclusions" -match 'administrator|administrador') { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "the exclusion list is only readable from an elevated run" }
+        elseif ($exclusions -contains $defName) { Add-Result -Group "defender" -Name $defName -State "ok" -Detail "excluded from on-access scanning (NTFS drive)" }
+        else { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "not excluded: scanned on access, builds slower. Step 1 adds it; Tamper Protection or a policy can refuse it" }
+    }
+}
+catch
+{
+    Add-Result -Group "defender" -Name $defName -State "skip" -Detail "Microsoft Defender could not be queried (another antivirus?): $($_.Exception.Message)"
+}
+
 # The registry this run's gstreamer scan wrote is this run's alone; nothing reads it again.
 if ($gstRegistryFile) { Remove-Item -LiteralPath $gstRegistryFile -Force -ErrorAction SilentlyContinue }
 

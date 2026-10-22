@@ -635,6 +635,7 @@ catch
 # than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
 . (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
 . (Join-Path $PSScriptRoot "DrivEnvLogs.ps1")
+Enable-DrivEnvGitTrust   # the drive's repositories may belong to another account (an imported drive)
 
 $cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
 if ($cfgProblems.Count -gt 0)
@@ -1689,9 +1690,7 @@ try
 
     if ($gitSource -and $vcpkgRootWin -and (Test-Path -LiteralPath $vcpkgRootWin))
     {
-        # -c safe.directory: a clone on a drive this account does not own is refused by git as "dubious
-        # ownership", which is right for anything that writes and pointless for one read of the log.
-        $baseline = & $gitSource -c "safe.directory=*" -C $vcpkgRootWin log -1 `
+        $baseline = & $gitSource -C $vcpkgRootWin log -1 `
             --format="%H%nAuthor: %an <%ae>%nDate: %aI%nSubject: %s" 2>&1
         if ($LASTEXITCODE -ne 0) { $baseline = $null }
     }

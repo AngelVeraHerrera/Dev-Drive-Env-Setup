@@ -1012,9 +1012,11 @@ if ($automountAtStartup)
         Unregister-ScheduledTask -TaskName $existing.TaskName -TaskPath $existing.TaskPath -Confirm:$false
     }
 
+    # Mount-DiskImage, not Mount-VHD: the Storage module is always there, the Hyper-V one only where Hyper-V is enabled
+    # (a diskpart-built drive on such a PC never mounted at startup).
     $action = New-ScheduledTaskAction `
         -Execute "powershell.exe" `
-        -Argument "-WindowStyle Hidden -Command `"Mount-VHD -Path '$vhdFilePath' -ErrorAction SilentlyContinue`""
+        -Argument "-WindowStyle Hidden -Command `"Mount-DiskImage -ImagePath '$vhdFilePath' -ErrorAction SilentlyContinue`""
 
     $trigger = New-ScheduledTaskTrigger -AtStartup
 
@@ -1046,7 +1048,7 @@ else
             Unregister-ScheduledTask -TaskName $existing.TaskName -TaskPath $existing.TaskPath -Confirm:$false
             Write-Info ("Automatic mount not requested (environment.automount_at_startup = false); removed '{0}{1}'." -f $existing.TaskPath, $existing.TaskName)
         }
-        Write-Info "This drive will no longer mount by itself. Mount-VHD -Path '$vhdFilePath' still works."
+        Write-Info "This drive will no longer mount by itself. Mount-DiskImage -ImagePath '$vhdFilePath' still works."
     }
     else
     {

@@ -302,6 +302,7 @@ catch
 # than a silent fall-back to a default; the head of DrivEnvConfig.ps1 explains why that distinction earns a file.
 . (Join-Path $PSScriptRoot "DrivEnvConfig.ps1")
 . (Join-Path $PSScriptRoot "DrivEnvLogs.ps1")
+Enable-DrivEnvGitTrust   # the drive's repositories may belong to another account (an imported drive)
 
 $cfgProblems = @(Test-DrivEnvConfig -Config $Cfg)
 if ($cfgProblems.Count -gt 0)

@@ -412,7 +412,9 @@ goes to `<drive>:\installation\verification_<subsystem>.txt`:
 
 Three states: **ok**, **failed** and **not checked** — a check that could not run is not a failure. The **load**
 check earns its keep: each library is opened the way a consumer would, which catches missing dependencies that no
-build reports.
+build reports. The **defender** check says how Microsoft Defender treats the drive (performance mode on a trusted
+Dev Drive, the exclusion on NTFS); it costs speed, never correctness, so it is never a failure, and reading the
+exclusion list or the Dev Drive trust needs an elevated run.
 
 ## Overlay ports
 
@@ -552,8 +554,10 @@ stops before writing anything: free it (Disk Management > Change Drive Letter an
 - [x] Qt Creator kits per toolchain, optionally in your own Qt Creator
 - [x] Tools to restore Qt Creator settings and remove a drive
 - [x] Export a drive to another PC and import it there, as a Dev Drive on Windows 11
+- [ ] Rebuild mode for another PC: the package carries the recipe and the caches (vcpkg binary cache, MSYS2
+      packages, source archives) and the drive is generated there, at any letter and fully offline, as the image mode is
 - [ ] Benchmark script: the drive against `C:` for small-file I/O and a real vcpkg/CMake build
-- [ ] Defender check in step 5: Dev Drive trust (`fsutil devdrv query`) and the exclusions, in the report
+- [x] Defender check in step 5: Dev Drive trust and performance mode, or the NTFS exclusion, in the report
 - [ ] vcpkg asset caching (`X_VCPKG_ASSET_SOURCES`) on a network share, so a drive rebuilds when upstream URLs
       disappear, and offline
 - [ ] MSVC toolchain
