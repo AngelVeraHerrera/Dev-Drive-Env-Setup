@@ -38,6 +38,7 @@ condition first.
 | `libffi` | 3.8.0 #1 | `--enable-symvers=no`, `dll-bindir.diff` | `ld.lld` rejects `--version-script` in COFF mode | the official port builds under clang |
 | `fastfeat` | 391d5e9 #5 | one delta, MinGW only | its `.def` names `fastfeat.dll`, CMake builds `libfastfeat.dll` | upstream drops the `lib` prefix on MinGW |
 | `vcpkg-qmake` | 2025-05-19 #1 | one delta, MinGW targets | selects GNU make instead of jom/nmake | upstream picks make for MinGW |
+| `qt-advanced-docking-system` | 5.1.1 (official: 4.5.0) | version bump; both official patches dropped (5.x reads its version from `project()`), `share/ads` removed | the 5.x line is wanted before vcpkg ships it | vcpkg ships 5.1.1 or later |
 
 The libc++ 23 fixes are upstream commits applied unchanged. Before adding one, the whole module was swept with
 `-fsyntax-only` over its `compile_commands.json`, so each overlay fixes every unit of its port, not the first error.
