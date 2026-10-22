@@ -379,6 +379,10 @@ left alone, one with a different origin is refused.
 
 ### `ide_integration`
 
+Qt Creator only, for now: one kit per toolchain (compilers, debugger, CMake, Qt, the vcpkg toolchain file and the
+environment), written with Qt Creator's `sdktool` — see [Qt Creator](#qt-creator). Other IDEs are not integrated;
+open your projects in them from the environment launcher.
+
 | Key under `qtcreator` | Meaning |
 | --- | --- |
 | `source` | `msys2`, `external` or `none`. Required |
@@ -539,10 +543,15 @@ stops before writing anything: free it (Disk Management > Change Drive Letter an
 
 ## Not installed by the generator
 
-- **Microsoft HEVC Video Extension** (Microsoft Store): Media Foundation's H.265 encoder and decoder come from the
-  operating system, so `mfh265enc` and friends are missing at run time without it.
-- **An NVIDIA display driver** for `nvcodec`: it needs `nvcuda.dll` at run time, not the CUDA toolkit. The elements
-  it registers depend on what the GPU can do.
+The generator builds what lives on the drive: the MSYS2 toolchains, the vcpkg packages and the Qt Creator kits.
+Anything that belongs to Windows or installs into it is yours to install, on every PC (it does not travel with an
+exported drive either). For example:
+
+- **Codecs and OS components**: the Microsoft HEVC Video Extension (Microsoft Store), where Media Foundation's H.265
+  encoder and decoder (`mfh265enc` and friends) come from.
+- **Drivers**: the NVIDIA display driver for `nvcodec` (it needs `nvcuda.dll`, not the CUDA toolkit).
+- **Other compilers and SDKs**: MSVC and Visual Studio, the Windows SDK, the CUDA toolkit.
+- **Other IDEs and editors**: Visual Studio, VS Code, CLion and the like.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -571,13 +580,16 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE).
 
 ## Contact
 
-**Degoras Project Team** — Real Instituto y Observatorio de la Armada (ROA)
-
-- Ángel Vera Herrera — [avera@roa.es](mailto:avera@roa.es)
-- Jesús Relinque Madroñal
-- Collaborator: David Abuín Sánchez
+Ángel Vera Herrera ([@AngelVeraHerrera](https://github.com/AngelVeraHerrera)) — [avera@roa.es](mailto:avera@roa.es)
 
 Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
+
+### Collaborators
+
+**Degoras Project Team** — Real Instituto y Observatorio de la Armada (ROA)
+
+- Jesús Relinque Madroñal ([@jrelinquem](https://github.com/jrelinquem))
+- David Abuín Sánchez ([@davidabuinESI](https://github.com/davidabuinESI))
 
 ## Acknowledgments
 
