@@ -1883,6 +1883,16 @@ $srcEx = Get-Content -Raw -LiteralPath (Join-Path $root 'tools\Export-DevDrive.p
 Check "export: reads the drive with robocopy into a new VHDX, never deletes on it, verifies read-only" (($srcEx -match 'create vdisk file=') -and ($srcEx -match "'/COPY:DAT'") -and
     ($srcEx -notmatch '(?m)^[^#]*Remove-Item[^\r\n]*\$drive') -and ($srcEx -match 'Mount-DiskImage -ImagePath \$newVhd -Access ReadOnly'))
 
+# vcpkg.overlay_root: overlay layers come from a named set; layers without one are refused; no overlays at all is valid.
+$ov = Load (Join-Path $cfgDir 'drivenv-cfg_example.json')
+Check "overlays: the example names its set, which exists with its layers, and validates" (($ov.vcpkg.overlay_root -eq 'vcpkg_overlays/degoras') -and
+    ((Test-DrivEnvConfig -Config $ov).Count -eq 0) -and (Test-Path (Join-Path $root 'vcpkg_overlays\degoras\ports')) -and
+    (Test-Path (Join-Path $root 'vcpkg_overlays\degoras\ports.clang')) -and (Test-Path (Join-Path $root 'vcpkg_overlays\degoras\ports.ucrt')))
+$bad = Clone $ov; $bad.vcpkg.PSObject.Properties.Remove('overlay_root')
+Check "...layers without vcpkg.overlay_root refused" (HasProblem $bad 'vcpkg.overlay_root')
+$none = Clone $bad; $none.vcpkg.PSObject.Properties.Remove('overlay_ports')
+Check "...no overlays at all is a valid configuration" ((Test-DrivEnvConfig -Config $none).Count -eq 0)
+
 # Enable-DrivEnvGitTrust (steps 3, 4, 6): process environment only, appended after an entry already there, once.
 $gitEnv = @{}; foreach ($k in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1') { $gitEnv[$k] = [Environment]::GetEnvironmentVariable($k) }
 $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.autocrlf'; $env:GIT_CONFIG_VALUE_0 = 'false'

@@ -28,8 +28,8 @@
 #     windres.exe: no resources
 #
 # and exits 1 before a single object exists. Fast CDR is a known instance
-# and had an overlay for exactly this; see installation/vcpkg_overlays.txt,
-# section DEFERRED. Expect to need the same one-line guard elsewhere.
+# and had an overlay for exactly this; see vcpkg_overlays/degoras/README.md,
+# Retired and deferred. Expect to need the same one-line guard elsewhere.
 #
 # NOTE the CRT stays DYNAMIC. On MinGW that is the UCRT DLL, which is what
 # every other package here links; a static CRT would give each library its

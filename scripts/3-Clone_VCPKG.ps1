@@ -1035,7 +1035,7 @@ else
 }
 
 # Every other triplet in the overlay directory is installed and verified too; only the configured one is mandatory.
-# x64-mingw-ucrt-static-release is kept as a capability; nothing uses it (see vcpkg_overlays/README.md).
+# The static triplets (ucrt and clang) are kept as a capability; nothing uses them (see vcpkg_overlays/README.md).
 $tripletSrcDir = Split-Path -Parent $tripletSrc
 $extraTriplets = @(Get-ChildItem -LiteralPath $tripletSrcDir -Filter "*.cmake" -File -ErrorAction SilentlyContinue |
                    Where-Object { $_.Name -ne $tripletFileName })
@@ -1076,7 +1076,26 @@ Write-Info "STEP 7: OK"
 Write-Info "STEP 8: Install the controlled overlay ports."
 
 # Overlay ports are layered: vcpkg takes the first layer of a triplet's list that holds a port, chosen per
-# invocation, so triplets can differ. Every layer any triplet asks for is installed; "ports" always.
+# invocation, so triplets can differ. Every layer any triplet asks for is installed; "ports" always, empty without
+# a vcpkg.overlay_root (the set the layers come from), so the path vcpkg is given exists either way.
+$overlaySrcRoot = $null
+$overlayRootCfg = ([string]$Cfg.vcpkg.overlay_root).Trim()
+if ($overlayRootCfg)
+{
+    # Relative to the generator (vcpkg_overlays/degoras), or absolute: a set kept elsewhere, beside its configuration.
+    $overlaySrcRoot = if ([System.IO.Path]::IsPathRooted($overlayRootCfg)) { $overlayRootCfg } else { Join-Path $drivEnvRoot $overlayRootCfg }
+    if (-not (Test-Path -LiteralPath $overlaySrcRoot -PathType Container))
+    {
+        Write-Error "vcpkg.overlay_root: '$overlaySrcRoot' does not exist."
+        Abort-WithError
+    }
+    Write-Info "Overlay ports from: $overlaySrcRoot"
+}
+else
+{
+    Write-Info "No vcpkg.overlay_root: no overlay ports, every package comes from the vcpkg registry as published."
+}
+
 $overlayLayerNames = @("ports")
 foreach ($entry in @($Cfg.vcpkg.overlay_ports))
 {
@@ -1088,12 +1107,11 @@ foreach ($entry in @($Cfg.vcpkg.overlay_ports))
         $trimmedLayer = ([string]$layer).Trim() -replace '^[\\/]+', '' -replace '[\\/]+$', ''
         if ([string]::IsNullOrWhiteSpace($trimmedLayer)) { continue }
 
-        # A layer name is a single directory under vcpkg_overlays, not a path: anything else would let a
-        # configuration reach outside the repository, and the reconcile below deletes whatever it finds in the
-        # destination.
+        # A layer name is a single directory under vcpkg.overlay_root, not a path: anything else would reach outside
+        # the set, and the reconcile below deletes whatever it finds in the destination.
         if ($trimmedLayer -match '[\\/]' -or $trimmedLayer -match '\.\.')
         {
-            Write-Error "vcpkg.overlay_ports: '$trimmedLayer' must be a single directory name under vcpkg_overlays."
+            Write-Error "vcpkg.overlay_ports: '$trimmedLayer' must be a single directory name under vcpkg.overlay_root."
             Abort-WithError
         }
 
@@ -1125,21 +1143,20 @@ $totalPorts = 0
 
 foreach ($layerName in $overlayLayerNames)
 {
-    $layerSrc = Join-Path $drivEnvRoot ("vcpkg_overlays\{0}" -f $layerName)
+    $layerSrc = if ($overlaySrcRoot) { Join-Path $overlaySrcRoot $layerName } else { $null }
     $layerDst = Join-Path $overlayRootWin $layerName
 
-    if (-not (Test-Path -LiteralPath $layerSrc))
+    $srcPortDirs = @()
+    if ($layerSrc -and (Test-Path -LiteralPath $layerSrc))
     {
-        if ($layerName -eq "ports")
-        {
-            Write-Error "Overlay ports source not found: $layerSrc"
-            Abort-WithError
-        }
-
-        # A named layer that does not exist in the repository is a configuration error, not an empty layer:
-        # silently treating it as empty would mean a port the configuration expects to be overridden quietly
-        # comes from upstream instead.
-        Write-Error "vcpkg.overlay_ports names layer '$layerName', but $layerSrc does not exist."
+        $srcPortDirs = @(Get-ChildItem -LiteralPath $layerSrc -Directory)
+    }
+    elseif ($layerName -ne "ports")
+    {
+        # A named layer that does not exist is a configuration error, not an empty layer: silently treating it as
+        # empty would mean a port the configuration expects to be overridden quietly comes from upstream instead.
+        # "ports" is the implicit one, empty when the set has none.
+        Write-Error "vcpkg.overlay_ports names layer '$layerName', but vcpkg.overlay_root holds no such folder ($layerSrc)."
         Abort-WithError
     }
 
@@ -1148,8 +1165,6 @@ foreach ($layerName in $overlayLayerNames)
         New-Item -ItemType Directory -Path $layerDst -Force | Out-Null
         Write-Info "Created overlay layer directory: $layerDst"
     }
-
-    $srcPortDirs = @(Get-ChildItem -LiteralPath $layerSrc -Directory)
 
     # Reconcile, do not merely add: a port removed from the repository must disappear from the drive too.
     foreach ($stale in @(Get-ChildItem -LiteralPath $layerDst -Directory))

@@ -9,6 +9,7 @@ vcpkg as repeated `--overlay-ports=` arguments, and vcpkg takes the **first** la
 port placed here wins over the same port in `ports/` — but only for the triplets that list this layer.
 
 ```json
+"overlay_root": "vcpkg_overlays/degoras",
 "overlay_ports": [
   { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
   { "triplet": "*",                               "layers": ["ports"] }

@@ -6,6 +6,7 @@ It exists as the counterpart to `ports.clang`, so that a dual-toolchain configur
 side symmetrically:
 
 ```json
+"overlay_root": "vcpkg_overlays/degoras",
 "overlay_ports": [
   { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
   { "triplet": "x64-mingw-ucrt-dynamic-release",  "layers": ["ports.ucrt",  "ports"] },

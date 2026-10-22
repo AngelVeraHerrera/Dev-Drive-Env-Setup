@@ -189,7 +189,7 @@ checks it all before creating anything.
 | `scripts/` | The seven steps and the shared modules |
 | `drive/launchers/` | Launcher templates copied onto the drive |
 | `drive/samples/` | Hand-run checks, copied to `<drive>:\testing` |
-| `vcpkg_overlays/` | Overlay ports and triplets ([README](vcpkg_overlays/README.md)) |
+| `vcpkg_overlays/` | The generator's triplets, and overlay port sets a configuration may pick (`degoras/`) ([README](vcpkg_overlays/README.md)) |
 | `tools/` | `Export-DevDrive.ps1`, `Import-DevDrive.ps1`, `Manage-MountTasks.ps1`, `Remove-DevDrive.ps1`, `Restore-QtCreatorSettings.ps1` |
 | `tests/` | The generator's own test suite (`tests\Test-DrivEnvConfig.ps1`); `tests\Sandbox-Portability.ps1` (elevated) exports and imports a throwaway drive |
 | `cache/`, `logs/` | MSYS2 download cache and run logs (not tracked) |
@@ -367,7 +367,8 @@ The repository, the baseline commit, the target triplet, the overlay layers and 
 | `cleanup.packages` | `true` removes `vcpkg\packages`, vcpkg's staging folder (recreated when a port is built). Its files are hardlinked into `installed`, so it frees names rather than space. Default `false` |
 | `cleanup.downloads`, `cleanup.binary_cache` | `true` empties `vcpkg\downloads` (re-downloaded when needed) or the binary cache (reinstalling then means building again). Shared, so done by the last generated toolchain. Default `false` |
 | `buildtrees_root` | Folder for build trees, default `bt`: short on purpose, because of the 260-character path limit |
-| `overlay_ports` | Overlay layers per triplet — see [Overlay ports](#overlay-ports) |
+| `overlay_root` | The overlay port set, e.g. `vcpkg_overlays/degoras`; absent, no overlay ports — see [Overlay ports](#overlay-ports) |
+| `overlay_ports` | Overlay layers per triplet, folders of that set |
 
 > ⚠️ Prefer explicit feature lists to blanket ones such as ffmpeg's `all-gpl`, which enables codecs that cannot work
 > on these toolchains.
@@ -422,24 +423,28 @@ exclusion list or the Dev Drive trust needs an elevated run.
 
 ## Overlay ports
 
-`vcpkg_overlays/ports/` carries the ports that do not build correctly on these toolchains as published, each with the
-reason and the condition to retire it in [`vcpkg_overlays/README.md`](vcpkg_overlays/README.md).
+Some vcpkg ports do not build correctly on these toolchains as published. The fixes come in **sets**, each made for
+one environment, and a configuration picks one with `vcpkg.overlay_root`; **none is required**, and without it every
+package comes from the registry as published ([`vcpkg_overlays/README.md`](vcpkg_overlays/README.md)).
 
-> **Scope.** The overlays are made for one environment: vcpkg baseline `3cd21e48`, the two MinGW dynamic-release
-> triplets, Clang 23.1.3 (clang64) and GCC 16.2.0 (ucrt64), and the Degoras package set. Elsewhere they are untested
-> and may be obsolete. What is covered and what is not: [Where they apply](vcpkg_overlays/README.md#where-they-apply).
+> **The one set here, `vcpkg_overlays/degoras/`,** is made for one environment: vcpkg baseline `3cd21e48`, the two
+> MinGW dynamic-release triplets, Clang 23.1.3 (clang64) and GCC 16.2.0 (ucrt64), and the Degoras package set.
+> Elsewhere it is untested and may be obsolete. Each port, why, and when to retire it:
+> [Degoras overlay ports](vcpkg_overlays/degoras/README.md#where-they-apply).
 
-Layers are chosen per triplet:
+Layers, folders of the set, are chosen per triplet:
 
 ```json
+"overlay_root": "vcpkg_overlays/degoras",
 "overlay_ports": [
   { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
   { "triplet": "*",                               "layers": ["ports"] }
 ]
 ```
 
-Step 3 verifies every overlay triplet against the `.sha256` beside it (line endings normalised) and refuses a
-mismatch. If it fails, read the diff before regenerating the hash.
+The triplets in `vcpkg_overlays/triplets/` are the generator's own and every drive gets them (the static ones are
+kept as a capability; nothing uses them). Step 3 verifies each against the `.sha256` beside it (line endings
+normalised) and refuses a mismatch. If it fails, read the diff before regenerating the hash.
 
 ## Logs and records
 

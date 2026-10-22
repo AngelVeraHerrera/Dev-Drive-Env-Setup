@@ -76,9 +76,9 @@ function Get-DrivEnvConfigSchema
     #     { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
     #     { "triplet": "*",                               "layers": ["ports"] }
     #   ]
-    # 'triplet' matches exactly; 'layers' are folders under vcpkg_overlays/, searched in order (vcpkg takes the first
-    # holding the port). Absent: ["ports"] for every triplet. Prefer a conditional inside the shared port to a layer,
-    # which duplicates a whole portfile.
+    # 'triplet' matches exactly; 'layers' are folders under vcpkg.overlay_root, searched in order (vcpkg takes the
+    # first holding the port). Absent: ["ports"] for every triplet. Prefer a conditional inside the shared port to a
+    # layer, which duplicates a whole portfile.
     $overlayLayerSet = @{
         type   = 'object'
         fields = @{
@@ -221,6 +221,10 @@ function Get-DrivEnvConfigSchema
             # Seconds to wait before a retry, growing with the attempt number. See where it is declared.
             retry_delay_seconds = $retryDelay
 
+            # The overlay set the layers come from: a folder relative to the generator (vcpkg_overlays/degoras) or
+            # absolute. Absent: no overlay ports, every package as the registry publishes it. Sets are specific to an
+            # environment (baseline, compilers, packages); nothing requires one.
+            overlay_root  = @{ type = 'string'; notEmpty = $true }
             overlay_ports = @{ type = 'array'; item = $overlayLayerSet }
 
             # Where vcpkg unpacks and compiles, relative to the drive (default "bt"). Short on purpose: Qt's autogen
@@ -2850,6 +2854,15 @@ function Test-DrivEnvRules
         {
             $Problems.Add("vcpkg.source.baseline_commit: required when baseline_mode is 'fixed'")
         }
+    }
+
+    # Layers are folders of an overlay set: naming some without saying which set is a configuration that would
+    # silently build every package from upstream.
+    if ($Config.vcpkg -and (@($Config.vcpkg.PSObject.Properties.Name) -contains 'overlay_ports') -and
+        @($Config.vcpkg.overlay_ports | Where-Object { $_ -and @($_.layers | Where-Object { "$_".Trim() }).Count }).Count -and
+        [string]::IsNullOrWhiteSpace([string]$Config.vcpkg.overlay_root))
+    {
+        $Problems.Add("vcpkg.overlay_ports: names layers but vcpkg.overlay_root, the folder holding them, is not set")
     }
 
     $environment = $Config.environment

@@ -26,7 +26,7 @@
 # WHAT IT DOES NOT DO: decide anything. A surviving delta still has to
 # be checked against the CURRENT sources -- the defect it works around
 # may have been fixed upstream while the delta still applies cleanly.
-# See vcpkg_overlays/README.md for what that looked like in
+# See vcpkg_overlays/degoras/README.md for what that looked like in
 # practice.
 #
 # Usage, from the environment's own launcher:

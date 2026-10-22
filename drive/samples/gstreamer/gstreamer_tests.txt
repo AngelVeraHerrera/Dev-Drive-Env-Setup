@@ -51,8 +51,8 @@ missing element fails in a way that looks like a broken install:
     (Getting even mfh264enc took a patch: upstream's probe decides it is
     building for WinRT -- WINAPI_PARTITION_APP is true on desktop Windows
     too -- and then wants a GstWinRt library that is MSVC-only upstream,
-    so the whole plugin skipped itself in silence. See delta 7 in
-    vcpkg_overlays/README.md.)
+    so the whole plugin skipped itself in silence. See delta 7 in the head
+    of vcpkg_overlays/degoras/ports/gstreamer/portfile.cmake.)
 
   * glupload / glimagesink need the "gl" feature on the gstreamer port,
     which the configuration does not currently request.

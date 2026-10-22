@@ -3,11 +3,11 @@ OVERLAY CHECKS
 =======================================================================
 Run these from the environment's own launcher. See ../README.md.
 
-The overlay ports are in vcpkg_overlays/ports and what each one changes
-is written up in vcpkg_overlays/README.md. This directory holds
-the two things that keep that write-up honest: one tool for deciding
-whether an overlay is still needed, and one for checking it actually
-did its job.
+The overlay ports are in vcpkg_overlays/degoras/ports and what each one
+changes is written up in vcpkg_overlays/degoras/README.md. This
+directory holds the two things that keep that write-up honest: one tool
+for deciding whether an overlay is still needed, and one for checking
+it actually did its job.
 
 Neither is automated and neither runs during environment generation.
 They are here for the two moments when the question comes up: after

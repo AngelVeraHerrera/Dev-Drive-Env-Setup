@@ -85,6 +85,7 @@
         "buildtrees_root": "bt",
         "cleanup": { "buildtrees": "logs" },
         "install_schedule": [{}, { "concurrency": 12 }, { "concurrency": 8 }, { "concurrency": 1 }],
+        "overlay_root": "vcpkg_overlays/degoras",
         "overlay_ports": [
             { "triplet": "x64-mingw-clang-dynamic-release", "layers": ["ports.clang", "ports"] },
             { "triplet": "x64-mingw-ucrt-dynamic-release", "layers": ["ports.ucrt", "ports"] },
