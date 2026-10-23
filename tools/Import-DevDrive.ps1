@@ -253,7 +253,19 @@ $owner = if ([string]::IsNullOrWhiteSpace($owner)) { 'current' } else { $owner.T
 try
 {
     $account = switch ($owner.ToLowerInvariant()) { 'administrators' { $null } 'current' { if ($OwnerAccount) { $OwnerAccount } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name } } default { $owner } }
-    $ownerArg = if ($account) { '*' + (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value } else { '*S-1-5-32-544' }
+    $ownerArg = '*S-1-5-32-544'
+    if ($account)
+    {
+        try { $ownerArg = '*' + (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value }
+        catch
+        {
+            # An account of the PC the drive came from may not exist here: the drive goes to whoever imports it, said.
+            $importer = if ($OwnerAccount) { $OwnerAccount } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name }
+            Warn "environment.owner names '$account', which does not exist on this PC; the drive goes to $importer instead."
+            $owner = $importer
+            $ownerArg = '*' + (New-Object Security.Principal.NTAccount($importer)).Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+    }
     Info "Handing the drive to $owner ($ownerArg)..."
     # As Set-DrivEnvDriveOwner: the root alone, then each top-level item, never System Volume Information or
     # $RECYCLE.BIN (only SYSTEM may hold them); icacls's stderr as text, not as a terminating error; failures
