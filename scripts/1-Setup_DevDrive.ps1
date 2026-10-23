@@ -1100,7 +1100,7 @@ try
 {
     $ownerArg = Resolve-DrivEnvOwner -Cfg $Cfg -Current $OwnerAccount
     $ownerCode = Set-DrivEnvDriveOwner -Path "${driveLetter}:\" -Owner $ownerArg -Report { param($m) Write-NoFormat $m }
-    if ($ownerCode -eq 0) { Write-Info "Drive owned by $ownerArg." } else { Write-Warn "icacls could not hand every file to $ownerArg (exit $ownerCode)." }
+    if ($ownerCode -eq 0) { Write-Info "Drive owned by $ownerArg." } else { Write-Warn "$ownerCode item(s) could not be handed to $ownerArg (see above)." }
 }
 catch { Write-Warn $_.Exception.Message }
 Write-Info "STEP 10: OK"

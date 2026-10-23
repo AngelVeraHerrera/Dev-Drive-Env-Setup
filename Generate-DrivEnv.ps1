@@ -393,7 +393,7 @@ if ($runElevated -and ($results.Count -gt 0))
             Write-Host ("  Handing {0}:\ to {1} (environment.owner); a whole drive takes a minute or two..." -f $ownerLetter, $ownerArg)
             $ownerCode = Set-DrivEnvDriveOwner -Path "${ownerLetter}:\" -Owner $ownerArg -Report { param($m) Write-Host $m }
             if ($ownerCode -eq 0) { Write-Host "[OK] Drive owned by $ownerArg." -ForegroundColor Green }
-            else { Write-Host "[WARN] icacls could not hand every file to $ownerArg (exit $ownerCode)." -ForegroundColor Yellow }
+            else { Write-Host "[WARN] $ownerCode item(s) could not be handed to $ownerArg (see above)." -ForegroundColor Yellow }
         }
         catch { Write-Host ("[WARN] {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
     }

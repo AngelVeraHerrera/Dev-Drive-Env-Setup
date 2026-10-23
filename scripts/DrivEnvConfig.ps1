@@ -1594,14 +1594,34 @@ function Resolve-DrivEnvOwner
 
 function Set-DrivEnvDriveOwner
 {
-    # @brief Hands every file and folder under Path to Owner (Resolve-DrivEnvOwner's form). Needs an elevated
-    # process (SeRestorePrivilege). Returns icacls's exit code; its summary line goes to Report.
+    # @brief Hands Path and everything under it to Owner (Resolve-DrivEnvOwner's form). Needs an elevated process
+    # (SeRestorePrivilege). A volume root's System Volume Information and $RECYCLE.BIN are left alone: only SYSTEM
+    # may hold them, and icacls /T over the root failed on the first one. Returns how many items did NOT change
+    # hands (0: all did); their errors go to Report.
     param ([string]$Path, [string]$Owner, [scriptblock]$Report = { param($m) })
 
-    $out = @(& icacls.exe $Path /setowner $Owner /T /C /Q 2>&1)
-    $code = $LASTEXITCODE
-    foreach ($line in @($out | Where-Object { "$_".Trim() } | Select-Object -Last 2)) { & $Report ("  icacls: " + "$line".Trim()) }
-    return $code
+    # A caller's 'Stop' would turn icacls's stderr ("Access denied") into an exception that ends the whole pass.
+    $ErrorActionPreference = 'Continue'
+    $windowsOwn = @('System Volume Information', '$RECYCLE.BIN')
+    $items = @([pscustomobject]@{ FullName = $Path; PSIsContainer = $false }) +
+             @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | Where-Object { $windowsOwn -notcontains $_.Name })
+    $failed = 0
+    foreach ($item in $items)
+    {
+        $icaclsArgs = @($item.FullName, '/setowner', $Owner, '/C', '/Q')
+        if ($item.PSIsContainer) { $icaclsArgs += '/T' }
+        $out = @(& icacls.exe @icaclsArgs 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+        # With /C icacls exits 0 whatever failed; only its closing summary counts them, "<done> files; <failed>
+        # files" in any language -- so its second number. No summary at all is a failure too.
+        $summary = @($out | Where-Object { $_ -match '^\D*\d+\D+\d+\D*$' } | Select-Object -Last 1)
+        $n = if ($summary.Count -and ($summary[0] -match '^\D*\d+\D+(\d+)\D*$')) { [int]$Matches[1] } else { 1 }
+        if ($n -gt 0)
+        {
+            $failed += $n
+            foreach ($line in @($out | Where-Object { $summary -notcontains $_ } | Select-Object -First 3)) { & $Report ("  icacls: " + $line) }
+        }
+    }
+    return $failed
 }
 
 function Enable-DrivEnvGitTrust

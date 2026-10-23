@@ -1923,6 +1923,21 @@ Check "...-Current (who started the elevated child) is what 'current' means; a n
     ((Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{"owner":"current"}}') -Current $meName) -ceq $meSid) -and
     ((Resolve-DrivEnvOwner -Cfg (Obj ('{"environment":{"owner":"' + $meName.Replace('\', '\\') + '"}}'))) -ceq $meSid) -and
     (Throws { Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{"owner":"no-such-account-drivenv"}}') }))
+# Set-DrivEnvDriveOwner with no elevation (handing files to oneself needs none), under a caller's 'Stop': a folder that
+# refuses counts as a failure without ending the pass, a root folder named like Windows' own is skipped, the rest
+# changes hands. icacls /C exits 0 whatever failed, so the count comes from its summary.
+$ownT = Join-Path $env:TEMP ("drivenv-owner-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path "$ownT\a\b", "$ownT\locked", "$ownT\System Volume Information" -Force | Out-Null
+[IO.File]::WriteAllText("$ownT\a\b\f.txt", 'x')
+foreach ($d in "$ownT\locked", "$ownT\System Volume Information") { & icacls.exe $d /deny "${meName}:(WO,WDAC)" | Out-Null }
+$ownReport = @()
+$ownFailed = & { $ErrorActionPreference = 'Stop'; Set-DrivEnvDriveOwner -Path $ownT -Owner $meSid -Report { param($m) $script:ownReport += $m } }
+Check "drive owner pass: the refusing folder counted (1) and reported, Windows' own skipped, the rest handed over" (
+    ($ownFailed -eq 1) -and (($ownReport -join ' ') -match 'locked') -and (($ownReport -join ' ') -notmatch 'System Volume') -and
+    ((Get-Acl -LiteralPath "$ownT\a\b\f.txt").Owner -eq $meName))
+foreach ($d in "$ownT\locked", "$ownT\System Volume Information") { & icacls.exe $d /remove:d $meName | Out-Null }
+Remove-Item -LiteralPath $ownT -Recurse -Force -ErrorAction SilentlyContinue
+
 $ow = Load (Join-Path $cfgDir 'drivenv-cfg_example.json'); $ow.environment | Add-Member -NotePropertyName owner -NotePropertyValue '' -Force
 Check "...an empty owner is refused by the schema, a set one accepted" ((HasProblem $ow 'environment.owner') -and
     ((Test-DrivEnvConfig -Config ($ow | ForEach-Object { $_.environment.owner = 'administrators'; $_ })).Count -eq 0))

@@ -255,8 +255,23 @@ try
     $account = switch ($owner.ToLowerInvariant()) { 'administrators' { $null } 'current' { if ($OwnerAccount) { $OwnerAccount } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name } } default { $owner } }
     $ownerArg = if ($account) { '*' + (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value } else { '*S-1-5-32-544' }
     Info "Handing the drive to $owner ($ownerArg)..."
-    $null = & icacls.exe $drive /setowner $ownerArg /T /C /Q 2>&1
-    if ($LASTEXITCODE) { Warn "icacls could not hand every file to $ownerArg (exit $LASTEXITCODE)." } else { Info "Drive owned by $owner." }
+    # As Set-DrivEnvDriveOwner: the root alone, then each top-level item, never System Volume Information or
+    # $RECYCLE.BIN (only SYSTEM may hold them); icacls's stderr as text, not as a terminating error; failures
+    # counted from its closing summary ("<done> files; <failed> files", any language), since /C makes it exit 0.
+    $ErrorActionPreference = 'Continue'
+    $ownerFail = 0
+    $items = @([pscustomobject]@{ FullName = $drive; PSIsContainer = $false }) +
+             @(Get-ChildItem -LiteralPath $drive -Force | Where-Object { @('System Volume Information', '$RECYCLE.BIN') -notcontains $_.Name })
+    foreach ($item in $items)
+    {
+        $icaclsArgs = @($item.FullName, '/setowner', $ownerArg, '/C', '/Q'); if ($item.PSIsContainer) { $icaclsArgs += '/T' }
+        $out = @(& icacls.exe @icaclsArgs 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+        $summary = @($out | Where-Object { $_ -match '^\D*\d+\D+\d+\D*$' } | Select-Object -Last 1)
+        $n = if ($summary.Count -and ($summary[0] -match '^\D*\d+\D+(\d+)\D*$')) { [int]$Matches[1] } else { 1 }
+        if ($n -gt 0) { $ownerFail += $n; Warn ("icacls: " + (@($out | Where-Object { $summary -notcontains $_ }) | Select-Object -First 1)) }
+    }
+    $ErrorActionPreference = 'Stop'
+    if ($ownerFail) { Warn "$ownerFail item(s) could not be handed to $ownerArg." } else { Info "Drive owned by $owner." }
 }
 catch { Warn "environment.owner '$owner': $($_.Exception.Message)" }
 
