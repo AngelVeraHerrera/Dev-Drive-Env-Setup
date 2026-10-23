@@ -831,9 +831,17 @@ try
         $fsutilCode = $LASTEXITCODE
         $trusted = ($devdrv -match 'trusted developer volume|volumen de desarrollador de confianza') -and ($devdrv -notmatch 'not trusted|untrusted|no es de confianza')
         $perfMode = (Get-MpPreference -ErrorAction Stop).PerformanceModeStatus -ne 1
+        # Whether Defender's filter is attached at all, from fltmc: filter names are not localized. A trusted Dev Drive
+        # with no WdFilter is not scanned in any mode -- what a global 'fsutil devdrv enable /disallowAv' leaves (step
+        # 1 ran it until 2026-10-21, and it outlives the drive it was run for), or a policy.
+        $fltOut = @(& fltmc.exe instances -v "${driveLetter}:" 2>&1)
+        $wdAttached = if ($LASTEXITCODE -eq 0) { @($fltOut | Where-Object { "$_" -match '^\s*WdFilter\s' }).Count -gt 0 } else { $null }
         if ($fsutilCode) { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "fsutil devdrv query needs an elevated run: $devdrv" }
-        elseif ($trusted -and $perfMode) { Add-Result -Group "defender" -Name $defName -State "ok" -Detail "trusted Dev Drive, performance mode on" }
-        else { Add-Result -Group "defender" -Name $defName -State "skip" -Detail ("Dev Drive {0}, performance mode {1}: scanned synchronously. fsutil devdrv trust ${driveLetter}: (elevated) fixes the trust. [{2}]" -f $(if ($trusted) { 'trusted' } else { 'NOT trusted' }), $(if ($perfMode) { 'on' } else { 'off' }), $devdrv) }
+        elseif ($mpStatus.AMRunningMode -and ($mpStatus.AMRunningMode -ne 'Normal')) { Add-Result -Group "defender" -Name $defName -State "skip" -Detail ("Microsoft Defender runs in '{0}' mode: another antivirus handles the drive, so performance mode does not apply. [{1}]" -f $mpStatus.AMRunningMode, $devdrv) }
+        elseif (-not $trusted) { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "Dev Drive NOT trusted: scanned synchronously. fsutil devdrv trust ${driveLetter}: (elevated) and a remount fix it. [$devdrv]" }
+        elseif ($wdAttached -eq $false) { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "trusted, but Defender's filter is not attached: NOTHING scans it. A global 'fsutil devdrv enable /disallowAv' (or a policy) does this; 'fsutil devdrv enable /allowAv' (elevated) and a remount bring performance mode back. [$devdrv]" }
+        elseif (-not $perfMode) { Add-Result -Group "defender" -Name $defName -State "skip" -Detail "trusted, but performance mode is off: scanned synchronously. Set-MpPreference -PerformanceModeStatus Enabled (elevated) turns it on." }
+        else { Add-Result -Group "defender" -Name $defName -State "ok" -Detail $(if ($wdAttached) { "trusted Dev Drive, Defender attached, performance mode on" } else { "trusted Dev Drive, performance mode on (filter attachment not readable: fltmc needs an elevated run)" }) }
     }
     else
     {

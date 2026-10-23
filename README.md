@@ -81,8 +81,8 @@ What a generated drive holds:
 | `logs/` | Every setup step's log, and the logs of every port that failed |
 
 Outside the drive it leaves only: desktop shortcuts (`create_desktop_shortcuts`), a startup task that mounts the
-drive (`automount_at_startup`), two Microsoft Defender exclusions (the VHDX folder and the drive letter) and, if you
-ask, kits in your own Qt Creator. [`tools/Remove-DevDrive.ps1`](#drive-maintenance) removes all of them.
+drive (`automount_at_startup`), Microsoft Defender exclusions (the VHDX folder, and the drive letter on NTFS; a Dev
+Drive is trusted instead) and, if you ask, kits in your own Qt Creator. [`tools/Remove-DevDrive.ps1`](#drive-maintenance) removes all of them.
 
 ### Where this is used
 
@@ -163,13 +163,15 @@ on the drive by the scripts.
 | `-DryRun` | Print the plan — every step and every toolchain — and launch nothing |
 | `-ValidateOnly` | Check the configuration and change nothing |
 
-Administrator rights are needed by **step 1 only** (creating and mounting the disk); resuming at step 2 or later
-needs no elevation. Any step can also run on its own, with the same `-ConfigFile` (steps 2 to 5 also take
-`-Toolchain <id>` when the configuration has a `generate` list):
+Start it from an **ordinary** PowerShell. Only step 1 (creating and mounting the disk) needs administrator rights,
+and it asks for them itself, with a UAC prompt and a window of its own; the other steps run as you, so the drive's
+files are yours. From an elevated terminal everything runs elevated, and at the end the drive is handed to
+`environment.owner` (a minute or two for a full drive). Any step can also run on its own, with the same
+`-ConfigFile` (steps 2 to 5 also take `-Toolchain <id>` when the configuration has a `generate` list):
 
 | Step | |
 | --- | --- |
-| `1-Setup_DevDrive.ps1` | Create and mount the drive, lay out the folders, startup task, Defender exclusions |
+| `1-Setup_DevDrive.ps1` | Create and mount the drive, lay out the folders, startup task, Defender (an exclusion on NTFS, trust on a Dev Drive) |
 | `2-Setup_MSYS2.ps1` | MSYS2 and the toolchain; the toolchain's env file, launchers and shortcuts |
 | `3-Clone_VCPKG.ps1` | vcpkg at the baseline, overlay triplets checked, env file completed |
 | `4-Deps_VCPKG.ps1` | The configured packages, with retries; the installation inventory |
@@ -342,6 +344,7 @@ Optional: the identity of the drive's git, written by step 2 into `<drive>:\msys
 | `custom_folders` | Extra folders; one containing `${DEVSYSTEM_TOOLCHAIN_ID}` is created per toolchain |
 | `append_windows_system_path` | Also append the generating shell's `PATH`. Default `false` |
 | `create_desktop_shortcuts`, `automount_at_startup` | Default `true` |
+| `owner` | Who owns the drive's files: `current` (default: whoever runs the generator, you even from an elevated terminal), `administrators`, or an account name |
 | `proxy_url` | Proxy for the downloads, or empty |
 | `install_testing_material` | Copy `drive/samples` to `<drive>:\testing`. Default `true` |
 | `verification` | What step 5 checks: packages, library loads, tools, commands, GStreamer elements |

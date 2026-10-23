@@ -28,7 +28,7 @@ its retire condition first.
 
 | Port | Version | Delta | Why | Retire when |
 | --- | --- | --- | --- | --- |
-| `gstreamer` | 1.28.7 #1 | 12 deltas (portfile head) | MinGW/clang build fixes, `d3d11` forced on, Media Foundation enabled on MinGW, libc++ 23 `<cstdlib>` fix | each delta says its own condition |
+| `gstreamer` | 1.28.7 #2 | 13 deltas (portfile head) | MinGW/clang build fixes, `d3d11` forced on, Media Foundation enabled on MinGW, libc++ 23 `<cstdlib>` fix, the Qt6 D3D11 sink off (it auto-detected MSYS2's Qt) | each delta says its own condition |
 | `zeromq` | 4.3.5 #4 | `fix-missing-new-include.patch` | libc++ 23 no longer includes `<new>` transitively (upstream zeromq/libzmq#4911) | vcpkg ships a zeromq newer than 4.3.5 |
 | `qtmultimedia` | 6.11.2 #1 | `resonance-audio-missing-istream.patch` | libc++ 23: missing `<istream>` in the bundled resonance-audio | vcpkg ships 6.11.3 or later |
 | `opencv4` | 4.14.0 #1 | `0031-missing-iterator-atomic-includes.patch` | libc++ 23: missing `<iterator>` / `<atomic>` (upstream opencv@538e7bf) | vcpkg ships an opencv4 past 4.14.0 |
@@ -62,7 +62,7 @@ It needs no overlay.
 | | Features |
 | --- | --- |
 | Enabled | `nvcodec`, `d3d11` (forced, so a missing dependency is an error), `mediafoundation`, `srt` (without `srtp`), `libde265`, `openh264`, `x264`, `x265` (gpl), `hls`, `openjpeg`, `opus`, `webp`, `libav` |
-| Off on purpose | `amfcodec`, `va`, `msdk` (no such hardware); `vulkan`; the Linux-only sinks; the WebRTC stack (`webrtc`, `dtls`, `srtp`); gst `opencv` elements (the opencv library itself is installed); `onnx`; captions; barcodes |
+| Off on purpose | `amfcodec`, `va`, `msdk` (no such hardware); `vulkan`; the Linux-only sinks; the WebRTC stack (`webrtc`, `dtls`, `srtp`); gst `opencv` elements (the opencv library itself is installed); `onnx`; captions; barcodes; the Qt sinks (`qt5`, `qt6`, `qt6d3d11`) |
 | Not requested | `gl`, `gl-graphene` (no `glimagesink`); add them if the OpenGL samples matter |
 | Did not work, retry before believing | `nls` (needs a full gettext), `soup` (libsoup → gnutls → nettle), `aom`, `fluidsynth`, `faad`, `dc1394` |
 

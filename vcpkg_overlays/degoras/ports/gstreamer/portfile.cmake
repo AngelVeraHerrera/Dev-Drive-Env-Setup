@@ -7,7 +7,7 @@
 # at tag 1.28.7); and the whole tree -- 1645 C and C++ units -- was syntax-checked with MSYS2's clang 23.1.3: one
 # failure, which is delta 12.
 #
-# TWELVE FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
+# THIRTEEN FUNCTIONAL deltas from upstream, plus two metadata ones. Re-apply every one of them when bumping to the
 # next version, and nothing else -- everything else here is upstream's and must be taken verbatim.
 #
 # The two metadata deltas, both harmless, listed because this head used to claim "exactly eight ... and nothing
@@ -16,9 +16,19 @@
 #
 # STATUS, re-verified against the 1.28.6 sources on 2026-08-27 (deltas 4 and 5 by running the build, the rest by
 # reading the sources with the real MinGW toolchain):
-#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9, 10, 11, 12
+#   still required : 2, 3 (d3d12 half), 4, 5, 6, 7, 8, 9, 10, 11, 12, 13
 #   defect gone    : 1 -- see below; kept for now, costs nothing
 #   half inert     : 3 (d3d11 half) -- see below; kept deliberately
+#
+#  13. -Dgst-plugins-bad:qt6d3d11=disabled, where upstream leaves it auto (2026-10-23).
+#      The port turns Qt off with -Dqt5/-Dqt6=disabled, but those reach gst-plugins-good only: plugins-bad has its
+#      own qt6d3d11 feature, and its dependency('qt6') takes whatever Qt the build environment offers. On ucrt64
+#      that is MSYS2's own Qt, installed as a dependency of the qt-creator package -- not vcpkg's, and not always the
+#      same version. Measured on a drive built 2026-10-22: MSYS2 had moved to Qt 6.12.0, vcpkg's is 6.11.2, so
+#      libgstqt6d3d11.dll was compiled against 6.12, loaded against 6.11, and failed step 5's load check with
+#      ERROR_PROC_NOT_FOUND. On clang64, with no Qt in MSYS2, it was simply not built. A Qt sink built against the
+#      host's Qt is wrong even when the versions happen to agree. If the plugin is ever wanted, build it against
+#      vcpkg's qtdeclarative on purpose, not by auto-detection.
 #
 #  12. PATCHES gains mediafoundation-sourcereader-cstdlib-libcxx.diff (2026-10-16).
 #      gstmfsourcereader.cpp calls std::abs on an INT32 stride without including <cstdlib>. libc++ 23 (MSYS2's
@@ -477,6 +487,7 @@ vcpkg_configure_meson(
         -Dgst-plugins-bad:d3d11=enabled       # LOCAL, see header
         -Dgst-plugins-bad:d3d11-wgc=disabled  # LOCAL, see header
         -Dgst-plugins-bad:d3d12-wgc=disabled  # LOCAL, see header
+        -Dgst-plugins-bad:qt6d3d11=disabled   # LOCAL, see header (delta 13)
         -Dgst-plugins-bad:decklink=disabled
         -Dgst-plugins-bad:directfb=disabled
         -Dgst-plugins-bad:directsound=auto

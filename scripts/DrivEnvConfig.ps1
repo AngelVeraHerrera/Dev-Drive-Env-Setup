@@ -146,6 +146,11 @@ function Get-DrivEnvConfigSchema
             create_desktop_shortcuts      = $boolNode
             automount_at_startup          = $boolNode
 
+            # Who owns the drive's files: "current" (default; the account that runs the generator, yours even from an
+            # elevated terminal), "administrators", or an account name. An elevated run would otherwise leave them
+            # to Administrators, and git refuses repositories another account owns. See Resolve-DrivEnvOwner.
+            owner                         = @{ type = 'string'; notEmpty = $true }
+
             proxy_url                     = $stringNode
             verification                  = $verification
         }
@@ -1563,6 +1568,40 @@ function Get-DrivEnvGitSystemConfigLines
     if ($lines.Count -eq 0) { return @() }
     return @('# Git system configuration of this drive, written by step 2 from the JSON (environment.proxy_url, git).',
              '# Edit the JSON, not this file: regenerating the environment overwrites it.') + $lines
+}
+
+function Resolve-DrivEnvOwner
+{
+    # @brief The owner environment.owner names, as icacls takes it: "*<SID>", so a localized or space-carrying name
+    # cannot be misread. "current" (or absent) is -Current when given -- the account that started an elevated child
+    # -- else this process's own account; "administrators" is the built-in group; anything else an account name.
+    # Throws when the account does not exist here.
+    param ($Cfg, [string]$Current = "")
+
+    $owner = "current"
+    if ($Cfg -and $Cfg.environment -and ($Cfg.environment.PSObject.Properties.Name -contains 'owner')) { $owner = ([string]$Cfg.environment.owner).Trim() }
+
+    switch ($owner.ToLowerInvariant())
+    {
+        'administrators' { return '*S-1-5-32-544' }
+        'current'        { $account = if ($Current) { $Current } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name } }
+        default          { $account = $owner }
+    }
+    try   { $sid = (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value }
+    catch { throw "environment.owner: account '$account' does not exist on this PC." }
+    return "*$sid"
+}
+
+function Set-DrivEnvDriveOwner
+{
+    # @brief Hands every file and folder under Path to Owner (Resolve-DrivEnvOwner's form). Needs an elevated
+    # process (SeRestorePrivilege). Returns icacls's exit code; its summary line goes to Report.
+    param ([string]$Path, [string]$Owner, [scriptblock]$Report = { param($m) })
+
+    $out = @(& icacls.exe $Path /setowner $Owner /T /C /Q 2>&1)
+    $code = $LASTEXITCODE
+    foreach ($line in @($out | Where-Object { "$_".Trim() } | Select-Object -Last 2)) { & $Report ("  icacls: " + "$line".Trim()) }
+    return $code
 }
 
 function Enable-DrivEnvGitTrust

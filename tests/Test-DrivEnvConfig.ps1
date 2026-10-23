@@ -1913,6 +1913,20 @@ $pacmanFn = $s2Ast.Find({ param($n) ($n -is [System.Management.Automation.Langua
     Check "...every attempt failing returns the last code after 3; -Attempts 1 runs once" (($ko -eq 1) -and ($one -eq 1) -and ($script:pacCalls -eq 1))
 }
 
+# environment.owner -> the owner icacls is given (step 1, the elevated runner), always as a SID.
+$meName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$meSid  = '*' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+Check "owner: absent or 'current' is this account as a SID; 'administrators' the built-in group" (
+    ((Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{}}')) -ceq $meSid) -and ((Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{"owner":"current"}}')) -ceq $meSid) -and
+    ((Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{"owner":"Administrators"}}')) -ceq '*S-1-5-32-544'))
+Check "...-Current (who started the elevated child) is what 'current' means; a named account resolves; an unknown one throws" (
+    ((Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{"owner":"current"}}') -Current $meName) -ceq $meSid) -and
+    ((Resolve-DrivEnvOwner -Cfg (Obj ('{"environment":{"owner":"' + $meName.Replace('\', '\\') + '"}}'))) -ceq $meSid) -and
+    (Throws { Resolve-DrivEnvOwner -Cfg (Obj '{"environment":{"owner":"no-such-account-drivenv"}}') }))
+$ow = Load (Join-Path $cfgDir 'drivenv-cfg_example.json'); $ow.environment | Add-Member -NotePropertyName owner -NotePropertyValue '' -Force
+Check "...an empty owner is refused by the schema, a set one accepted" ((HasProblem $ow 'environment.owner') -and
+    ((Test-DrivEnvConfig -Config ($ow | ForEach-Object { $_.environment.owner = 'administrators'; $_ })).Count -eq 0))
+
 # Enable-DrivEnvGitTrust (steps 3, 4, 6): process environment only, appended after an entry already there, once.
 $gitEnv = @{}; foreach ($k in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1') { $gitEnv[$k] = [Environment]::GetEnvironmentVariable($k) }
 $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.autocrlf'; $env:GIT_CONFIG_VALUE_0 = 'false'

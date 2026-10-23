@@ -18,7 +18,12 @@ param
     [string]$ConfigFile = "drivenv-cfg.json",
 
     # @brief Validate the configuration and stop, changing nothing.
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+
+    # @brief Internal, for the elevated relaunch: no "Press any key" after a success (the runner is waiting), and the
+    # account that started it, which environment.owner "current" means.
+    [switch]$NoPause,
+    [string]$OwnerAccount = ""
 )
 
 function Write-NoFormat
@@ -217,6 +222,12 @@ if (-not (Test-IsAdministrator))
 
     # Forward -ValidateOnly too, so a later reordering cannot turn a check into a real run.
     if ($ValidateOnly) { $childArguments += " -ValidateOnly" }
+
+    # The account running THIS (unelevated) process is the one the drive's files go to (environment.owner "current"):
+    # elevated, the child may run as another account. Started by the runner (stdin redirected): no final pause, or
+    # the run would wait on a key in a window of its own.
+    $childArguments += (" -OwnerAccount `"{0}`"" -f [Security.Principal.WindowsIdentity]::GetCurrent().Name)
+    if ([Console]::IsInputRedirected) { $childArguments += " -NoPause" }
 
     $psi.Arguments = $childArguments
     $psi.Verb      = "runas"   # triggers UAC
@@ -631,6 +642,13 @@ if ($useDevDrive)
 
     Start-Sleep -Milliseconds 500
 
+    # Undo a global 'fsutil devdrv enable /disallowAv' -- this step ran it until 2026-10-21, and it outlives the drive
+    # it was run for: with it Defender attaches to NO Dev Drive, performance mode included. A policy that forbids
+    # antivirus on Dev Drives still wins over this.
+    $allowOut = & fsutil devdrv enable /allowAv 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Warn "fsutil devdrv enable /allowAv reported exit ${LASTEXITCODE}: $allowOut" }
+    else { Write-Info "Antivirus filters allowed on Dev Drives (fsutil devdrv enable /allowAv)." }
+
     Write-Info "Trusting volume as Dev Drive..."
     $trustOut = & fsutil devdrv trust "$driveLetter`:" 2>&1
     if ($LASTEXITCODE -ne 0)
@@ -776,16 +794,17 @@ Enable-HWDetection
 if ($useDevDrive) {
     Write-Info "STEP 5: Dismount and Reattach DevDrive to apply policies."
 
+    # The Storage module's cmdlets, not Hyper-V's: a drive built with diskpart on a PC without Hyper-V got here too.
     try {
         Write-Info "Dismounting VHDX..."
-        Dismount-VHD -Path $vhdFilePath -ErrorAction Stop
+        Dismount-DiskImage -ImagePath $vhdFilePath -ErrorAction Stop | Out-Null
         Start-Sleep -Seconds 1
 
         Write-Info "Re-mounting VHDX..."
-        Mount-VHD -Path $vhdFilePath -ErrorAction Stop
+        Mount-DiskImage -ImagePath $vhdFilePath -ErrorAction Stop | Out-Null
     }
     catch {
-        Write-Error "Error during Dismount-VHD / Mount-VHD: $_"
+        Write-Error "Error during Dismount-DiskImage / Mount-DiskImage: $_"
         Abort-WithError
     }
 
@@ -803,6 +822,18 @@ if ($useDevDrive) {
         Write-Error "Dev Drive did not reappear after remounting."
         Abort-WithError
     }
+
+    # Filters attach at mount time, so this is the state the drive will work in: WdFilter attached is Defender there.
+    Write-NoFormat ("  fsutil devdrv query: " + ((& fsutil devdrv query "$driveLetter`:" 2>&1) -join " "))
+    try
+    {
+        if ((Get-MpPreference -ErrorAction Stop).PerformanceModeStatus -eq 1)
+        {
+            Write-Warn "Defender's performance mode is OFF on this PC, so the Dev Drive is scanned synchronously."
+            Write-Warn "Set-MpPreference -PerformanceModeStatus Enabled (elevated) turns it on, unless a policy turned it off."
+        }
+    }
+    catch { Write-Warn "Microsoft Defender could not be queried for performance mode: $($_.Exception.Message)" }
 
     Start-Sleep -Milliseconds 200
     Write-Info "STEP 5: OK"
@@ -1058,6 +1089,22 @@ else
 
 Write-Info "STEP 9: OK"
 
+# STEP 10: Hand the drive to its owner
+# --------------------------------------------------------------------
+# This step runs elevated, so what it created belongs to Administrators; environment.owner says who it should be
+# ("current": whoever started the run, passed by the unelevated parent as -OwnerAccount). The tree is small here;
+# Generate-DrivEnv.ps1 repeats this over the whole drive after an elevated run.
+
+Write-Info "STEP 10: Hand the drive to its owner (environment.owner)."
+try
+{
+    $ownerArg = Resolve-DrivEnvOwner -Cfg $Cfg -Current $OwnerAccount
+    $ownerCode = Set-DrivEnvDriveOwner -Path "${driveLetter}:\" -Owner $ownerArg -Report { param($m) Write-NoFormat $m }
+    if ($ownerCode -eq 0) { Write-Info "Drive owned by $ownerArg." } else { Write-Warn "icacls could not hand every file to $ownerArg (exit $ownerCode)." }
+}
+catch { Write-Warn $_.Exception.Message }
+Write-Info "STEP 10: OK"
+
 # FINALIZATION
 # --------------------------------------------------------------------
 
@@ -1071,8 +1118,8 @@ Write-Info "TOTAL EXECUTION TIME: $($elapsed.TotalSeconds) seconds  ($elapsedStr
 # Copy the log before the prompt: in a non-interactive run nothing after it executes.
 if (Get-Command Copy-SetupLogToDrive -ErrorAction SilentlyContinue) { Copy-SetupLogToDrive -LogFile $globalLogFile -DriveLetter $driveLetter }
 
-# Same guard as Abort-WithError: ReadKey throws when stdin is redirected.
-if ([Environment]::UserInteractive -and -not [System.Console]::IsInputRedirected) {
+# Same guard as Abort-WithError: ReadKey throws when stdin is redirected. -NoPause: the runner is waiting on this.
+if (-not $NoPause -and [Environment]::UserInteractive -and -not [System.Console]::IsInputRedirected) {
     Write-Host ""
     Write-Host "Press any key to exit..."
     [void][System.Console]::ReadKey($true)

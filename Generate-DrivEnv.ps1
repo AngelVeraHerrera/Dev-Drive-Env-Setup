@@ -252,19 +252,11 @@ while ($idx -lt $selected.Count)
     }
 }
 
-# Elevation is checked here, not left to step 1: a self-elevated step 1 runs in its own window and the runner would
-# race ahead. Only needed when step 1 really runs (not for -From 2+, -ValidateOnly or -DryRun).
-$needsElevation = ($selected | Where-Object { $_.Number -eq 1 }) -and (-not $ValidateOnly) -and (-not $DryRun)
-
-if ($needsElevation -and -not (Test-IsAdministrator))
-{
-    Write-Host "[ERROR] Step 1 creates and mounts the virtual disk with diskpart, so this runner must be" -ForegroundColor Red
-    Write-Host "        started from an elevated PowerShell. A step that elevates itself would open a second" -ForegroundColor Red
-    Write-Host "        window this runner cannot wait on, so it is required now rather than discovered later." -ForegroundColor Red
-    Write-Host "" -ForegroundColor Red
-    Write-Host "        Resuming past step 1 needs no elevation: try -From 2 or later." -ForegroundColor Red
-    exit 1
-}
+# Only step 1 needs elevation, and it asks for it itself: from an unelevated runner it relaunches elevated in a window
+# of its own and waits, so the runner waits too, and every other step runs as you -- the drive's files are yours. An
+# elevated runner runs everything elevated and hands the drive to environment.owner at the end (below).
+$runElevated   = (Test-IsAdministrator) -and (-not $ValidateOnly) -and (-not $DryRun)
+$step1Elevates = ($selected | Where-Object { $_.Number -eq 1 }) -and (-not $ValidateOnly) -and (-not $DryRun) -and (-not (Test-IsAdministrator))
 
 # Missing files are checked BEFORE anything runs. Discovering that step 6 is absent after step 4 has spent two
 # hours compiling is a strictly worse way to find out.
@@ -303,6 +295,8 @@ foreach ($t in $targetsShown)
 }
 if ($keysShown.Count -gt 0) { Write-Host ("  Files named   : {0}" -f ($keysShown -join ", ")) }
 if ($ValidateOnly) { Write-Host "  Mode          : validate the configuration only, change nothing" }
+if ($step1Elevates) { Write-Host "  Elevation     : step 1 asks for administrator rights (UAC); the other steps run as you" }
+if ($runElevated)   { Write-Host "  Elevation     : running elevated; the drive is handed to environment.owner at the end" }
 Write-Host ""
 
 if ($DryRun)
@@ -383,6 +377,26 @@ foreach ($entry in $plan)
         Write-Host ("[FAILED] Step {0} exited with code {1} after {2}." -f $shown, $code, (Format-Duration $span)) -ForegroundColor Red
     }
     break
+}
+
+# An elevated run created the drive's files as Administrators: hand them to environment.owner whatever happened above,
+# so a resumed run -- elevated or not -- finds them its own.
+if ($runElevated -and ($results.Count -gt 0))
+{
+    $ownerLetter = ([string]$cfg.environment.dev_drive_letter).Trim().TrimEnd(':')
+    if (Test-Path -LiteralPath "${ownerLetter}:\")
+    {
+        Write-Banner "OWNER"
+        try
+        {
+            $ownerArg = Resolve-DrivEnvOwner -Cfg $cfg
+            Write-Host ("  Handing {0}:\ to {1} (environment.owner); a whole drive takes a minute or two..." -f $ownerLetter, $ownerArg)
+            $ownerCode = Set-DrivEnvDriveOwner -Path "${ownerLetter}:\" -Owner $ownerArg -Report { param($m) Write-Host $m }
+            if ($ownerCode -eq 0) { Write-Host "[OK] Drive owned by $ownerArg." -ForegroundColor Green }
+            else { Write-Host "[WARN] icacls could not hand every file to $ownerArg (exit $ownerCode)." -ForegroundColor Yellow }
+        }
+        catch { Write-Host ("[WARN] {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
+    }
 }
 
 $total = (Get-Date) - $runStart

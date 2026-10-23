@@ -595,8 +595,9 @@ Write-Info "Checking permissions..."
 # directory vcpkg creates would be owned by BUILTIN\Administrators instead of the user.
 if (Test-IsAdministrator)
 {
-    Write-Warn "Running elevated. Nothing in this step needs it, and it leaves the vcpkg tree owned by"
-    Write-Warn "Administrators rather than by you. An ordinary terminal is the better choice for steps 2 to 6."
+    Write-Warn "Running elevated. Nothing in this step needs it, and what it creates belongs to Administrators until"
+    Write-Warn "Generate-DrivEnv.ps1, run elevated, hands the drive to environment.owner at its end. Run alone, start it"
+    Write-Warn "from an ordinary terminal, as Generate-DrivEnv.ps1 itself can be (step 1 asks for elevation by itself)."
 }
 
 Write-Info "Checking if Dev Drive exists..."

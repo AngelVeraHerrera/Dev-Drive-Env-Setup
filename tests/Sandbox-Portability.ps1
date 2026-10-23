@@ -118,6 +118,9 @@ try
     $t = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
     Check "mount task registered for the imported VHDX" ($t -and ([string]$t.Actions[0].Arguments -match [regex]::Escape("Mount-DiskImage -ImagePath '$inVhd'")))
     Check "import record on the drive" (@(Get-ChildItem "${d}installation\import_*.log" -ErrorAction SilentlyContinue).Count -eq 1)
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Check "the drive is handed to environment.owner ('current': $me), not left to Administrators" ($here -and
+        ((Get-Acl -LiteralPath "${d}workspace\repo\file.c").Owner -eq $me) -and ((Get-Acl -LiteralPath "${d}msys64\usr\bin\bash.exe").Owner -eq $me))
 }
 finally
 {

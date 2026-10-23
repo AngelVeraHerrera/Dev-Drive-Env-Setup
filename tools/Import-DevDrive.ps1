@@ -34,7 +34,8 @@ param
     [ValidateSet('Auto', 'Image', 'DevDrive')]
     [string]$Mode = 'Auto',
     [switch]$Force,                          # no questions
-    [switch]$ElevatedChild                   # internal: the elevated relaunch
+    [switch]$ElevatedChild,                  # internal: the elevated relaunch
+    [string]$OwnerAccount = ''               # internal: who started it (environment.owner "current")
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,7 +76,8 @@ if (-not (Test-IsAdministrator))
 {
     Write-Host "Importing needs administrator rights; relaunching elevated in a window of its own..." -ForegroundColor Yellow
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath), '-Package', ('"{0}"' -f $Package),
-                 '-Destination', ('"{0}"' -f $Destination), '-Mode', $Mode, '-ElevatedChild')
+                 '-Destination', ('"{0}"' -f $Destination), '-Mode', $Mode, '-ElevatedChild',
+                 '-OwnerAccount', ('"{0}"' -f [Security.Principal.WindowsIdentity]::GetCurrent().Name))
     if ($Force) { $argList += '-Force' }
     try { $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList -Wait -PassThru } catch { Fail "Elevation was refused or failed; nothing was done." }
     exit $p.ExitCode
@@ -205,8 +207,16 @@ try
         Dismount-DiskImage -ImagePath $source | Out-Null
         if ($rc -ge 8) { throw "robocopy failed (exit $rc); see $rcLog" }
 
+        # As step 1: undo a global /disallowAv (older versions of step 1 left it), trust the volume, then remount it,
+        # because filters attach at mount time -- otherwise Defender would only reach it after the next boot.
+        $allow = & fsutil.exe devdrv enable /allowAv 2>&1
+        if ($LASTEXITCODE) { Warn "fsutil devdrv enable /allowAv reported exit ${LASTEXITCODE}: $allow" }
         $trust = & fsutil.exe devdrv trust "${letter}:" 2>&1
-        if ($LASTEXITCODE) { Warn "fsutil devdrv trust failed (exit $LASTEXITCODE): $trust" } else { Info "Dev Drive trusted: Defender scans it in performance mode." }
+        if ($LASTEXITCODE) { Warn "fsutil devdrv trust failed (exit $LASTEXITCODE): $trust" } else { Info "Dev Drive trusted." }
+        Dismount-DiskImage -ImagePath $target | Out-Null
+        Set-DriveLetter (Get-DataPartition (Mount-DiskImage -ImagePath $target -PassThru))
+        Info ("fsutil devdrv query: " + ((& fsutil.exe devdrv query "${letter}:" 2>&1) -join ' '))
+        try { if ((Get-MpPreference).PerformanceModeStatus -eq 1) { Warn "Defender's performance mode is OFF on this PC: the Dev Drive is scanned synchronously. Set-MpPreference -PerformanceModeStatus Enabled turns it on, unless a policy turned it off." } } catch { }
     }
 }
 catch
@@ -235,12 +245,20 @@ $text = [regex]::Replace($text, '("automount_at_startup"\s*:\s*)(true|false)', {
 [IO.File]::WriteAllText($cfgFile, $text, (New-Object System.Text.UTF8Encoding($false)))
 Info "Configuration updated for this PC: $cfgFile"
 
-# Git refuses repositories owned by another account ("dubious ownership"), and the copy belongs to whoever made it.
-$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-$repos = @(Get-ChildItem -LiteralPath $drive -Directory -Force | Where-Object Name -notin @('msys64', 'System Volume Information', '$RECYCLE.BIN') |
-           ForEach-Object { $_; Get-ChildItem -LiteralPath $_.FullName -Directory -Force -ErrorAction SilentlyContinue } | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git') })
-foreach ($r in $repos) { & icacls.exe $r.FullName /setowner $me /T /C /Q | Out-Null }
-if ($repos.Count) { Info ("Repositories now owned by {0}: {1}" -f $me, (($repos | ForEach-Object Name) -join ', ')) }
+# The copy belongs to whoever made it, and git refuses repositories another account owns ("dubious ownership"):
+# the whole drive goes to environment.owner -- "current" (default) is the account that started the import, an
+# account name, or "administrators". Inline rather than through the drive's generator, so an older drive works too.
+$owner = [string](($text | ConvertFrom-Json).environment.owner)
+$owner = if ([string]::IsNullOrWhiteSpace($owner)) { 'current' } else { $owner.Trim() }
+try
+{
+    $account = switch ($owner.ToLowerInvariant()) { 'administrators' { $null } 'current' { if ($OwnerAccount) { $OwnerAccount } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name } } default { $owner } }
+    $ownerArg = if ($account) { '*' + (New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value } else { '*S-1-5-32-544' }
+    Info "Handing the drive to $owner ($ownerArg)..."
+    $null = & icacls.exe $drive /setowner $ownerArg /T /C /Q 2>&1
+    if ($LASTEXITCODE) { Warn "icacls could not hand every file to $ownerArg (exit $LASTEXITCODE)." } else { Info "Drive owned by $owner." }
+}
+catch { Warn "environment.owner '$owner': $($_.Exception.Message)" }
 
 if ($autoMount)
 {
