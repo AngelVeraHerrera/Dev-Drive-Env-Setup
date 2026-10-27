@@ -16,7 +16,7 @@ them; outside it they are untested.
 | Triplets | `x64-mingw-clang-dynamic-release`, `x64-mingw-ucrt-dynamic-release` (dynamic, release only) |
 | Toolchains | MSYS2 clang64: Clang 23.1.3 with libc++. MSYS2 ucrt64: GCC 16.2.0 with libstdc++. mingw-w64 14.0.0 (r426) |
 | Packages | the 29 of the Degoras configuration with its features: Qt 6.11.2, GStreamer 1.28.7, OpenCV 4.14.0, FFmpeg, gRPC, ZeroMQ, the MongoDB drivers... |
-| Host | Windows 10 Pro 22H2 (build 19045), NTFS drive. Not yet built on Windows 11 |
+| Host | Windows 10 Pro 22H2 (build 19045), NTFS drive; Windows 11 Pro (build 26200), Dev Drive |
 
 Not covered: MSVC triplets (`x64-windows*`), static or debug builds, other baselines or compiler versions, Linux
 and macOS. A newer baseline can make an overlay obsolete, or turn it into a downgrade: after every baseline bump run

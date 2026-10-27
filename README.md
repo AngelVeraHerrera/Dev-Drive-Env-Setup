@@ -82,7 +82,8 @@ What a generated drive holds:
 
 Outside the drive it leaves only: desktop shortcuts (`create_desktop_shortcuts`), a startup task that mounts the
 drive (`automount_at_startup`), Microsoft Defender exclusions (the VHDX folder, and the drive letter on NTFS; a Dev
-Drive is trusted instead) and, if you ask, kits in your own Qt Creator. [`tools/Remove-DevDrive.ps1`](#drive-maintenance) removes all of them.
+Drive is trusted instead) and, if you ask, kits in your own Qt Creator.
+[`tools/Remove-DevDrive.ps1`](#drive-maintenance) removes all of them.
 
 ### Where this is used
 
@@ -101,9 +102,9 @@ hardware SDKs and a heavy C++ dependency stack.
 
 ## Quick start
 
-**Requirements:** Windows 10 or 11 (a Dev Drive needs Windows 11 23H2+), PowerShell 5.1+, administrator rights for
-step 1 only, and `vhd_size_gb` free on the volume holding `vhd_root`. Nothing else, not even Git: everything is put
-on the drive by the scripts.
+**Requirements:** Windows 10 or 11 (a Dev Drive needs Windows 11 22H2, build 22621.2338, or later), PowerShell 5.1+,
+administrator rights for step 1 only (it asks for them), and `vhd_size_gb` free on the volume holding `vhd_root`.
+Nothing else, not even Git: everything is put on the drive by the scripts.
 
 1. Clone and create your configuration from the example:
 
@@ -116,7 +117,8 @@ on the drive by the scripts.
 2. Edit `config\drivenv-cfg.json`: at least `dev_drive_letter`, `dev_drive_label` and `dev_env_name`, and the
    packages you need.
 
-3. From an **elevated** PowerShell, allow scripts for this window and generate:
+3. From an **ordinary** PowerShell (step 1 asks for administrator rights itself), allow scripts for this window and
+   generate:
 
    ```powershell
    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -313,7 +315,8 @@ Optional: what this configuration is. Every step prints it in its log, and step 
 ```json
 "metadata": {
     "name": "Degoras dual", "version": "1.0.0", "date": "2026-10-20", "author": "Your Name",
-    "target_os": "Windows 10 / 11", "description": "clang64 + ucrt64 drive", "notes": ["vcpkg baseline 3cd21e48", "LLVM 23.1.3"]
+    "target_os": "Windows 10 / 11", "description": "clang64 + ucrt64 drive",
+    "notes": ["vcpkg baseline 3cd21e48", "LLVM 23.1.3"]
 }
 ```
 
@@ -536,8 +539,8 @@ and `Import-DevDrive.cmd`; the drive carries the generator and its configuration
 **Import.** On the other PC, extract the `.zip` and double-click `Import-DevDrive.cmd`
 (or `Import-DevDrive.ps1 -Destination <folder> -Mode Image|DevDrive -Force`). It checks the SHA-256, then:
 
-- **Dev Drive** (Windows 11 22H2 or later, offered there): a new Dev Drive VHDX with the files copied into it,
-  trusted, so Defender scans it in performance mode.
+- **Dev Drive** (Windows 11 22H2, build 22621.2338, or later; offered there): a new Dev Drive VHDX with the files
+  copied into it, trusted, so Defender scans it in performance mode.
 - **Image** (Windows 10, or by choice): the exported VHDX as it is (NTFS), with a Defender exclusion as step 1 adds.
 
 Then it registers the startup mount task (it asks), hands the git repositories to the importing user (git refuses

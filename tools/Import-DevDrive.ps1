@@ -2,7 +2,7 @@
 # IMPORT A DEV DRIVE EXPORTED FROM ANOTHER PC
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
-# Updated: 21/10/2026
+# Updated: 27/10/2026
 # Version: 3.0.0
 # --------------------------------------------------------------------
 # License: MIT

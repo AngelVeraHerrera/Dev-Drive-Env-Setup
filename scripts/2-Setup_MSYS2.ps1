@@ -3,7 +3,7 @@
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
 #          David Abuín Sánchez
-# Updated: 20/10/2026
+# Updated: 27/10/2026
 # Version: 3.0.0
 # --------------------------------------------------------------------
 # License: MIT
@@ -727,7 +727,7 @@ Write-NoFormat "  MSYS2 SETUP SCRIPT"
 Write-NoFormat "-----------------------------------------------------------------"
 Write-NoFormat "  Authors: Ángel Vera Herrera"
 Write-NoFormat "           David Abuín Sánchez"
-Write-NoFormat "  Updated: 20/10/2026"
+Write-NoFormat "  Updated: 27/10/2026"
 Write-NoFormat "  Version: 3.0.0"
 Write-NoFormat "================================================================="
 Write-NoFormat "Parameters (Loaded from JSON):"

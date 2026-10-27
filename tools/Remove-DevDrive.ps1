@@ -2,7 +2,7 @@
 # REMOVE A DEV DRIVE, AND EVERYTHING THE GENERATOR LEFT OUTSIDE IT
 # --------------------------------------------------------------------
 # Authors: Angel Vera Herrera
-# Updated: 20/10/2026
+# Updated: 27/10/2026
 # Version: 3.0.0
 # --------------------------------------------------------------------
 # License: MIT

@@ -2,7 +2,7 @@
 # SANDBOX TEST: EXPORT AND IMPORT A THROWAWAY DRIVE (elevated PowerShell)
 # --------------------------------------------------------------------
 # Authors: Ángel Vera Herrera
-# Updated: 22/10/2026
+# Updated: 27/10/2026
 # Version: 3.0.0
 # --------------------------------------------------------------------
 # License: MIT
