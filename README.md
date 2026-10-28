@@ -109,8 +109,8 @@ Nothing else, not even Git: everything is put on the drive by the scripts.
 1. Clone and create your configuration from the example:
 
    ```powershell
-   git clone https://github.com/DegorasProjectTeam/DrivEnv-Win.git
-   cd DrivEnv-Win
+   git clone https://github.com/AngelVeraHerrera/Dev-Drive-Env-Setup.git
+   cd Dev-Drive-Env-Setup
    copy config\drivenv-cfg_example.json config\drivenv-cfg.json
    ```
 
@@ -593,7 +593,7 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE).
 
 Ángel Vera Herrera ([@AngelVeraHerrera](https://github.com/AngelVeraHerrera)) — [avera@roa.es](mailto:avera@roa.es)
 
-Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
+Project link: [https://github.com/AngelVeraHerrera/Dev-Drive-Env-Setup][repo-url]
 
 ### Collaborators
 
@@ -620,5 +620,5 @@ Project link: [https://github.com/DegorasProjectTeam/DrivEnv-Win][repo-url]
 [toolchain-url]: https://www.msys2.org/
 [vcpkg-shield]: https://img.shields.io/badge/packages-vcpkg-brightgreen?style=for-the-badge
 [vcpkg-url]: https://vcpkg.io/
-[repo-url]: https://github.com/DegorasProjectTeam/DrivEnv-Win
-[issues-url]: https://github.com/DegorasProjectTeam/DrivEnv-Win/issues
+[repo-url]: https://github.com/AngelVeraHerrera/Dev-Drive-Env-Setup
+[issues-url]: https://github.com/AngelVeraHerrera/Dev-Drive-Env-Setup/issues
