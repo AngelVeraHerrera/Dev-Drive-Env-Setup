@@ -74,7 +74,7 @@ What a generated drive holds:
 | `msys64/` | MSYS2 with each toolchain, packages pinned to exact versions |
 | `vcpkg/` | vcpkg at a pinned baseline, with overlay ports and triplets |
 | `env/` | One environment file and launcher set per toolchain, and the drive's Qt Creator settings |
-| `workspace/`, `deploys/` | Your sources and installed artefacts |
+| `workspace/`, `deploys/` | Your sources and installed artifacts |
 | `bt/` | vcpkg build trees, and `bt/<triplet>/` for your own builds |
 | `testing/` | Hand-run checks for the troublesome libraries ([samples](drive/samples/README.md)) |
 | `installation/` | What this drive is: package inventories, baseline, verification reports |
@@ -82,7 +82,7 @@ What a generated drive holds:
 
 Outside the drive it leaves only: desktop shortcuts (`create_desktop_shortcuts`), a startup task that mounts the
 drive (`automount_at_startup`), Microsoft Defender exclusions (the VHDX folder, and the drive letter on NTFS; a Dev
-Drive is trusted instead) and, if you ask, kits in your own Qt Creator.
+Drive is trusted instead) and, if you ask, kits in your own Qt Creator. The tool
 [`tools/Remove-DevDrive.ps1`](#drive-maintenance) removes all of them.
 
 ### Where this is used
@@ -91,10 +91,8 @@ It generates the development environments of the **Degoras Project** systems tha
 Ranging station at the **Real Instituto y Observatorio de la Armada (ROA)**, San Fernando, Spain: real-time control,
 hardware SDKs and a heavy C++ dependency stack.
 
-### Built with
-
-[PowerShell](https://learn.microsoft.com/powershell/) · [MSYS2](https://www.msys2.org/) ·
-[vcpkg](https://vcpkg.io/) · [Qt Creator](https://www.qt.io/product/development-tools)
+It is also used in other, private projects: complex systems and infrastructure, where several toolchains, pinned
+dependencies and the same environment on every machine matter as much as the code itself.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -247,8 +245,6 @@ trees (`<buildtrees_root>\<triplet>\`), the records (`*_<subsystem>.txt`) and th
   re-run steps 3 and 4).
 - **One build-trees root.** Step 4's cleanup removes only its own triplet's trees.
 - **No per-package triplet override** with more than one toolchain: `vcpkg.packages` is shared.
-
-> ⚠️ **A drive generated before 3.0.0 is not migrated**; step 2 refuses it. Generate a new one.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -513,7 +509,7 @@ Convert-VHD -Path "C:\DevDrives\DEV_EXAMPLE.vhdx" -DestinationPath "C:\DevDrives
 
 ## Moving a drive to another PC
 
-`tools\Export-DevDrive.ps1` packs a drive for another PC, and the package carries its own importer: the other PC
+The tool `tools\Export-DevDrive.ps1` packs a drive for another PC, and the package carries its own importer: the other PC
 needs nothing installed. Both run elevated (they relaunch themselves): Windows lets only administrators create and
 attach virtual disks.
 
@@ -558,11 +554,10 @@ The generator builds what lives on the drive: the MSYS2 toolchains, the vcpkg pa
 Anything that belongs to Windows or installs into it is yours to install, on every PC (it does not travel with an
 exported drive either). For example:
 
-- **Codecs and OS components**: the Microsoft HEVC Video Extension (Microsoft Store), where Media Foundation's H.265
-  encoder and decoder (`mfh265enc` and friends) come from.
-- **Drivers**: the NVIDIA display driver for `nvcodec` (it needs `nvcuda.dll`, not the CUDA toolkit).
-- **Other compilers and SDKs**: MSVC and Visual Studio, the Windows SDK, the CUDA toolkit.
-- **Other IDEs and editors**: Visual Studio, VS Code, CLion and the like.
+- OS components like codecs and OS libraries.
+- Drivers like NVIDIA display driver.
+- Other compilers and SDKs like MSVC, Visual Studio, the Windows SDK, the CUDA toolkit, etc.
+- Other IDEs and editors like Visual Studio, VS Code, CLion, etc.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -574,10 +569,10 @@ exported drive either). For example:
 - [x] Qt Creator kits per toolchain, optionally in your own Qt Creator
 - [x] Tools to restore Qt Creator settings and remove a drive
 - [x] Export a drive to another PC and import it there, as a Dev Drive on Windows 11
+- [x] Defender check in step 5: Dev Drive trust and performance mode, or the NTFS exclusion, in the report
 - [ ] Rebuild mode for another PC: the package carries the recipe and the caches (vcpkg binary cache, MSYS2
       packages, source archives) and the drive is generated there, at any letter and fully offline, as the image mode is
 - [ ] Benchmark script: the drive against `C:` for small-file I/O and a real vcpkg/CMake build
-- [x] Defender check in step 5: Dev Drive trust and performance mode, or the NTFS exclusion, in the report
 - [ ] vcpkg asset caching (`X_VCPKG_ASSET_SOURCES`) on a network share, so a drive rebuilds when upstream URLs
       disappear, and offline
 - [ ] MSVC toolchain
@@ -591,7 +586,7 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE).
 
 ## Contact
 
-Ángel Vera Herrera ([@AngelVeraHerrera](https://github.com/AngelVeraHerrera)) — [avera@roa.es](mailto:avera@roa.es)
+Ángel Vera Herrera — [@AngelVeraHerrera](https://github.com/AngelVeraHerrera) — [avera@roa.es](mailto:avera@roa.es)
 
 Project link: [https://github.com/AngelVeraHerrera/Dev-Drive-Env-Setup][repo-url]
 
@@ -599,13 +594,18 @@ Project link: [https://github.com/AngelVeraHerrera/Dev-Drive-Env-Setup][repo-url
 
 **Degoras Project Team** — Real Instituto y Observatorio de la Armada (ROA)
 
-- Jesús Relinque Madroñal ([@jrelinquem](https://github.com/jrelinquem))
-- David Abuín Sánchez ([@davidabuinESI](https://github.com/davidabuinESI))
+- Jesús Relinque Madroñal — [@jrelinquem](https://github.com/jrelinquem)
+
+**External**
+
+- David Abuín Sánchez — [@davidabuinESI](https://github.com/davidabuinESI)
 
 ## Acknowledgments
 
 - [Real Instituto y Observatorio de la Armada (ROA)](https://armada.defensa.gob.es/ArmadaPortal/page/Portal/ArmadaEspannola/cienciaobservatorio/prefLang-es/)
-- [MSYS2](https://www.msys2.org/) · [vcpkg](https://vcpkg.io/) · [Qt](https://www.qt.io/) · [Shields.io](https://shields.io/)
+- [MSYS2](https://www.msys2.org/)
+- [vcpkg](https://vcpkg.io/)
+- [Shields.io](https://shields.io/)
 - [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
